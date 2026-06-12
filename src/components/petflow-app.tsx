@@ -5,6 +5,7 @@ import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
 import { deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
+import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AnalysisResult,
@@ -14,6 +15,7 @@ import type {
   PetProfile,
   RedFlagId,
   SymptomId,
+  TesterProfile,
 } from "@/lib/types";
 
 type View = "home" | "profile" | "check" | "result" | "history" | "account";
@@ -1087,6 +1089,7 @@ export function PetFlowApp() {
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string>();
   const [user, setUser] = useState<User | null>(null);
+  const [testerProfile, setTesterProfile] = useState<TesterProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
@@ -1100,6 +1103,11 @@ export function PetFlowApp() {
     () => (view === "result" && !selected ? "home" : view),
     [view, selected],
   );
+  const visibleHistory = useMemo(() => {
+    if (!user) return history.filter((record) => !record.petId);
+    if (!selectedPetId) return [];
+    return history.filter((record) => record.petId === selectedPetId);
+  }, [history, selectedPetId, user]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -1144,14 +1152,21 @@ export function PetFlowApp() {
       setUser(nextUser);
       if (!nextUser || !supabase) {
         setPets([]);
+        setTesterProfile(null);
         setSelectedPetId(undefined);
         setAuthReady(true);
         return;
       }
-      const { data } = await supabase
-        .from("pets")
-        .select("id,name,species,breed,birth_date,sex,weight,created_at")
-        .order("created_at", { ascending: true });
+      const [{ data }, { data: tester }] = await Promise.all([
+        supabase
+          .from("pets")
+          .select("id,name,species,breed,birth_date,sex,weight,created_at")
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("tester_profiles")
+          .select("nickname,age_band,care_experience,consent_version,consented_at")
+          .maybeSingle(),
+      ]);
       const loadedPets: PetProfile[] = (data ?? []).map((pet) => ({
         id: pet.id,
         name: pet.name,
@@ -1162,7 +1177,18 @@ export function PetFlowApp() {
         weight: pet.weight ?? "",
       }));
       setPets(loadedPets);
-      const nextPet = loadedPets.find((pet) => pet.id === selectedPetId) ?? loadedPets[0];
+      setTesterProfile(
+        tester
+          ? {
+              nickname: tester.nickname,
+              ageBand: tester.age_band ?? "",
+              careExperience: tester.care_experience ?? "",
+              consentVersion: tester.consent_version,
+              consentedAt: tester.consented_at,
+            }
+          : null,
+      );
+      const nextPet = loadedPets[0];
       if (nextPet) {
         selectPet(nextPet);
       } else {
@@ -1177,8 +1203,6 @@ export function PetFlowApp() {
       void loadAccount(session?.user ?? null);
     });
     return () => listener.subscription.unsubscribe();
-    // The selected pet is intentionally resolved when the account session changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function persist(records: HistoryRecord[]) {
@@ -1263,6 +1287,8 @@ export function PetFlowApp() {
     mode: "login" | "signup",
     email: string,
     password: string,
+    tester: Pick<TesterProfile, "nickname" | "ageBand" | "careExperience">,
+    consented: boolean,
   ) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return "로그인 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.";
@@ -1275,6 +1301,38 @@ export function PetFlowApp() {
     if (mode === "signup" && !result.data.session) {
       return "가입 확인 메일을 보냈어요. 확인 후 로그인해 주세요.";
     }
+    if (mode === "signup" && result.data.user && consented) {
+      const profileResult = await saveTesterProfile(tester, consented, result.data.user.id);
+      if (profileResult) return profileResult;
+    }
+    return "";
+  }
+  async function saveTesterProfile(
+    tester: Pick<TesterProfile, "nickname" | "ageBand" | "careExperience">,
+    consented: boolean,
+    userId = user?.id,
+  ) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !userId || !consented || !tester.nickname.trim()) {
+      return "필수 정보를 다시 확인해 주세요.";
+    }
+    const consentedAt = new Date().toISOString();
+    const { error: profileError } = await supabase.from("tester_profiles").upsert({
+      user_id: userId,
+      nickname: tester.nickname.trim(),
+      age_band: tester.ageBand || null,
+      care_experience: tester.careExperience || null,
+      consent_version: testerConsentVersion,
+      consented_at: consentedAt,
+      updated_at: consentedAt,
+    });
+    if (profileError) return "테스터 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
+    setTesterProfile({
+      ...tester,
+      nickname: tester.nickname.trim(),
+      consentVersion: testerConsentVersion,
+      consentedAt,
+    });
     return "";
   }
   async function logout() {
@@ -1283,6 +1341,7 @@ export function PetFlowApp() {
     setProfile(initialProfile);
     setInput(initialInput);
     setPets([]);
+    setTesterProfile(null);
     setSelectedPetId(undefined);
     try {
       localStorage.removeItem("petflow-profile");
@@ -1327,7 +1386,7 @@ export function PetFlowApp() {
       });
       if (!response.ok) throw new Error("analysis failed");
       const result = (await response.json()) as AnalysisResult;
-      const record: HistoryRecord = { input, result };
+      const record: HistoryRecord = { input, result, petId: selectedPetId };
       persist([record, ...history].slice(0, 20));
       setSelected(record);
       setView("result");
@@ -1374,7 +1433,7 @@ export function PetFlowApp() {
         {currentView === "home" && (
           <HomeView
             profile={profile}
-            history={history}
+            history={visibleHistory}
             onStart={startNew}
             onHistory={() => setView("history")}
             onProfile={() => openProfile("home")}
@@ -1391,11 +1450,13 @@ export function PetFlowApp() {
         {currentView === "account" && (
           <AccountView
             user={user}
+            testerProfile={testerProfile}
             pets={pets}
             selectedPetId={selectedPetId}
             authReady={authReady}
             onBack={() => setView("home")}
             onAuth={handleAuth}
+            onSaveTesterProfile={saveTesterProfile}
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
             onEditPet={(pet) => openProfile("account", pet)}
@@ -1423,7 +1484,7 @@ export function PetFlowApp() {
         )}{" "}
         {currentView === "history" && (
           <HistoryView
-            history={history}
+            history={visibleHistory}
             onBack={() => setView("home")}
             onStart={startNew}
             onSelect={(record) => {

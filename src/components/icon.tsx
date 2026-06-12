@@ -5,8 +5,6 @@ export type IconName =
   | "plus"
   | "history"
   | "heart"
-  | "chart"
-  | "bell"
   | "arrow"
   | "check"
   | "calendar"
@@ -17,7 +15,6 @@ export type IconName =
   | "share"
   | "spark"
   | "paw"
-  | "logout"
   | "stethoscope";
 
 export function Icon({
@@ -57,17 +54,6 @@ export function Icon({
     ),
     heart: (
       <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z" />
-    ),
-    chart: (
-      <>
-        <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
-      </>
-    ),
-    bell: (
-      <>
-        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-        <path d="M10 21h4" />
-      </>
     ),
     arrow: (
       <>
@@ -116,11 +102,6 @@ export function Icon({
         <circle cx="10" cy="6.5" r="2" />
         <circle cx="14" cy="6.5" r="2" />
         <circle cx="17.5" cy="10" r="2" />
-      </>
-    ),
-    logout: (
-      <>
-        <path d="M10 17l5-5-5-5M15 12H3M21 19V5a2 2 0 0 0-2-2h-6" />
       </>
     ),
     stethoscope: (

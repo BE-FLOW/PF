@@ -1148,7 +1148,8 @@ p {
   gap: 16px;
 }
 .account-summary small,
-.account-summary strong {
+.account-summary strong,
+.account-summary span {
   display: block;
 }
 .account-summary small {
@@ -1158,6 +1159,19 @@ p {
 }
 .account-summary strong {
   font-size: 13px;
+}
+.account-summary span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.text-button.muted {
+  color: var(--muted);
 }
 .pet-list {
   display: grid;
@@ -1224,6 +1238,66 @@ p {
   display: grid;
   gap: 16px;
 }
+.auth-panel h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.tester-fields {
+  display: grid;
+  gap: 16px;
+}
+.privacy-notice {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f8faf9;
+  padding: 12px 14px;
+  color: #5f716b;
+  font-size: 11px;
+}
+.privacy-notice summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 900;
+}
+.privacy-notice dl {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0 8px;
+}
+.privacy-notice dl div {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 8px;
+}
+.privacy-notice dt {
+  font-weight: 900;
+}
+.privacy-notice dd,
+.privacy-notice p {
+  margin: 0;
+  line-height: 1.55;
+}
+.privacy-notice a {
+  display: inline-block;
+  margin-top: 9px;
+  color: var(--mint-dark);
+  font-weight: 900;
+}
+.consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #52635e;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.consent-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--mint-dark);
+}
 .auth-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1255,6 +1329,46 @@ p {
   color: var(--muted);
   text-align: center;
   font-size: 10px;
+}
+.privacy-page {
+  min-height: 100vh;
+  padding: 40px 18px;
+  background: var(--paper);
+}
+.privacy-sheet {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+.privacy-sheet h1 {
+  margin: 8px 0;
+}
+.privacy-sheet > p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.privacy-sheet section {
+  padding-top: 20px;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.privacy-sheet h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+.privacy-sheet section p {
+  margin: 5px 0;
+  color: #5f716b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.privacy-back {
+  margin-top: 26px;
+  text-decoration: none;
 }
 .source-note {
   margin-top: 13px !important;

@@ -2,29 +2,123 @@
 
 import { useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import type { PetProfile } from "@/lib/types";
+import { testerPrivacySummary } from "@/lib/privacy";
+import type { PetProfile, TesterProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
+type TesterDraft = Pick<TesterProfile, "nickname" | "ageBand" | "careExperience">;
+
+const emptyTesterDraft: TesterDraft = {
+  nickname: "",
+  ageBand: "",
+  careExperience: "",
+};
+
+function TesterFields({
+  draft,
+  setDraft,
+}: {
+  draft: TesterDraft;
+  setDraft: (draft: TesterDraft) => void;
+}) {
+  return (
+    <div className="tester-fields">
+      <div className="field">
+        <label htmlFor="testerNickname">닉네임</label>
+        <input
+          id="testerNickname"
+          maxLength={30}
+          value={draft.nickname}
+          onChange={(event) => setDraft({ ...draft, nickname: event.target.value })}
+          placeholder="예: 보리보호자"
+        />
+      </div>
+      <div className="form-grid">
+        <div className="field">
+          <label htmlFor="testerAge">연령대 (선택)</label>
+          <select
+            id="testerAge"
+            value={draft.ageBand}
+            onChange={(event) =>
+              setDraft({ ...draft, ageBand: event.target.value as TesterDraft["ageBand"] })
+            }
+          >
+            <option value="">선택 안 함</option>
+            <option value="under-20">20세 미만</option>
+            <option value="20s">20대</option>
+            <option value="30s">30대</option>
+            <option value="40s">40대</option>
+            <option value="50-plus">50대 이상</option>
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="testerExperience">반려 경험 (선택)</label>
+          <select
+            id="testerExperience"
+            value={draft.careExperience}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                careExperience: event.target.value as TesterDraft["careExperience"],
+              })
+            }
+          >
+            <option value="">선택 안 함</option>
+            <option value="first">처음</option>
+            <option value="under-3-years">3년 미만</option>
+            <option value="over-3-years">3년 이상</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrivacyNotice() {
+  return (
+    <details className="privacy-notice">
+      <summary>수집 정보와 이용 안내</summary>
+      <dl>
+        <div><dt>필수</dt><dd>{testerPrivacySummary.required}</dd></div>
+        <div><dt>선택</dt><dd>{testerPrivacySummary.optional}</dd></div>
+        <div><dt>목적</dt><dd>{testerPrivacySummary.purpose}</dd></div>
+        <div><dt>보관</dt><dd>{testerPrivacySummary.retention}</dd></div>
+      </dl>
+      <p>선택 정보는 입력하지 않아도 가입할 수 있습니다. 필수 정보 수집에 동의하지 않으면 테스트 계정을 만들 수 없습니다.</p>
+      <a href="/privacy" target="_blank" rel="noreferrer">전체 테스트 개인정보 안내 보기</a>
+    </details>
+  );
+}
 
 export function AccountView({
   user,
+  testerProfile,
   pets,
   selectedPetId,
   authReady,
   onBack,
   onAuth,
+  onSaveTesterProfile,
   onLogout,
   onAddPet,
   onEditPet,
   onSelectPet,
 }: {
   user: User | null;
+  testerProfile: TesterProfile | null;
   pets: PetProfile[];
   selectedPetId?: string;
   authReady: boolean;
   onBack: () => void;
-  onAuth: (mode: AuthMode, email: string, password: string) => Promise<string>;
+  onAuth: (
+    mode: AuthMode,
+    email: string,
+    password: string,
+    profile: TesterDraft,
+    consented: boolean,
+  ) => Promise<string>;
+  onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
   onLogout: () => Promise<void>;
   onAddPet: () => void;
   onEditPet: (pet: PetProfile) => void;
@@ -33,18 +127,46 @@ export function AccountView({
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [draft, setDraft] = useState<TesterDraft>(emptyTesterDraft);
+  const [consented, setConsented] = useState(false);
+  const [editingTester, setEditingTester] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  async function submit() {
+  const needsTesterProfile = Boolean(user && !testerProfile);
+  const showTesterForm = needsTesterProfile || editingTester;
+
+  async function submitAuth() {
     if (!email.trim() || password.length < 6) {
       setMessage("이메일과 6자 이상의 비밀번호를 입력해 주세요.");
       return;
     }
+    if (mode === "signup" && (!draft.nickname.trim() || !consented)) {
+      setMessage("닉네임을 입력하고 필수 수집에 동의해 주세요.");
+      return;
+    }
     setLoading(true);
-    setMessage("");
-    setMessage(await onAuth(mode, email.trim(), password));
+    setMessage(await onAuth(mode, email.trim(), password, draft, consented));
     setLoading(false);
+  }
+
+  async function saveTester() {
+    if (!draft.nickname.trim() || !consented) {
+      setMessage("닉네임을 입력하고 필수 수집에 동의해 주세요.");
+      return;
+    }
+    setLoading(true);
+    const result = await onSaveTesterProfile(draft, consented);
+    setMessage(result);
+    setLoading(false);
+    if (!result) setEditingTester(false);
+  }
+
+  function startEditingTester() {
+    setDraft(testerProfile ?? emptyTesterDraft);
+    setConsented(Boolean(testerProfile));
+    setMessage("");
+    setEditingTester(true);
   }
 
   return (
@@ -56,11 +178,7 @@ export function AccountView({
         <div>
           <p className="eyebrow">MY PETFLOW</p>
           <h1>{user ? "내 반려동물" : "계정으로 이어서 관리"}</h1>
-          <p>
-            {user
-              ? "여러 반려동물을 등록하고 오늘 기록할 아이를 골라주세요."
-              : "로그인하면 반려동물 정보를 다른 기기에서도 불러올 수 있어요."}
-          </p>
+          <p>{user ? "오늘 기록할 반려동물을 골라주세요." : "로그인하면 여러 반려동물을 한곳에서 관리할 수 있어요."}</p>
         </div>
       </div>
 
@@ -70,45 +188,62 @@ export function AccountView({
         <div className="account-stack">
           <section className="panel account-summary">
             <div>
-              <small>로그인 계정</small>
-              <strong>{user.email}</strong>
+              <small>테스터 계정</small>
+              <strong>{testerProfile?.nickname || user.email}</strong>
+              {testerProfile && <span>{user.email}</span>}
             </div>
-            <button className="text-button" onClick={onLogout}>로그아웃</button>
+            <div className="account-actions">
+              {testerProfile && <button className="text-button" onClick={startEditingTester}>정보 수정</button>}
+              <button className="text-button muted" onClick={onLogout}>로그아웃</button>
+            </div>
           </section>
 
-          <section className="panel">
-            <div className="panel-head">
-              <h3>반려동물 {pets.length}마리</h3>
-              <button className="text-button" onClick={onAddPet}>+ 추가</button>
-            </div>
-            {pets.length ? (
-              <div className="pet-list">
-                {pets.map((pet) => (
-                  <div
-                    className={`pet-list-item ${pet.id === selectedPetId ? "selected" : ""}`}
-                    key={pet.id}
-                  >
-                    <button className="pet-select" onClick={() => onSelectPet(pet)}>
-                      <span className="pet-profile-avatar"><Icon name="paw" size={17} /></span>
-                      <span>
-                        <strong>{pet.name}</strong>
-                        <small>{pet.species === "dog" ? "강아지" : pet.species === "cat" ? "고양이" : "기타"}{pet.breed ? ` · ${pet.breed}` : ""}</small>
-                      </span>
-                      {pet.id === selectedPetId && <em>선택됨</em>}
-                    </button>
-                    <button className="pet-edit" onClick={() => onEditPet(pet)}>수정</button>
-                  </div>
-                ))}
+          {showTesterForm && (
+            <section className="form-panel auth-panel">
+              <h2>{needsTesterProfile ? "테스터 정보를 알려주세요" : "테스터 정보 수정"}</h2>
+              <TesterFields draft={draft} setDraft={setDraft} />
+              <PrivacyNotice />
+              <label className="consent-check">
+                <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
+                <span>필수 개인정보 수집·이용에 동의합니다.</span>
+              </label>
+              {message && <div className="form-error" role="alert">{message}</div>}
+              <button className="primary-button auth-submit" onClick={saveTester} disabled={loading}>
+                {loading ? "저장 중..." : "저장"}
+              </button>
+            </section>
+          )}
+
+          {!needsTesterProfile && (
+            <section className="panel">
+              <div className="panel-head">
+                <h3>반려동물 {pets.length}마리</h3>
+                <button className="text-button" onClick={onAddPet}>+ 추가</button>
               </div>
-            ) : (
-              <div className="empty-state account-empty">
-                <p>아직 등록된 반려동물이 없어요.</p>
-                <button className="primary-button" onClick={onAddPet}>
-                  <Icon name="plus" size={17} /> 첫 반려동물 등록
-                </button>
-              </div>
-            )}
-          </section>
+              {pets.length ? (
+                <div className="pet-list">
+                  {pets.map((pet) => (
+                    <div className={`pet-list-item ${pet.id === selectedPetId ? "selected" : ""}`} key={pet.id}>
+                      <button className="pet-select" onClick={() => onSelectPet(pet)}>
+                        <span className="pet-profile-avatar"><Icon name="paw" size={17} /></span>
+                        <span>
+                          <strong>{pet.name}</strong>
+                          <small>{pet.species === "dog" ? "강아지" : pet.species === "cat" ? "고양이" : "기타"}{pet.breed ? ` · ${pet.breed}` : ""}</small>
+                        </span>
+                        {pet.id === selectedPetId && <em>선택됨</em>}
+                      </button>
+                      <button className="pet-edit" onClick={() => onEditPet(pet)}>수정</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state account-empty">
+                  <p>아직 등록된 반려동물이 없어요.</p>
+                  <button className="primary-button" onClick={onAddPet}><Icon name="plus" size={17} /> 첫 반려동물 등록</button>
+                </div>
+              )}
+            </section>
+          )}
         </div>
       ) : (
         <section className="form-panel auth-panel">
@@ -122,13 +257,22 @@ export function AccountView({
           </div>
           <div className="field">
             <label htmlFor="authPassword">비밀번호</label>
-            <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="6자 이상" onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
+            <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="6자 이상" onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
           </div>
+          {mode === "signup" && (
+            <>
+              <TesterFields draft={draft} setDraft={setDraft} />
+              <PrivacyNotice />
+              <label className="consent-check">
+                <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
+                <span>필수 개인정보 수집·이용에 동의합니다.</span>
+              </label>
+            </>
+          )}
           {message && <div className="form-error" role="alert">{message}</div>}
-          <button className="primary-button auth-submit" onClick={submit} disabled={loading}>
+          <button className="primary-button auth-submit" onClick={submitAuth} disabled={loading}>
             {loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
           </button>
-          <p className="auth-note">테스트 단계에서는 이메일을 로그인 식별 용도로만 사용합니다.</p>
         </section>
       )}
     </div>

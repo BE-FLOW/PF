@@ -1,0 +1,50 @@
+# 개인정보와 데이터 관리
+
+## 수집 범위
+
+필수:
+
+- 로그인 이메일
+- 테스터 닉네임
+- 개인정보 수집 동의 버전과 시각
+
+선택:
+
+- 연령대
+- 반려 경험
+- 반려동물 품종, 생일, 성별, 체중
+
+수집하지 않음:
+
+- 전화번호
+- 주소와 정확한 위치
+- 실명 확인 정보
+- 반려동물 등록번호
+
+## 저장 위치
+
+- 이메일과 인증: Supabase Auth
+- 테스터 정보: `tester_profiles`
+- 반려동물 프로필: `pets`
+- 구조화된 건강 통계: `health_reports`
+- 피드백: `health_report_feedback`
+
+`health_reports`에는 반려동물 이름, 생일, 자유 메모, 생성된 병원 요약 원문을
+저장하지 않는다.
+
+## 접근 통제
+
+`pets`와 `tester_profiles`는 RLS가 활성화되어 있으며 로그인 사용자는 자신의
+행만 조회·수정·삭제할 수 있다. 관리자 집계 뷰 `tester_management`는
+`service_role`만 조회할 수 있다.
+
+## 관리 화면
+
+- 이메일과 가입 상태: Supabase Authentication > Users
+- 테스터 목록과 활동량: Table Editor > `tester_management`
+- 반려동물: Table Editor > `pets`
+- 리포트 통계: Table Editor > `health_reports`
+- 피드백: Table Editor > `health_report_feedback`
+
+테스터 삭제 시 Auth 사용자를 삭제하면 테스터 프로필과 반려동물은 cascade로
+삭제된다. 통계 리포트의 사용자 연결은 null 처리된다.

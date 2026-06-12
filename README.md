@@ -1,24 +1,34 @@
 # PetFlow
 
-반려동물의 건강 변화를 기록하고 병원 방문용 요약을 만드는 모바일 우선 웹 MVP입니다.
+반려동물의 건강 변화를 기록하고 병원 상담용 요약을 만드는 모바일 우선 테스트 MVP입니다.
 
-## Run
+## Test environment
+
+- App: https://pf-two-eta.vercel.app
+- GitHub: https://github.com/BE-FLOW/PF
+- Database: Supabase project `wxdbbwrevacnpshafdsp`
+- Deployment: GitHub `main` push -> Vercel Production
+
+현재 Production 주소는 실제 상용 서비스가 아니라 테스터에게 전달하는 고정 테스트 주소입니다.
+
+## Local development
 
 ```bash
 npm install
 npm run dev
 ```
 
-`OPENAI_API_KEY`는 선택 사항입니다. 키가 없으면 내장 안전 규칙으로 전체 흐름이 동작합니다. OpenAI 연동을 사용할 때는 `.env.example`을 참고해 `.env.local`을 구성하세요.
+환경변수는 `.env.example`을 참고합니다. `SUPABASE_SERVICE_ROLE_KEY`와
+`OPENAI_API_KEY`는 서버에서만 사용하며 Git에 저장하지 않습니다.
 
-Supabase 테스트 DB와 Vercel Preview 설정은 `docs/test-infrastructure.md`에 정리되어 있습니다. DB가 설정되지 않았거나 일시 실패해도 기록은 브라우저에 계속 저장됩니다.
-
-## Verify
+## Verification
 
 ```bash
 npm run lint
 npm test
 npm run build
+npm run verify:deployment -- https://pf-two-eta.vercel.app
 ```
 
-제품 범위와 안전 원칙은 `docs/mvp-scope.md`에 정리되어 있습니다.
+운영 절차는 `docs/test-operations.md`, 개인정보 범위는
+`docs/privacy-and-data.md`를 참고합니다.

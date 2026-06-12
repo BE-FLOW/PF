@@ -1,6 +1,6 @@
 begin;
 
-select plan(9);
+select plan(13);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -9,6 +9,8 @@ select has_table(
   'health_report_feedback table exists'
 );
 select has_table('public', 'pets', 'pets table exists');
+select has_table('public', 'tester_profiles', 'tester_profiles table exists');
+select has_view('public', 'tester_management', 'tester management view exists');
 select col_not_null(
   'public',
   'health_reports',
@@ -35,6 +37,16 @@ select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'pets'),
   4,
   'pets has owner-only CRUD policies'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.tester_profiles'::regclass),
+  true,
+  'RLS is enabled for tester profiles'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'tester_profiles'),
+  4,
+  'tester profiles has owner-only CRUD policies'
 );
 select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename in ('health_reports', 'health_report_feedback')),

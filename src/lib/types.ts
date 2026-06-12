@@ -31,6 +31,14 @@ export interface PetProfile {
   weight: string;
 }
 
+export interface TesterProfile {
+  nickname: string;
+  ageBand: "" | "under-20" | "20s" | "30s" | "40s" | "50-plus";
+  careExperience: "" | "first" | "under-3-years" | "over-3-years";
+  consentVersion: string;
+  consentedAt: string;
+}
+
 export interface HealthCheckInput {
   petName: string;
   species: Species;
@@ -63,6 +71,7 @@ export interface AnalysisResult {
 }
 
 export interface HistoryRecord {
+  petId?: string;
   input: HealthCheckInput;
   result: AnalysisResult;
   feedback?: "helpful" | "not-helpful";

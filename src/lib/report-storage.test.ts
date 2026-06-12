@@ -31,10 +31,16 @@ describe("report storage", () => {
       input,
       result,
       "20000000-0000-4000-8000-000000000001",
+      {
+        userId: "30000000-0000-4000-8000-000000000001",
+        petId: "40000000-0000-4000-8000-000000000001",
+      },
     );
     const serialized = JSON.stringify(stored);
 
     expect(stored.breed).toBe("말티즈");
+    expect(stored.user_id).toBe("30000000-0000-4000-8000-000000000001");
+    expect(stored.pet_id).toBe("40000000-0000-4000-8000-000000000001");
     expect(serialized).not.toContain("보리");
     expect(serialized).not.toContain("2021-05-02");
     expect(serialized).not.toContain("아침에 두 번");
