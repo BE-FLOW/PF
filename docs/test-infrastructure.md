@@ -74,6 +74,9 @@ npm run verify:deployment -- https://<preview-url>.vercel.app
 
 검증 데이터는 `health_reports.is_test = true`로 표시된다.
 
+수동 테스트용 샘플 데이터는 `supabase/seed.sql`과
+`docs/sample-data.md`에서 관리한다.
+
 ## 운영 전 체크
 
 - 테스트 DB와 운영 DB의 URL 및 서비스 키가 다르다.
