@@ -232,12 +232,11 @@ function HomeView({
       <header className="top-row">
         <div>
           <p className="eyebrow">오늘도 함께 건강하게</p>
-          <h1>{profile.name || "반려동물"}와 좋은 하루 보내고 있나요?</h1>
+          <h1>
+            {profile.name ? `${profile.name}와` : "반려동물과"} 좋은 하루 보내고 있나요?
+          </h1>
         </div>
         <div className="top-actions">
-          <button className="icon-button" aria-label="알림">
-            <Icon name="bell" size={18} />
-          </button>
           <div className="profile-dot">
             {(profile.name || "펫").slice(0, 1)}
           </div>
@@ -836,10 +835,44 @@ function ResultView({
 }) {
   const { result } = record;
   const [copied, setCopied] = useState(false);
+  const [shareState, setShareState] = useState<
+    "idle" | "shared" | "copied" | "failed"
+  >("idle");
   async function copyBrief() {
     await navigator.clipboard.writeText(result.vetBrief);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
+  }
+  async function shareReport() {
+    const title = `${record.input.petName || "반려동물"} 건강 리포트`;
+    const text = [
+      title,
+      `${riskLabel[result.riskLevel]} · ${result.headline}`,
+      result.summary,
+      "",
+      "병원에 보여줄 요약",
+      result.vetBrief,
+      "",
+      result.disclaimer,
+    ].join("\n");
+
+    setShareState("idle");
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, text });
+        setShareState("shared");
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setShareState("copied");
+    } catch {
+      setShareState("failed");
+    }
   }
   return (
     <div className="content-wrap">
@@ -903,11 +936,27 @@ function ResultView({
             </h3>
             <div className="vet-brief">{result.vetBrief}</div>
             <div className="card-actions">
+              <button className="secondary-button" onClick={shareReport}>
+                <Icon
+                  name={shareState === "shared" || shareState === "copied" ? "check" : "share"}
+                  size={15}
+                />
+                {shareState === "shared"
+                  ? "공유했어요"
+                  : shareState === "copied"
+                    ? "공유용 복사 완료"
+                    : "리포트 공유"}
+              </button>
               <button className="secondary-button" onClick={copyBrief}>
                 <Icon name={copied ? "check" : "copy"} size={15} />
                 {copied ? "복사했어요" : "요약 복사"}
               </button>
             </div>
+            {shareState === "failed" && (
+              <p className="share-error" role="alert">
+                공유하지 못했어요. 요약 복사를 이용해 주세요.
+              </p>
+            )}
           </section>
           <div className="disclaimer">
             <strong>꼭 확인해 주세요.</strong> {result.disclaimer}
@@ -1172,9 +1221,6 @@ export function PetFlowApp() {
       <SideNav view={currentView} setView={setView} onStart={startNew} />
       <header className="mobile-header">
         <Brand small />
-        <button className="icon-button" aria-label="알림">
-          <Icon name="bell" size={17} />
-        </button>
       </header>
       <main className="app-main">
         {currentView === "home" && (

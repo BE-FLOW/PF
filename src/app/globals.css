@@ -1068,7 +1068,13 @@ p {
 .card-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 14px;
+}
+.share-error {
+  margin-top: 10px !important;
+  color: #a94840 !important;
+  font-size: 11px !important;
 }
 .disclaimer {
   padding: 14px 16px;
