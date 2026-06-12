@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
 import { deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AnalysisResult,
   HealthCheckInput,
@@ -13,7 +16,7 @@ import type {
   SymptomId,
 } from "@/lib/types";
 
-type View = "home" | "profile" | "check" | "result" | "history";
+type View = "home" | "profile" | "check" | "result" | "history" | "account";
 
 const initialProfile: PetProfile = {
   name: "",
@@ -202,12 +205,14 @@ function HomeView({
   onStart,
   onHistory,
   onProfile,
+  onAccount,
 }: {
   profile: PetProfile;
   history: HistoryRecord[];
   onStart: () => void;
   onHistory: () => void;
   onProfile: () => void;
+  onAccount: () => void;
 }) {
   const recent = history[0];
   const hasProfile = Boolean(profile.name.trim());
@@ -237,9 +242,9 @@ function HomeView({
           </h1>
         </div>
         <div className="top-actions">
-          <div className="profile-dot">
+          <button className="profile-dot" onClick={onAccount} aria-label="내 계정">
             {(profile.name || "펫").slice(0, 1)}
-          </div>
+          </button>
         </div>
       </header>
       <button
@@ -395,14 +400,15 @@ function ProfileView({
 }: {
   profile: PetProfile;
   onCancel: () => void;
-  onSave: (profile: PetProfile) => void;
+  onSave: (profile: PetProfile) => Promise<string | null>;
 }) {
   const [draft, setDraft] = useState(profile);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
   const maxDate = new Date().toISOString().slice(0, 10);
   const options = breedOptions[draft.species];
 
-  function save() {
+  async function save() {
     if (!draft.name.trim()) {
       setError("이름만 알려주시면 바로 시작할 수 있어요.");
       return;
@@ -411,7 +417,14 @@ function ProfileView({
       setError("생일은 오늘보다 이전 날짜로 입력해 주세요.");
       return;
     }
-    onSave({ ...draft, name: draft.name.trim(), breed: draft.breed.trim() });
+    setSaving(true);
+    const saveError = await onSave({
+      ...draft,
+      name: draft.name.trim(),
+      breed: draft.breed.trim(),
+    });
+    setSaving(false);
+    if (saveError) setError(saveError);
   }
 
   return (
@@ -564,8 +577,8 @@ function ProfileView({
           <button className="secondary-button" onClick={onCancel}>
             취소
           </button>
-          <button className="primary-button" onClick={save}>
-            <Icon name="check" size={17} /> 저장하고 시작
+          <button className="primary-button" onClick={save} disabled={saving}>
+            <Icon name="check" size={17} /> {saving ? "저장 중..." : "저장하고 시작"}
           </button>
         </div>
       </div>
@@ -1070,10 +1083,15 @@ function HistoryView({
 export function PetFlowApp() {
   const [view, setView] = useState<View>("home");
   const [profile, setProfile] = useState<PetProfile>(initialProfile);
+  const [editingProfile, setEditingProfile] = useState<PetProfile>(initialProfile);
+  const [pets, setPets] = useState<PetProfile[]>([]);
+  const [selectedPetId, setSelectedPetId] = useState<string>();
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [selected, setSelected] = useState<HistoryRecord | null>(null);
-  const [profileReturnView, setProfileReturnView] = useState<"home" | "check">(
+  const [profileReturnView, setProfileReturnView] = useState<"home" | "check" | "account">(
     "home",
   );
   const [loading, setLoading] = useState(false);
@@ -1115,6 +1133,54 @@ export function PetFlowApp() {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      const frame = window.requestAnimationFrame(() => setAuthReady(true));
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    async function loadAccount(nextUser: User | null) {
+      setUser(nextUser);
+      if (!nextUser || !supabase) {
+        setPets([]);
+        setSelectedPetId(undefined);
+        setAuthReady(true);
+        return;
+      }
+      const { data } = await supabase
+        .from("pets")
+        .select("id,name,species,breed,birth_date,sex,weight,created_at")
+        .order("created_at", { ascending: true });
+      const loadedPets: PetProfile[] = (data ?? []).map((pet) => ({
+        id: pet.id,
+        name: pet.name,
+        species: pet.species,
+        breed: pet.breed ?? "",
+        birthDate: pet.birth_date ?? "",
+        sex: pet.sex,
+        weight: pet.weight ?? "",
+      }));
+      setPets(loadedPets);
+      const nextPet = loadedPets.find((pet) => pet.id === selectedPetId) ?? loadedPets[0];
+      if (nextPet) {
+        selectPet(nextPet);
+      } else {
+        setProfile(initialProfile);
+        setInput(initialInput);
+      }
+      setAuthReady(true);
+    }
+
+    void supabase.auth.getUser().then(({ data }) => loadAccount(data.user));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      void loadAccount(session?.user ?? null);
+    });
+    return () => listener.subscription.unsubscribe();
+    // The selected pet is intentionally resolved when the account session changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function persist(records: HistoryRecord[]) {
     setHistory(records);
     try {
@@ -1123,18 +1189,58 @@ export function PetFlowApp() {
       /* Continue without persistence. */
     }
   }
-  function openProfile(returnTo: "home" | "check") {
+  function selectPet(nextProfile: PetProfile) {
+    setProfile(nextProfile);
+    setSelectedPetId(nextProfile.id);
+    setInput(profileToHealthInput(nextProfile));
+  }
+  function openProfile(
+    returnTo: "home" | "check" | "account",
+    target: PetProfile = profile,
+  ) {
     setProfileReturnView(returnTo);
+    setEditingProfile(target);
     setView("profile");
   }
-  function saveProfile(nextProfile: PetProfile) {
-    setProfile(nextProfile);
-    try {
-      localStorage.setItem("petflow-profile", JSON.stringify(nextProfile));
-    } catch {
-      /* Continue without persistence. */
+  async function saveProfile(nextProfile: PetProfile): Promise<string | null> {
+    const supabase = getSupabaseBrowserClient();
+    let savedProfile = nextProfile;
+    if (user && supabase) {
+      const payload = {
+        ...(nextProfile.id ? { id: nextProfile.id } : {}),
+        user_id: user.id,
+        name: nextProfile.name,
+        species: nextProfile.species,
+        breed: nextProfile.breed || null,
+        birth_date: nextProfile.birthDate || null,
+        sex: nextProfile.sex,
+        weight: nextProfile.weight || null,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error: saveError } = await supabase
+        .from("pets")
+        .upsert(payload)
+        .select("id")
+        .single();
+      if (saveError || !data) return "저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
+      savedProfile = { ...nextProfile, id: data.id };
+      setPets((current) => {
+        const exists = current.some((pet) => pet.id === savedProfile.id);
+        return exists
+          ? current.map((pet) => pet.id === savedProfile.id ? savedProfile : pet)
+          : [...current, savedProfile];
+      });
+      setSelectedPetId(savedProfile.id);
     }
-    const nextInput = profileToHealthInput(nextProfile);
+    setProfile(savedProfile);
+    if (!user) {
+      try {
+        localStorage.setItem("petflow-profile", JSON.stringify(savedProfile));
+      } catch {
+        /* Continue without persistence. */
+      }
+    }
+    const nextInput = profileToHealthInput(savedProfile);
     setInput((current) =>
       profileReturnView === "check"
         ? {
@@ -1151,6 +1257,39 @@ export function PetFlowApp() {
     );
     setError("");
     setView(profileReturnView);
+    return null;
+  }
+  async function handleAuth(
+    mode: "login" | "signup",
+    email: string,
+    password: string,
+  ) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return "로그인 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.";
+    const result = mode === "signup"
+      ? await supabase.auth.signUp({ email, password })
+      : await supabase.auth.signInWithPassword({ email, password });
+    if (result.error) return result.error.message === "Invalid login credentials"
+      ? "이메일 또는 비밀번호를 확인해 주세요."
+      : "계정을 처리하지 못했어요. 입력 내용을 확인해 주세요.";
+    if (mode === "signup" && !result.data.session) {
+      return "가입 확인 메일을 보냈어요. 확인 후 로그인해 주세요.";
+    }
+    return "";
+  }
+  async function logout() {
+    const supabase = getSupabaseBrowserClient();
+    await supabase?.auth.signOut();
+    setProfile(initialProfile);
+    setInput(initialInput);
+    setPets([]);
+    setSelectedPetId(undefined);
+    try {
+      localStorage.removeItem("petflow-profile");
+    } catch {
+      /* Local storage is optional. */
+    }
+    setView("home");
   }
   function startNew() {
     if (!profile.name.trim()) {
@@ -1170,11 +1309,19 @@ export function PetFlowApp() {
     setError("");
     try {
       const clientId = getOrCreateClientId();
+      const supabase = getSupabaseBrowserClient();
+      const { data: sessionData } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-petflow-client-id": clientId,
+          ...(sessionData.session?.access_token
+            ? { Authorization: `Bearer ${sessionData.session.access_token}` }
+            : {}),
+          ...(selectedPetId ? { "x-petflow-pet-id": selectedPetId } : {}),
         },
         body: JSON.stringify(input),
       });
@@ -1221,6 +1368,7 @@ export function PetFlowApp() {
       <SideNav view={currentView} setView={setView} onStart={startNew} />
       <header className="mobile-header">
         <Brand small />
+        <button className="mobile-account" onClick={() => setView("account")}>내 계정</button>
       </header>
       <main className="app-main">
         {currentView === "home" && (
@@ -1230,13 +1378,28 @@ export function PetFlowApp() {
             onStart={startNew}
             onHistory={() => setView("history")}
             onProfile={() => openProfile("home")}
+            onAccount={() => setView("account")}
           />
         )}{" "}
         {currentView === "profile" && (
           <ProfileView
-            profile={profile}
-            onCancel={() => setView(profile.name ? profileReturnView : "home")}
+            profile={editingProfile}
+            onCancel={() => setView(profileReturnView)}
             onSave={saveProfile}
+          />
+        )}{" "}
+        {currentView === "account" && (
+          <AccountView
+            user={user}
+            pets={pets}
+            selectedPetId={selectedPetId}
+            authReady={authReady}
+            onBack={() => setView("home")}
+            onAuth={handleAuth}
+            onLogout={logout}
+            onAddPet={() => openProfile("account", initialProfile)}
+            onEditPet={(pet) => openProfile("account", pet)}
+            onSelectPet={(pet) => { selectPet(pet); setView("home"); }}
           />
         )}{" "}
         {currentView === "check" && (

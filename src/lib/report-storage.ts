@@ -6,6 +6,8 @@ const uuidPattern =
 export interface StoredHealthReport {
   id: string;
   client_id: string;
+  user_id: string | null;
+  pet_id: string | null;
   species: HealthCheckInput["species"];
   breed: string | null;
   age_group: HealthCheckInput["ageGroup"];
@@ -35,11 +37,15 @@ export function toStoredHealthReport(
     appVersion?: string;
     environment?: string;
     isTest?: boolean;
+    userId?: string | null;
+    petId?: string | null;
   } = {},
 ): StoredHealthReport {
   return {
     id: result.id,
     client_id: clientId,
+    user_id: options.userId ?? null,
+    pet_id: options.petId ?? null,
     species: input.species,
     breed: input.breed?.trim().slice(0, 80) || null,
     age_group: input.ageGroup,

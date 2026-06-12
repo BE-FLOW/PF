@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { analyzeLocally, isHealthCheckInput } from "@/lib/analysis";
-import { saveHealthReport } from "@/lib/supabase-admin";
+import { getReportOwner, saveHealthReport } from "@/lib/supabase-admin";
 import type { AnalysisResult, HealthCheckInput } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -137,7 +137,12 @@ export async function POST(request: Request) {
   const result = await enrichWithOpenAI(body, localResult);
   const clientId = request.headers.get("x-petflow-client-id");
   const isTest = request.headers.get("x-petflow-test") === "true";
-  const saved = await saveHealthReport(body, result, clientId, isTest);
+  const authorization = request.headers.get("authorization");
+  const owner = await getReportOwner(
+    authorization?.startsWith("Bearer ") ? authorization.slice(7) : null,
+    request.headers.get("x-petflow-pet-id"),
+  );
+  const saved = await saveHealthReport(body, result, clientId, isTest, owner ?? {});
 
   return NextResponse.json({
     ...result,

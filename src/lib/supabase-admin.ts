@@ -49,6 +49,7 @@ export async function saveHealthReport(
   result: AnalysisResult,
   clientId: string | null,
   isTest = false,
+  account: { userId?: string | null; petId?: string | null } = {},
 ): Promise<boolean> {
   if (!isUuid(clientId)) return false;
 
@@ -57,6 +58,8 @@ export async function saveHealthReport(
       appVersion: appVersion(),
       environment: deploymentEnvironment(),
       isTest,
+      userId: account.userId,
+      petId: account.petId,
     });
     const response = await supabaseRequest(
       "health_reports?on_conflict=id%2Cclient_id",
@@ -69,6 +72,36 @@ export async function saveHealthReport(
     return response?.ok ?? false;
   } catch {
     return false;
+  }
+}
+
+export async function getReportOwner(
+  accessToken: string | null,
+  petId: string | null,
+): Promise<{ userId: string; petId: string } | null> {
+  const config = getConfig();
+  if (!config || !accessToken || !isUuid(petId)) return null;
+  try {
+    const userResponse = await fetch(`${config.url}/auth/v1/user`, {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+    if (!userResponse.ok) return null;
+    const user = (await userResponse.json()) as { id?: string };
+    if (!isUuid(user.id)) return null;
+    const petResponse = await supabaseRequest(
+      `pets?id=eq.${petId}&user_id=eq.${user.id}&select=id&limit=1`,
+      { method: "GET" },
+    );
+    if (!petResponse?.ok) return null;
+    const pets = (await petResponse.json()) as Array<{ id: string }>;
+    return pets[0]?.id === petId ? { userId: user.id, petId } : null;
+  } catch {
+    return null;
   }
 }
 

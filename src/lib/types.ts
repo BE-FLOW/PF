@@ -22,6 +22,7 @@ export type SymptomId =
 export type RedFlagId = "breathing" | "collapse" | "seizure" | "bleeding";
 
 export interface PetProfile {
+  id?: string;
   name: string;
   species: Species;
   breed: string;
