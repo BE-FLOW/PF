@@ -5,12 +5,18 @@ import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
 import { deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
+import { summarizeHealthFlow } from "@/lib/health-flow";
 import { normalizeKoreanMobile } from "@/lib/phone";
+import {
+  storedReportToHistoryRecord,
+  type DisplayHealthReport,
+} from "@/lib/report-storage";
 import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AnalysisResult,
   HealthCheckInput,
+  HealthFlowSummary,
   HistoryRecord,
   Level,
   PetProfile,
@@ -114,6 +120,40 @@ function getOrCreateClientId() {
   }
 }
 
+async function fetchPetHistory(
+  profile: PetProfile,
+  accessToken: string,
+): Promise<HistoryRecord[]> {
+  if (!profile.id) return [];
+  const response = await fetch(`/api/pets/${profile.id}/history`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) return [];
+  const payload = (await response.json()) as { reports: DisplayHealthReport[] };
+  return payload.reports.map((report) =>
+    storedReportToHistoryRecord(report, profile),
+  );
+}
+
+function mergePetHistory(
+  current: HistoryRecord[],
+  remoteRecords: HistoryRecord[],
+  petId: string,
+) {
+  const otherPets = current.filter((record) => record.petId !== petId);
+  const localOnly = current.filter(
+    (record) =>
+      record.petId === petId &&
+      !remoteRecords.some((remote) => remote.result.id === record.result.id),
+  );
+  const merged = [...remoteRecords, ...localOnly].sort(
+    (a, b) =>
+      new Date(b.result.createdAt).getTime() -
+      new Date(a.result.createdAt).getTime(),
+  );
+  return [...merged, ...otherPets].slice(0, 100);
+}
+
 function Brand({ small = false }: { small?: boolean }) {
   return (
     <div className="brand">
@@ -139,7 +179,7 @@ function SideNav({
   const items: Array<{ id: View; label: string; icon: IconName }> = [
     { id: "home", label: "홈", icon: "home" },
     { id: "check", label: "건강 기록", icon: "plus" },
-    { id: "history", label: "지난 기록", icon: "history" },
+    { id: "history", label: "건강 흐름", icon: "history" },
   ];
   return (
     <aside className="desktop-sidebar">
@@ -196,7 +236,7 @@ function MobileNav({
         onClick={() => setView("history")}
       >
         <Icon name="history" size={20} />
-        지난 기록
+        건강 흐름
       </button>
     </nav>
   );
@@ -209,6 +249,8 @@ function HomeView({
   onHistory,
   onProfile,
   onAccount,
+  flow,
+  flowLoading,
 }: {
   profile: PetProfile;
   history: HistoryRecord[];
@@ -216,6 +258,8 @@ function HomeView({
   onHistory: () => void;
   onProfile: () => void;
   onAccount: () => void;
+  flow: HealthFlowSummary;
+  flowLoading: boolean;
 }) {
   const recent = history[0];
   const hasProfile = Boolean(profile.name.trim());
@@ -281,7 +325,7 @@ function HomeView({
           <p>
             오늘의 식욕과 활력, 증상을 남기면
             <br />
-            병원에 보여줄 요약까지 한 번에 정리해 드려요.
+            기록이 쌓이면 건강 흐름과 병원용 요약으로 정리해 드려요.
           </p>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
@@ -313,10 +357,34 @@ function HomeView({
           </div>
         </div>
       </section>
+      {hasProfile && (
+        <section className={`flow-card ${flow.trend}`}>
+          <div className="flow-card-head">
+            <div>
+              <p className="eyebrow">14-DAY HEALTH FLOW</p>
+              <h2>{flowLoading ? "건강 흐름을 불러오는 중..." : flow.headline}</h2>
+            </div>
+            <span className="flow-count">기록 {flow.recordCount}회</span>
+          </div>
+          {!flowLoading && (
+            <>
+              <p>{flow.description}</p>
+              {flow.repeatedSymptoms.length > 0 && (
+                <div className="flow-tags">
+                  {flow.repeatedSymptoms.map((item) => <span key={item}>{item}</span>)}
+                </div>
+              )}
+              <button className="text-button flow-link" onClick={onHistory}>
+                전체 건강 흐름 보기
+              </button>
+            </>
+          )}
+        </section>
+      )}
       <div className="dashboard-grid">
         <section className="panel">
           <div className="panel-head">
-            <h3>이번 주 건강 한눈에 보기</h3>
+            <h3>최근 기록 한눈에 보기</h3>
             <button className="text-button" onClick={onHistory}>
               전체 보기
             </button>
@@ -356,7 +424,7 @@ function HomeView({
         </section>
         <section className="panel">
           <div className="panel-head">
-            <h3>최근 건강 기록</h3>
+            <h3>가장 최근 기록</h3>
           </div>
           {recent ? (
             <div className="timeline">
@@ -375,7 +443,7 @@ function HomeView({
                   <Icon name="clipboard" size={17} />
                 </span>
                 <span>
-                  <strong>건강 리포트를 만들었어요</strong>
+                  <strong>오늘 건강 기록을 남겼어요</strong>
                   <span>{formatDate(recent.result.createdAt)}</span>
                 </span>
                 <em
@@ -897,8 +965,8 @@ function ResultView({
           <Icon name="arrow" size={20} />
         </button>
         <div>
-          <p className="eyebrow">HEALTH REPORT</p>
-          <h1>{record.input.petName || "반려동물"}의 건강 리포트</h1>
+          <p className="eyebrow">TODAY&apos;S RECORD</p>
+          <h1>{record.input.petName || "반려동물"}의 오늘 기록</h1>
           <p>{formatDate(result.createdAt)} 기준 기록이에요.</p>
         </div>
       </div>
@@ -979,7 +1047,7 @@ function ResultView({
           </div>
           <section className="result-card">
             <div className="feedback-row">
-              <p>이 리포트가 기록 정리에 도움이 됐나요?</p>
+              <p>오늘 기록 정리가 도움이 됐나요?</p>
               <div className="feedback-buttons">
                 <button
                   className={`feedback-button ${record.feedback === "helpful" ? "active" : ""}`}
@@ -1012,11 +1080,13 @@ function ResultView({
 
 function HistoryView({
   history,
+  flow,
   onBack,
   onSelect,
   onStart,
 }: {
   history: HistoryRecord[];
+  flow: HealthFlowSummary;
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
   onStart: () => void;
@@ -1028,11 +1098,19 @@ function HistoryView({
           <Icon name="arrow" size={20} />
         </button>
         <div>
-          <p className="eyebrow">HEALTH HISTORY</p>
-          <h1>지난 건강 기록</h1>
-          <p>최근 리포트는 이 브라우저에만 보관돼요.</p>
+          <p className="eyebrow">HEALTH FLOW</p>
+          <h1>건강 흐름</h1>
+          <p>최근 14일의 기록을 한 번에 정리했어요.</p>
         </div>
       </div>
+      <section className={`flow-summary ${flow.trend}`}>
+        <div>
+          <span>최근 14일 · {flow.recordCount}회 기록</span>
+          <h2>{flow.headline}</h2>
+          <p>{flow.description}</p>
+        </div>
+        {flow.recordCount > 0 && <pre>{flow.vetBrief}</pre>}
+      </section>
       {history.length ? (
         <div className="history-grid">
           {history.map((record) => (
@@ -1069,7 +1147,7 @@ function HistoryView({
             <Icon name="history" size={18} />
           </span>
           <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>
-            아직 건강 기록이 없어요
+            아직 건강 흐름이 없어요
           </h2>
           <p style={{ fontSize: 12, color: "#81908b", margin: 0 }}>
             오늘의 작은 변화부터 기록해 보세요.
@@ -1099,6 +1177,7 @@ export function PetFlowApp() {
     "home",
   );
   const [loading, setLoading] = useState(false);
+  const [flowLoading, setFlowLoading] = useState(false);
   const [error, setError] = useState("");
   const currentView = useMemo(
     () => (view === "result" && !selected ? "home" : view),
@@ -1109,6 +1188,10 @@ export function PetFlowApp() {
     if (!selectedPetId) return [];
     return history.filter((record) => record.petId === selectedPetId);
   }, [history, selectedPetId, user]);
+  const healthFlow = useMemo(
+    () => summarizeHealthFlow(visibleHistory, profile.name || "반려동물"),
+    [profile.name, visibleHistory],
+  );
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -1193,7 +1276,19 @@ export function PetFlowApp() {
       );
       const nextPet = loadedPets[0];
       if (nextPet) {
-        selectPet(nextPet);
+        setProfile(nextPet);
+        setSelectedPetId(nextPet.id);
+        setInput(profileToHealthInput(nextPet));
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session && nextPet.id) {
+          const remoteRecords = await fetchPetHistory(
+            nextPet,
+            sessionData.session.access_token,
+          );
+          setHistory((current) =>
+            mergePetHistory(current, remoteRecords, nextPet.id as string),
+          );
+        }
       } else {
         setProfile(initialProfile);
         setInput(initialInput);
@@ -1216,10 +1311,29 @@ export function PetFlowApp() {
       /* Continue without persistence. */
     }
   }
+  async function loadPetHistory(nextProfile: PetProfile) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !nextProfile.id) return;
+    setFlowLoading(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+      const remoteRecords = await fetchPetHistory(
+        nextProfile,
+        data.session.access_token,
+      );
+      setHistory((current) =>
+        mergePetHistory(current, remoteRecords, nextProfile.id as string),
+      );
+    } finally {
+      setFlowLoading(false);
+    }
+  }
   function selectPet(nextProfile: PetProfile) {
     setProfile(nextProfile);
     setSelectedPetId(nextProfile.id);
     setInput(profileToHealthInput(nextProfile));
+    void loadPetHistory(nextProfile);
   }
   function openProfile(
     returnTo: "home" | "check" | "account",
@@ -1395,7 +1509,7 @@ export function PetFlowApp() {
       if (!response.ok) throw new Error("analysis failed");
       const result = (await response.json()) as AnalysisResult;
       const record: HistoryRecord = { input, result, petId: selectedPetId };
-      persist([record, ...history].slice(0, 20));
+      persist([record, ...history].slice(0, 100));
       setSelected(record);
       setView("result");
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1446,6 +1560,8 @@ export function PetFlowApp() {
             onHistory={() => setView("history")}
             onProfile={() => openProfile("home")}
             onAccount={() => setView("account")}
+            flow={healthFlow}
+            flowLoading={flowLoading}
           />
         )}{" "}
         {currentView === "profile" && (
@@ -1494,6 +1610,7 @@ export function PetFlowApp() {
         {currentView === "history" && (
           <HistoryView
             history={visibleHistory}
+            flow={healthFlow}
             onBack={() => setView("home")}
             onStart={startNew}
             onSelect={(record) => {

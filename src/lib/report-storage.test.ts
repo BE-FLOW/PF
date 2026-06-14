@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { analyzeLocally } from "./analysis";
-import { isUuid, toStoredHealthReport } from "./report-storage";
+import {
+  isUuid,
+  storedReportToHistoryRecord,
+  toStoredHealthReport,
+} from "./report-storage";
 import type { HealthCheckInput } from "./types";
 
 const input: HealthCheckInput = {
@@ -45,5 +49,27 @@ describe("report storage", () => {
     expect(serialized).not.toContain("2021-05-02");
     expect(serialized).not.toContain("아침에 두 번");
     expect(serialized).not.toContain(result.vetBrief);
+  });
+
+  it("rebuilds a display record from a stored structured report", () => {
+    const result = analyzeLocally(input);
+    const stored = toStoredHealthReport(
+      input,
+      result,
+      "20000000-0000-4000-8000-000000000001",
+      { petId: "40000000-0000-4000-8000-000000000001" },
+    );
+    const rebuilt = storedReportToHistoryRecord(stored, {
+      id: stored.pet_id ?? undefined,
+      name: "보리",
+      species: "dog",
+      breed: "말티즈",
+      birthDate: "2021-05-02",
+      sex: "neutered-male",
+      weight: "4.2kg",
+    });
+    expect(rebuilt.result.id).toBe(stored.id);
+    expect(rebuilt.input.petName).toBe("보리");
+    expect(rebuilt.petId).toBe(stored.pet_id);
   });
 });

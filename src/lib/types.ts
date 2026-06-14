@@ -78,3 +78,16 @@ export interface HistoryRecord {
   result: AnalysisResult;
   feedback?: "helpful" | "not-helpful";
 }
+
+export type HealthTrend = "stable" | "watch" | "worsening";
+
+export interface HealthFlowSummary {
+  trend: HealthTrend;
+  headline: string;
+  description: string;
+  recordCount: number;
+  repeatedSymptoms: string[];
+  highestRisk: RiskLevel | null;
+  latestRecordedAt: string | null;
+  vetBrief: string;
+}

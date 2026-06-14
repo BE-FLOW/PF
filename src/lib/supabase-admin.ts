@@ -1,5 +1,9 @@
 import type { AnalysisResult, HealthCheckInput } from "./types";
-import { isUuid, toStoredHealthReport } from "./report-storage";
+import {
+  isUuid,
+  toStoredHealthReport,
+  type DisplayHealthReport,
+} from "./report-storage";
 
 const requestTimeoutMs = 3500;
 
@@ -100,6 +104,24 @@ export async function getReportOwner(
     if (!petResponse?.ok) return null;
     const pets = (await petResponse.json()) as Array<{ id: string }>;
     return pets[0]?.id === petId ? { userId: user.id, petId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function listPetHealthReports(
+  accessToken: string | null,
+  petId: string | null,
+): Promise<DisplayHealthReport[] | null> {
+  const owner = await getReportOwner(accessToken, petId);
+  if (!owner) return null;
+  try {
+    const response = await supabaseRequest(
+      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc&limit=60`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    return (await response.json()) as DisplayHealthReport[];
   } catch {
     return null;
   }

@@ -472,6 +472,107 @@ p {
   gap: 22px;
   margin-top: 22px;
 }
+.flow-card {
+  margin-top: 22px;
+  padding: 25px;
+  border: 1px solid #cfe3d9;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #f5fbf7, #eef8f2);
+}
+.flow-card.watch {
+  border-color: #f0d8b8;
+  background: linear-gradient(135deg, #fffaf1, #fff5e8);
+}
+.flow-card.worsening {
+  border-color: #e9c0bc;
+  background: linear-gradient(135deg, #fff6f5, #fff0ee);
+}
+.flow-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.flow-card h2 {
+  margin: 6px 0 0;
+  font-size: 20px;
+}
+.flow-card > p {
+  margin: 11px 0 0;
+  color: #61736d;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.flow-count {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: var(--mint-dark);
+  background: rgba(255, 255, 255, 0.75);
+  font-size: 10px;
+  font-weight: 900;
+}
+.flow-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+}
+.flow-tags span {
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #5d6f69;
+  font-size: 10px;
+  font-weight: 800;
+}
+.flow-link {
+  margin-top: 17px;
+}
+.flow-summary {
+  margin-bottom: 18px;
+  padding: 24px;
+  border: 1px solid #cfe3d9;
+  border-radius: 22px;
+  background: #f6fbf8;
+  display: grid;
+  grid-template-columns: 1fr 0.8fr;
+  gap: 20px;
+}
+.flow-summary.watch {
+  border-color: #f0d8b8;
+  background: #fffaf1;
+}
+.flow-summary.worsening {
+  border-color: #e9c0bc;
+  background: #fff6f5;
+}
+.flow-summary span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+.flow-summary h2 {
+  margin: 8px 0;
+  font-size: 19px;
+}
+.flow-summary p {
+  margin: 0;
+  color: #61736d;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.flow-summary pre {
+  margin: 0;
+  padding: 15px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.75);
+  color: #51645e;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
 .panel {
   padding: 24px;
   border: 1px solid rgba(223, 233, 228, 0.9);
@@ -1533,6 +1634,9 @@ p {
     transform-origin: right bottom;
   }
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+  .flow-summary {
     grid-template-columns: 1fr;
   }
   .panel {

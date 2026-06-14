@@ -1,4 +1,10 @@
-import type { AnalysisResult, HealthCheckInput } from "./types";
+import { analyzeLocally, profileToHealthInput } from "./analysis";
+import type {
+  AnalysisResult,
+  HealthCheckInput,
+  HistoryRecord,
+  PetProfile,
+} from "./types";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -24,6 +30,11 @@ export interface StoredHealthReport {
   is_test: boolean;
   created_at: string;
 }
+
+export type DisplayHealthReport = Omit<
+  StoredHealthReport,
+  "client_id" | "user_id" | "app_version" | "deployment_environment" | "is_test"
+>;
 
 export function isUuid(value: string | null | undefined): value is string {
   return Boolean(value && uuidPattern.test(value));
@@ -61,5 +72,33 @@ export function toStoredHealthReport(
     deployment_environment: options.environment || "development",
     is_test: options.isTest ?? false,
     created_at: result.createdAt,
+  };
+}
+
+export function storedReportToHistoryRecord(
+  stored: DisplayHealthReport,
+  profile: PetProfile,
+): HistoryRecord {
+  const input: HealthCheckInput = {
+    ...profileToHealthInput(profile),
+    symptoms: stored.symptoms,
+    appetite: stored.appetite,
+    energy: stored.energy,
+    duration: stored.duration,
+    redFlags: stored.red_flags,
+  };
+  const generated = analyzeLocally(input);
+  return {
+    petId: stored.pet_id ?? profile.id,
+    input,
+    result: {
+      ...generated,
+      id: stored.id,
+      createdAt: stored.created_at,
+      riskLevel: stored.risk_level,
+      riskScore: stored.risk_score,
+      source: stored.analysis_source,
+      storage: "remote",
+    },
   };
 }
