@@ -5,7 +5,7 @@
 - PetFlow organizes owner-provided observations; it does not diagnose or prescribe.
 - Keep the core flow mobile-first: input, analyze, report, feedback.
 - Prefer Korean user-facing copy and explicit text errors.
-- Do not collect email, phone number, location, or identity data in v0.1.
+- In the v0.2 tester environment, collect only email, nickname, and a Korean mobile number with explicit purpose and retention notice. Do not collect location, address, or legal identity data.
 
 ## Architecture
 

@@ -2,15 +2,20 @@
 
 import { useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { testerPrivacySummary } from "@/lib/privacy";
+import { formatKoreanMobile, normalizeKoreanMobile } from "@/lib/phone";
+import { testerConsentVersion, testerPrivacySummary } from "@/lib/privacy";
 import type { PetProfile, TesterProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
-type TesterDraft = Pick<TesterProfile, "nickname" | "ageBand" | "careExperience">;
+type TesterDraft = Pick<
+  TesterProfile,
+  "nickname" | "phone" | "ageBand" | "careExperience"
+>;
 
 const emptyTesterDraft: TesterDraft = {
   nickname: "",
+  phone: "",
   ageBand: "",
   careExperience: "",
 };
@@ -33,6 +38,21 @@ function TesterFields({
           onChange={(event) => setDraft({ ...draft, nickname: event.target.value })}
           placeholder="예: 보리보호자"
         />
+      </div>
+      <div className="field">
+        <label htmlFor="testerPhone">휴대전화번호</label>
+        <input
+          id="testerPhone"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          value={formatKoreanMobile(draft.phone)}
+          onChange={(event) =>
+            setDraft({ ...draft, phone: formatKoreanMobile(event.target.value) })
+          }
+          placeholder="010-1234-5678"
+        />
+        <small className="field-help">서비스 안내와 테스트 관련 연락에만 사용합니다.</small>
       </div>
       <div className="form-grid">
         <div className="field">
@@ -85,7 +105,7 @@ function PrivacyNotice() {
         <div><dt>목적</dt><dd>{testerPrivacySummary.purpose}</dd></div>
         <div><dt>보관</dt><dd>{testerPrivacySummary.retention}</dd></div>
       </dl>
-      <p>선택 정보는 입력하지 않아도 가입할 수 있습니다. 필수 정보 수집에 동의하지 않으면 테스트 계정을 만들 수 없습니다.</p>
+      <p>전화번호는 광고나 마케팅에 사용하지 않습니다. 선택 정보는 입력하지 않아도 가입할 수 있습니다.</p>
       <a href="/privacy" target="_blank" rel="noreferrer">전체 테스트 개인정보 안내 보기</a>
     </details>
   );
@@ -127,13 +147,29 @@ export function AccountView({
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [draft, setDraft] = useState<TesterDraft>(emptyTesterDraft);
-  const [consented, setConsented] = useState(false);
+  const [draft, setDraft] = useState<TesterDraft>(() =>
+    testerProfile
+      ? {
+          nickname: testerProfile.nickname,
+          phone: formatKoreanMobile(testerProfile.phone),
+          ageBand: testerProfile.ageBand,
+          careExperience: testerProfile.careExperience,
+        }
+      : emptyTesterDraft,
+  );
+  const [consented, setConsented] = useState(
+    testerProfile?.consentVersion === testerConsentVersion,
+  );
   const [editingTester, setEditingTester] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const needsTesterProfile = Boolean(user && !testerProfile);
+  const needsTesterProfile = Boolean(
+    user &&
+      (!testerProfile ||
+        !normalizeKoreanMobile(testerProfile.phone) ||
+        testerProfile.consentVersion !== testerConsentVersion),
+  );
   const showTesterForm = needsTesterProfile || editingTester;
 
   async function submitAuth() {
@@ -141,8 +177,11 @@ export function AccountView({
       setMessage("이메일과 6자 이상의 비밀번호를 입력해 주세요.");
       return;
     }
-    if (mode === "signup" && (!draft.nickname.trim() || !consented)) {
-      setMessage("닉네임을 입력하고 필수 수집에 동의해 주세요.");
+    if (
+      mode === "signup" &&
+      (!draft.nickname.trim() || !normalizeKoreanMobile(draft.phone) || !consented)
+    ) {
+      setMessage("닉네임, 010 휴대전화번호와 필수 동의를 확인해 주세요.");
       return;
     }
     setLoading(true);
@@ -151,8 +190,8 @@ export function AccountView({
   }
 
   async function saveTester() {
-    if (!draft.nickname.trim() || !consented) {
-      setMessage("닉네임을 입력하고 필수 수집에 동의해 주세요.");
+    if (!draft.nickname.trim() || !normalizeKoreanMobile(draft.phone) || !consented) {
+      setMessage("닉네임, 010 휴대전화번호와 필수 동의를 확인해 주세요.");
       return;
     }
     setLoading(true);
@@ -164,7 +203,7 @@ export function AccountView({
 
   function startEditingTester() {
     setDraft(testerProfile ?? emptyTesterDraft);
-    setConsented(Boolean(testerProfile));
+    setConsented(testerProfile?.consentVersion === testerConsentVersion);
     setMessage("");
     setEditingTester(true);
   }
@@ -205,7 +244,7 @@ export function AccountView({
               <PrivacyNotice />
               <label className="consent-check">
                 <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
-                <span>필수 개인정보 수집·이용에 동의합니다.</span>
+                <span>휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.</span>
               </label>
               {message && <div className="form-error" role="alert">{message}</div>}
               <button className="primary-button auth-submit" onClick={saveTester} disabled={loading}>
@@ -265,7 +304,7 @@ export function AccountView({
               <PrivacyNotice />
               <label className="consent-check">
                 <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
-                <span>필수 개인정보 수집·이용에 동의합니다.</span>
+                <span>휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.</span>
               </label>
             </>
           )}

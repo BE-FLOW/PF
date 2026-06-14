@@ -1,6 +1,6 @@
 begin;
 
-select plan(13);
+select plan(15);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -47,6 +47,13 @@ select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'tester_profiles'),
   4,
   'tester profiles has owner-only CRUD policies'
+);
+select has_column('public', 'tester_profiles', 'phone', 'tester phone exists');
+select has_column(
+  'public',
+  'tester_profiles',
+  'phone_consented_at',
+  'phone consent timestamp exists'
 );
 select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename in ('health_reports', 'health_report_feedback')),

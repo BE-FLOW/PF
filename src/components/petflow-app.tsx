@@ -5,6 +5,7 @@ import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
 import { deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
+import { normalizeKoreanMobile } from "@/lib/phone";
 import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -1164,7 +1165,7 @@ export function PetFlowApp() {
           .order("created_at", { ascending: true }),
         supabase
           .from("tester_profiles")
-          .select("nickname,age_band,care_experience,consent_version,consented_at")
+          .select("nickname,phone,age_band,care_experience,consent_version,consented_at,phone_consented_at")
           .maybeSingle(),
       ]);
       const loadedPets: PetProfile[] = (data ?? []).map((pet) => ({
@@ -1181,10 +1182,12 @@ export function PetFlowApp() {
         tester
           ? {
               nickname: tester.nickname,
+              phone: tester.phone ?? "",
               ageBand: tester.age_band ?? "",
               careExperience: tester.care_experience ?? "",
               consentVersion: tester.consent_version,
               consentedAt: tester.consented_at,
+              phoneConsentedAt: tester.phone_consented_at ?? "",
             }
           : null,
       );
@@ -1287,7 +1290,7 @@ export function PetFlowApp() {
     mode: "login" | "signup",
     email: string,
     password: string,
-    tester: Pick<TesterProfile, "nickname" | "ageBand" | "careExperience">,
+    tester: Pick<TesterProfile, "nickname" | "phone" | "ageBand" | "careExperience">,
     consented: boolean,
   ) {
     const supabase = getSupabaseBrowserClient();
@@ -1308,30 +1311,35 @@ export function PetFlowApp() {
     return "";
   }
   async function saveTesterProfile(
-    tester: Pick<TesterProfile, "nickname" | "ageBand" | "careExperience">,
+    tester: Pick<TesterProfile, "nickname" | "phone" | "ageBand" | "careExperience">,
     consented: boolean,
     userId = user?.id,
   ) {
     const supabase = getSupabaseBrowserClient();
-    if (!supabase || !userId || !consented || !tester.nickname.trim()) {
+    const phone = normalizeKoreanMobile(tester.phone);
+    if (!supabase || !userId || !consented || !tester.nickname.trim() || !phone) {
       return "필수 정보를 다시 확인해 주세요.";
     }
     const consentedAt = new Date().toISOString();
     const { error: profileError } = await supabase.from("tester_profiles").upsert({
       user_id: userId,
       nickname: tester.nickname.trim(),
+      phone,
       age_band: tester.ageBand || null,
       care_experience: tester.careExperience || null,
       consent_version: testerConsentVersion,
       consented_at: consentedAt,
+      phone_consented_at: consentedAt,
       updated_at: consentedAt,
     });
     if (profileError) return "테스터 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
     setTesterProfile({
       ...tester,
       nickname: tester.nickname.trim(),
+      phone,
       consentVersion: testerConsentVersion,
       consentedAt,
+      phoneConsentedAt: consentedAt,
     });
     return "";
   }
@@ -1449,6 +1457,7 @@ export function PetFlowApp() {
         )}{" "}
         {currentView === "account" && (
           <AccountView
+            key={`${user?.id ?? "guest"}:${testerProfile?.consentVersion ?? "none"}:${testerProfile?.phone ?? "none"}`}
             user={user}
             testerProfile={testerProfile}
             pets={pets}

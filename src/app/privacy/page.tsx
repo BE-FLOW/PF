@@ -7,7 +7,7 @@ export default function PrivacyPage() {
       <div className="privacy-sheet">
         <p className="eyebrow">PETFLOW TEST</p>
         <h1>테스트 개인정보 안내</h1>
-        <p>시행일: 2026년 6월 12일</p>
+        <p>시행일: 2026년 6월 15일</p>
 
         <section>
           <h2>수집 정보</h2>
@@ -19,6 +19,7 @@ export default function PrivacyPage() {
           <h2>이용 목적과 기간</h2>
           <p>목적: {testerPrivacySummary.purpose}</p>
           <p>보관: {testerPrivacySummary.retention}</p>
+          <p>휴대전화번호는 서비스 안내와 테스트 관련 연락에만 사용하며 광고·마케팅에는 사용하지 않습니다.</p>
         </section>
         <section>
           <h2>선택과 삭제</h2>

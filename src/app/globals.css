@@ -712,6 +712,11 @@ p {
   font-size: 12px;
   font-weight: 900;
 }
+.field-help {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
 .field input,
 .field textarea,
 .field select {

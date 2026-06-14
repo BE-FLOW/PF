@@ -6,6 +6,7 @@
 
 - 로그인 이메일
 - 테스터 닉네임
+- 국내 휴대전화번호 (`010` 11자리)
 - 개인정보 수집 동의 버전과 시각
 
 선택:
@@ -16,7 +17,6 @@
 
 수집하지 않음:
 
-- 전화번호
 - 주소와 정확한 위치
 - 실명 확인 정보
 - 반려동물 등록번호
@@ -32,6 +32,9 @@
 `health_reports`에는 반려동물 이름, 생일, 자유 메모, 생성된 병원 요약 원문을
 저장하지 않는다.
 
+전화번호는 서비스 안내와 테스트 관련 연락, 요청·장애 대응에만 사용한다.
+광고·마케팅과 SMS 로그인에는 사용하지 않는다.
+
 ## 접근 통제
 
 `pets`와 `tester_profiles`는 RLS가 활성화되어 있으며 로그인 사용자는 자신의
@@ -41,7 +44,7 @@
 ## 관리 화면
 
 - 이메일과 가입 상태: Supabase Authentication > Users
-- 테스터 목록과 활동량: Table Editor > `tester_management`
+- 테스터 연락처와 활동량: Table Editor > `tester_management`
 - 반려동물: Table Editor > `pets`
 - 리포트 통계: Table Editor > `health_reports`
 - 피드백: Table Editor > `health_report_feedback`
