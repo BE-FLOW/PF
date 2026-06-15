@@ -1,4 +1,9 @@
-import type { AnalysisResult, HealthCheckInput, PetEpisode } from "./types";
+import type {
+  AnalysisResult,
+  EpisodePlan,
+  HealthCheckInput,
+  PetEpisode,
+} from "./types";
 import {
   isUuid,
   toStoredHealthReport,
@@ -71,6 +76,38 @@ function toPetEpisode(row: {
   };
 }
 
+function toEpisodePlan(row: {
+  id: string;
+  episode_id: string;
+  pet_id: string;
+  source_type: EpisodePlan["sourceType"];
+  review_status: EpisodePlan["reviewStatus"];
+  reported_at: string;
+  plan_tasks?: Array<{
+    id: string;
+    task_text: string;
+    position: number;
+    completed_at: string | null;
+  }>;
+}): EpisodePlan {
+  return {
+    id: row.id,
+    episodeId: row.episode_id,
+    petId: row.pet_id,
+    sourceType: row.source_type,
+    reviewStatus: row.review_status,
+    reportedAt: row.reported_at,
+    tasks: [...(row.plan_tasks ?? [])]
+      .sort((a, b) => a.position - b.position)
+      .map((task) => ({
+        id: task.id,
+        text: task.task_text,
+        position: task.position,
+        completedAt: task.completed_at,
+      })),
+  };
+}
+
 async function getAuthenticatedUserId(
   accessToken: string | null,
 ): Promise<string | null> {
@@ -133,6 +170,9 @@ export async function saveHealthReport(
             result.createdAt,
           )
         : null;
+    if (isUuid(account.userId) && isUuid(account.petId) && !episodeId) {
+      return { saved: false, episodeId: null };
+    }
     const payload = toStoredHealthReport(input, result, clientId, {
       appVersion: appVersion(),
       environment: deploymentEnvironment(),
@@ -218,6 +258,94 @@ export async function listPetEpisodes(
     return rows.map(toPetEpisode);
   } catch {
     return null;
+  }
+}
+
+export async function listPetEpisodePlans(
+  accessToken: string | null,
+  petId: string | null,
+): Promise<EpisodePlan[] | null> {
+  const owner = await getReportOwner(accessToken, petId);
+  if (!owner) return null;
+  try {
+    const response = await supabaseRequest(
+      `episode_plans?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,episode_id,pet_id,source_type,review_status,reported_at,plan_tasks(id,task_text,position,completed_at)&order=reported_at.desc`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Parameters<typeof toEpisodePlan>[0][];
+    return rows.map(toEpisodePlan);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveEpisodePlan(
+  accessToken: string | null,
+  episodeId: string | null,
+  tasks: string[],
+): Promise<EpisodePlan | null> {
+  if (!isUuid(episodeId)) return null;
+  const userId = await getAuthenticatedUserId(accessToken);
+  const cleanedTasks = tasks.map((task) => task.trim()).filter(Boolean);
+  if (
+    !userId ||
+    cleanedTasks.length < 1 ||
+    cleanedTasks.length > 5 ||
+    cleanedTasks.some((task) => task.length > 160)
+  ) return null;
+
+  try {
+    const savedResponse = await supabaseRequest(
+      "rpc/save_user_reported_episode_plan",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          target_user_id: userId,
+          target_episode_id: episodeId,
+          task_items: cleanedTasks,
+        }),
+      },
+    );
+    if (!savedResponse?.ok) return null;
+    const planId = (await savedResponse.json()) as string;
+    if (!isUuid(planId)) return null;
+
+    const response = await supabaseRequest(
+      `episode_plans?id=eq.${planId}&user_id=eq.${userId}&select=id,episode_id,pet_id,source_type,review_status,reported_at,plan_tasks(id,task_text,position,completed_at)&limit=1`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Parameters<typeof toEpisodePlan>[0][];
+    return rows[0] ? toEpisodePlan(rows[0]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setEpisodePlanTaskCompletion(
+  accessToken: string | null,
+  episodeId: string | null,
+  taskId: string | null,
+  completed: boolean,
+): Promise<boolean> {
+  if (!isUuid(episodeId) || !isUuid(taskId)) return false;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return false;
+  try {
+    const response = await supabaseRequest("rpc/set_plan_task_completion", {
+      method: "POST",
+      body: JSON.stringify({
+        target_user_id: userId,
+        target_episode_id: episodeId,
+        target_task_id: taskId,
+        is_completed: completed,
+      }),
+    });
+    if (!response?.ok) return false;
+    return (await response.json()) === true;
+  } catch {
+    return false;
   }
 }
 

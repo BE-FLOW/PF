@@ -18,3 +18,15 @@ select
 from public.health_report_feedback
 group by feedback
 order by feedback;
+
+select
+  plan.user_id,
+  plan.pet_id,
+  plan.episode_id,
+  count(task.id)::integer as task_count,
+  count(task.completed_at)::integer as completed_task_count,
+  plan.reported_at
+from public.episode_plans plan
+left join public.plan_tasks task on task.plan_id = plan.id
+group by plan.id
+order by plan.reported_at desc;

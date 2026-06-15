@@ -44,6 +44,10 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 npm run verify:deployment -- https://pf-two-eta.vercel.app
 ```
 
+현재 테스트 프로젝트는 SQL Editor로 migration을 적용해 왔고 Supabase CLI migration
+이력은 아직 초기화하지 않았다. CLI 연결 전에는 원격 스키마를 백업하고 기존 파일을
+`migration repair`로 적용 완료 처리한 뒤 `db push --dry-run` 결과를 먼저 확인한다.
+
 ## 상용 전 분리
 
 실제 출시 전에는 Production Supabase 프로젝트와 도메인을 새로 만들고, 현재 DB와

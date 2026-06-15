@@ -16,6 +16,7 @@ import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AnalysisResult,
+  EpisodePlan,
   HealthCheckInput,
   HealthFlowSummary,
   HistoryRecord,
@@ -155,21 +156,27 @@ async function copyText(text: string) {
 async function fetchPetHistory(
   profile: PetProfile,
   accessToken: string,
-): Promise<{ records: HistoryRecord[]; episodes: PetEpisode[] }> {
-  if (!profile.id) return { records: [], episodes: [] };
+): Promise<{
+  records: HistoryRecord[];
+  episodes: PetEpisode[];
+  plans: EpisodePlan[];
+}> {
+  if (!profile.id) return { records: [], episodes: [], plans: [] };
   const response = await fetch(`/api/pets/${profile.id}/history`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) return { records: [], episodes: [] };
+  if (!response.ok) return { records: [], episodes: [], plans: [] };
   const payload = (await response.json()) as {
     reports: DisplayHealthReport[];
     episodes: PetEpisode[];
+    plans: EpisodePlan[];
   };
   return {
     records: payload.reports.map((report) =>
       storedReportToHistoryRecord(report, profile),
     ),
     episodes: payload.episodes,
+    plans: payload.plans,
   };
 }
 
@@ -1135,6 +1142,7 @@ function HistoryView({
   history,
   flow,
   episodes,
+  plans,
   petName,
   onBack,
   onSelect,
@@ -1147,6 +1155,7 @@ function HistoryView({
   history: HistoryRecord[];
   flow: HealthFlowSummary;
   episodes: PetEpisode[];
+  plans: EpisodePlan[];
   petName: string;
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
@@ -1156,6 +1165,10 @@ function HistoryView({
   closingEpisodeId?: string;
   episodeError: string;
 }) {
+  const planByEpisode = useMemo(
+    () => new Map(plans.map((plan) => [plan.episodeId, plan])),
+    [plans],
+  );
   const episodeGroups = useMemo(() => {
     const episodeById = new Map(episodes.map((episode) => [episode.id, episode]));
     const grouped = new Map<
@@ -1215,6 +1228,12 @@ function HistoryView({
             const isOpen = group.episode?.status === "open";
             const hasEpisode = Boolean(group.episode);
             const groupKey = group.episode?.id ?? latest.result.id;
+            const plan = group.episode
+              ? planByEpisode.get(group.episode.id)
+              : undefined;
+            const completedTasks = plan?.tasks.filter(
+              (task) => task.completedAt,
+            ).length ?? 0;
             return (
               <section
                 className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
@@ -1233,12 +1252,19 @@ function HistoryView({
                     <p>{episodeFlow.description}</p>
                   </div>
                   <div className="episode-actions">
-                    <span>{group.records.length}회 기록</span>
+                    <span>
+                      {group.records.length}회 기록
+                      {plan
+                        ? ` · 계획 ${completedTasks}/${plan.tasks.length}`
+                        : hasEpisode
+                          ? " · 계획 미등록"
+                          : ""}
+                    </span>
                     <button
                       className="secondary-button compact"
                       onClick={() => onOpenReport(group.records, group.episode)}
                     >
-                      <Icon name="share" size={14} /> 병원 전달 요약
+                      <Icon name="share" size={14} /> 요약 · 병원 계획
                     </button>
                     {isOpen && group.episode && (
                       <button
@@ -1308,21 +1334,37 @@ function HistoryView({
 function EpisodeReportView({
   selection,
   petName,
+  plan,
   onBack,
   onSelectRecord,
+  onSavePlan,
+  onTogglePlanTask,
 }: {
   selection: EpisodeReportSelection;
   petName: string;
+  plan?: EpisodePlan;
   onBack: () => void;
   onSelectRecord: (record: HistoryRecord) => void;
+  onSavePlan: (episodeId: string, tasks: string[]) => Promise<string>;
+  onTogglePlanTask: (
+    episodeId: string,
+    taskId: string,
+    completed: boolean,
+  ) => Promise<string>;
 }) {
   const report = useMemo(
-    () => buildEpisodeReport(selection.records, petName),
-    [petName, selection.records],
+    () => buildEpisodeReport(selection.records, petName, plan),
+    [petName, plan, selection.records],
   );
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
   >("idle");
+  const [planDraft, setPlanDraft] = useState<string[]>(
+    plan?.tasks.map((task) => task.text) ?? [""],
+  );
+  const [editingPlan, setEditingPlan] = useState(!plan);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planError, setPlanError] = useState("");
 
   async function copyReport() {
     try {
@@ -1345,6 +1387,37 @@ function EpisodeReportView({
       }
     }
     await copyReport();
+  }
+
+  async function savePlan() {
+    if (!selection.episode) return;
+    const tasks = planDraft.map((task) => task.trim()).filter(Boolean);
+    if (!tasks.length) {
+      setPlanError("병원에서 받은 계획을 한 가지 이상 적어 주세요.");
+      return;
+    }
+    setPlanBusy(true);
+    setPlanError("");
+    const message = await onSavePlan(selection.episode.id, tasks);
+    setPlanBusy(false);
+    if (message) {
+      setPlanError(message);
+      return;
+    }
+    setEditingPlan(false);
+  }
+
+  async function togglePlanTask(taskId: string, completed: boolean) {
+    if (!selection.episode) return;
+    setPlanBusy(true);
+    setPlanError("");
+    const message = await onTogglePlanTask(
+      selection.episode.id,
+      taskId,
+      completed,
+    );
+    setPlanBusy(false);
+    if (message) setPlanError(message);
   }
 
   return (
@@ -1463,6 +1536,124 @@ function EpisodeReportView({
         </section>
       </div>
 
+      <section className="result-card episode-plan-card" id="episode-plan">
+        <div className="episode-plan-head">
+          <div>
+            <span className="episode-plan-step">SOAP-LOOP · P</span>
+            <h3>
+              <Icon name="clipboard" size={18} /> 병원에서 받은 계획
+            </h3>
+            <p>병원에서 들은 내용을 짧은 할 일로 옮겨 적고 하나씩 체크해요.</p>
+          </div>
+          <span className="plan-source-badge">보호자 기록 · 수의사 확인 전</span>
+        </div>
+
+        {!selection.episode ? (
+          <p className="plan-empty">
+            계정에 연결된 건강 기록부터 남기면 병원 계획을 이어서 관리할 수 있어요.
+          </p>
+        ) : plan && !editingPlan ? (
+          <>
+            <div className="plan-task-list">
+              {plan.tasks.map((task) => (
+                <button
+                  key={task.id}
+                  className={`plan-task ${task.completedAt ? "completed" : ""}`}
+                  onClick={() => togglePlanTask(task.id, !task.completedAt)}
+                  disabled={planBusy}
+                >
+                  <span className="plan-check">
+                    {task.completedAt && <Icon name="check" size={14} />}
+                  </span>
+                  <span>{task.text}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              className="text-button plan-edit-button"
+              onClick={() => setEditingPlan(true)}
+            >
+              계획 항목 수정
+            </button>
+          </>
+        ) : (
+          <div className="plan-editor">
+            {planDraft.map((task, index) => (
+              <div className="plan-task-editor" key={index}>
+                <span>{index + 1}</span>
+                <input
+                  value={task}
+                  maxLength={160}
+                  placeholder={
+                    index === 0
+                      ? "예: 3일 뒤 상태를 다시 확인하기"
+                      : "다음 계획을 짧게 적어 주세요"
+                  }
+                  onChange={(event) =>
+                    setPlanDraft((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index ? event.target.value : item,
+                      ),
+                    )
+                  }
+                />
+                {planDraft.length > 1 && (
+                  <button
+                    type="button"
+                    className="plan-remove"
+                    aria-label={`${index + 1}번 계획 삭제`}
+                    onClick={() =>
+                      setPlanDraft((current) =>
+                        current.filter((_, itemIndex) => itemIndex !== index),
+                      )
+                    }
+                  >
+                    삭제
+                  </button>
+                )}
+              </div>
+            ))}
+            <div className="plan-editor-actions">
+              {planDraft.length < 5 && (
+                <button
+                  type="button"
+                  className="secondary-button compact"
+                  onClick={() => setPlanDraft((current) => [...current, ""])}
+                >
+                  <Icon name="plus" size={14} /> 항목 추가
+                </button>
+              )}
+              {plan && (
+                <button
+                  type="button"
+                  className="secondary-button compact"
+                  onClick={() => {
+                    setPlanDraft(plan.tasks.map((task) => task.text));
+                    setEditingPlan(false);
+                    setPlanError("");
+                  }}
+                >
+                  취소
+                </button>
+              )}
+              <button
+                type="button"
+                className="primary-button compact"
+                onClick={savePlan}
+                disabled={planBusy}
+              >
+                <Icon name="check" size={14} />
+                {planBusy ? "저장 중..." : "계획 저장"}
+              </button>
+            </div>
+          </div>
+        )}
+        {planError && <p className="share-error" role="alert">{planError}</p>}
+        <p className="plan-safety-note">
+          병원 안내를 받은 그대로 적어 주세요. PetFlow가 진단이나 처방을 만들거나 수정하지 않습니다.
+        </p>
+      </section>
+
       <div className="disclaimer episode-report-disclaimer">
         <strong>자료의 범위</strong> {report.disclaimer}
       </div>
@@ -1482,6 +1673,7 @@ export function PetFlowApp() {
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
+  const [plans, setPlans] = useState<EpisodePlan[]>([]);
   const [selected, setSelected] = useState<HistoryRecord | null>(null);
   const [selectedEpisodeReport, setSelectedEpisodeReport] =
     useState<EpisodeReportSelection | null>(null);
@@ -1562,6 +1754,7 @@ export function PetFlowApp() {
       if (!nextUser || !supabase) {
         setPets([]);
         setEpisodes([]);
+        setPlans([]);
         setTesterProfile(null);
         setSelectedEpisodeReport(null);
         setSelectedPetId(undefined);
@@ -1613,11 +1806,13 @@ export function PetFlowApp() {
             sessionData.session.access_token,
           );
           setEpisodes(timeline.episodes);
+          setPlans(timeline.plans);
           setHistory((current) =>
             mergePetHistory(current, timeline.records, nextPet.id as string),
           );
         }
       } else {
+        setPlans([]);
         setProfile(initialProfile);
         setInput(initialInput);
       }
@@ -1644,6 +1839,7 @@ export function PetFlowApp() {
     if (!supabase || !nextProfile.id) return;
     setFlowLoading(true);
     setEpisodes([]);
+    setPlans([]);
     try {
       const { data } = await supabase.auth.getSession();
       if (!data.session) return;
@@ -1652,6 +1848,7 @@ export function PetFlowApp() {
         data.session.access_token,
       );
       setEpisodes(timeline.episodes);
+      setPlans(timeline.plans);
       setHistory((current) =>
         mergePetHistory(current, timeline.records, nextProfile.id as string),
       );
@@ -1795,6 +1992,7 @@ export function PetFlowApp() {
     setInput(initialInput);
     setPets([]);
     setEpisodes([]);
+    setPlans([]);
     setTesterProfile(null);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
@@ -1909,6 +2107,74 @@ export function PetFlowApp() {
       setClosingEpisodeId(undefined);
     }
   }
+  async function savePlan(episodeId: string, tasks: string[]) {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
+      const response = await fetch(`/api/episodes/${episodeId}/plan`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tasks }),
+      });
+      if (!response.ok) return "병원에서 받은 계획을 저장하지 못했어요.";
+      const payload = (await response.json()) as { plan: EpisodePlan };
+      setPlans((current) => {
+        const exists = current.some((plan) => plan.id === payload.plan.id);
+        return exists
+          ? current.map((plan) =>
+              plan.id === payload.plan.id ? payload.plan : plan,
+            )
+          : [payload.plan, ...current];
+      });
+      return "";
+    } catch {
+      return "병원에서 받은 계획을 저장하지 못했어요.";
+    }
+  }
+  async function togglePlanTask(
+    episodeId: string,
+    taskId: string,
+    completed: boolean,
+  ) {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
+      const response = await fetch(`/api/episodes/${episodeId}/plan`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ taskId, completed }),
+      });
+      if (!response.ok) return "계획 체크 상태를 저장하지 못했어요.";
+      const completedAt = completed ? new Date().toISOString() : null;
+      setPlans((current) =>
+        current.map((plan) =>
+          plan.episodeId === episodeId
+            ? {
+                ...plan,
+                tasks: plan.tasks.map((task) =>
+                  task.id === taskId ? { ...task, completedAt } : task,
+                ),
+              }
+            : plan,
+        ),
+      );
+      return "";
+    } catch {
+      return "계획 체크 상태를 저장하지 못했어요.";
+    }
+  }
   async function updateFeedback(value: HistoryRecord["feedback"]) {
     if (!selected) return;
     const updated = { ...selected, feedback: value };
@@ -2003,6 +2269,7 @@ export function PetFlowApp() {
             history={visibleHistory}
             flow={healthFlow}
             episodes={episodes}
+            plans={plans}
             petName={profile.name}
             onBack={() => setView("home")}
             onStart={startNew}
@@ -2024,7 +2291,17 @@ export function PetFlowApp() {
           <EpisodeReportView
             selection={selectedEpisodeReport}
             petName={profile.name}
+            plan={
+              selectedEpisodeReport.episode
+                ? plans.find(
+                    (plan) =>
+                      plan.episodeId === selectedEpisodeReport.episode?.id,
+                  )
+                : undefined
+            }
             onBack={() => setView("history")}
+            onSavePlan={savePlan}
+            onTogglePlanTask={togglePlanTask}
             onSelectRecord={(record) => {
               setSelected(record);
               setView("result");

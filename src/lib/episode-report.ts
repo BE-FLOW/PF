@@ -4,7 +4,12 @@ import {
   levelLabels,
   symptomLabels,
 } from "./analysis";
-import type { HistoryRecord, RiskLevel, SymptomId } from "./types";
+import type {
+  EpisodePlan,
+  HistoryRecord,
+  RiskLevel,
+  SymptomId,
+} from "./types";
 
 const riskLabels: Record<RiskLevel, string> = {
   watch: "관찰",
@@ -55,6 +60,7 @@ export interface EpisodeReport {
   appetiteChangeCount: number;
   energyChangeCount: number;
   timeline: EpisodeReportTimelineItem[];
+  planTasks: EpisodePlan["tasks"];
   shareText: string;
   disclaimer: string;
 }
@@ -62,6 +68,7 @@ export interface EpisodeReport {
 export function buildEpisodeReport(
   records: HistoryRecord[],
   fallbackPetName = "반려동물",
+  plan?: EpisodePlan,
 ): EpisodeReport {
   const ordered = [...records].sort(
     (a, b) =>
@@ -139,6 +146,14 @@ export function buildEpisodeReport(
         )
         .join("\n\n")
     : "기록 없음";
+  const planText = plan?.tasks.length
+    ? plan.tasks
+        .map(
+          (task) =>
+            `- [${task.completedAt ? "완료" : "진행 전"}] ${task.text}`,
+        )
+        .join("\n")
+    : "아직 입력한 계획이 없습니다.";
   const shareText = [
     "[PetFlow 병원 전달 요약]",
     `반려동물: ${petName} / ${petProfile}`,
@@ -150,6 +165,10 @@ export function buildEpisodeReport(
     "",
     "[보호자 관찰 기록]",
     timelineText,
+    "",
+    "[병원에서 받은 계획 · 보호자 기록]",
+    planText,
+    "PetFlow에서 수의사가 직접 확인한 내용이 아닙니다.",
     "",
     "[확인 안내]",
     disclaimer,
@@ -165,6 +184,7 @@ export function buildEpisodeReport(
     appetiteChangeCount,
     energyChangeCount,
     timeline,
+    planTasks: plan?.tasks ?? [],
     shareText,
     disclaimer,
   };

@@ -91,6 +91,23 @@ export interface PetEpisode {
   closedAt: string | null;
 }
 
+export interface PlanTask {
+  id: string;
+  text: string;
+  position: number;
+  completedAt: string | null;
+}
+
+export interface EpisodePlan {
+  id: string;
+  episodeId: string;
+  petId: string;
+  sourceType: "owner";
+  reviewStatus: "user_reported";
+  reportedAt: string;
+  tasks: PlanTask[];
+}
+
 export type HealthTrend = "stable" | "watch" | "worsening";
 
 export interface HealthFlowSummary {

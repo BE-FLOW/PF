@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyzeLocally } from "./analysis";
 import { buildEpisodeReport } from "./episode-report";
-import type { HealthCheckInput, HistoryRecord } from "./types";
+import type { EpisodePlan, HealthCheckInput, HistoryRecord } from "./types";
 
 const base: HealthCheckInput = {
   petName: "보리",
@@ -55,5 +55,34 @@ describe("buildEpisodeReport", () => {
     ]);
 
     expect(report.shareText).not.toContain("보호자만 보는 개인 메모");
+  });
+
+  it("adds owner-reported hospital plan tasks without marking them confirmed", () => {
+    const plan: EpisodePlan = {
+      id: "60000000-0000-4000-8000-000000000001",
+      episodeId: "50000000-0000-4000-8000-000000000001",
+      petId: "40000000-0000-4000-8000-000000000001",
+      sourceType: "owner",
+      reviewStatus: "user_reported",
+      reportedAt: "2026-06-15T00:00:00.000Z",
+      tasks: [
+        {
+          id: "70000000-0000-4000-8000-000000000001",
+          text: "3일 뒤 상태를 다시 확인하기",
+          position: 0,
+          completedAt: null,
+        },
+      ],
+    };
+    const report = buildEpisodeReport(
+      [record("2026-06-10T00:00:00.000Z")],
+      "보리",
+      plan,
+    );
+
+    expect(report.planTasks).toHaveLength(1);
+    expect(report.shareText).toContain("[병원에서 받은 계획 · 보호자 기록]");
+    expect(report.shareText).toContain("3일 뒤 상태를 다시 확인하기");
+    expect(report.shareText).toContain("수의사가 직접 확인한 내용이 아닙니다");
   });
 });
