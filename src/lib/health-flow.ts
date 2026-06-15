@@ -4,17 +4,7 @@ import type {
   RiskLevel,
   SymptomId,
 } from "./types";
-
-const symptomLabels: Record<SymptomId, string> = {
-  vomiting: "구토",
-  diarrhea: "설사",
-  cough: "기침·호흡기 증상",
-  itching: "가려움·피부 변화",
-  limping: "절뚝거림",
-  eye: "눈·귀 이상",
-  urination: "배뇨 변화",
-  pain: "통증 반응",
-};
+import { symptomLabels } from "./analysis";
 
 const riskWeight: Record<RiskLevel, number> = {
   watch: 1,

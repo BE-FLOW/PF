@@ -5,6 +5,7 @@ import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
 import { deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
+import { buildEpisodeReport } from "@/lib/episode-report";
 import { summarizeHealthFlow } from "@/lib/health-flow";
 import { normalizeKoreanMobile } from "@/lib/phone";
 import {
@@ -26,7 +27,19 @@ import type {
   TesterProfile,
 } from "@/lib/types";
 
-type View = "home" | "profile" | "check" | "result" | "history" | "account";
+type View =
+  | "home"
+  | "profile"
+  | "check"
+  | "result"
+  | "history"
+  | "episode-report"
+  | "account";
+
+interface EpisodeReportSelection {
+  episode?: PetEpisode;
+  records: HistoryRecord[];
+}
 
 const initialProfile: PetProfile = {
   name: "",
@@ -121,6 +134,24 @@ function getOrCreateClientId() {
   }
 }
 
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    if (!copied) throw new Error("copy failed");
+  }
+}
+
 async function fetchPetHistory(
   profile: PetProfile,
   accessToken: string,
@@ -195,7 +226,7 @@ function SideNav({
         {items.map((item) => (
           <button
             key={item.id}
-            className={`nav-item ${view === item.id || (view === "result" && item.id === "history") ? "active" : ""}`}
+            className={`nav-item ${view === item.id || (["result", "episode-report"].includes(view) && item.id === "history") ? "active" : ""}`}
             onClick={() => (item.id === "check" ? onStart() : setView(item.id))}
           >
             <Icon name={item.icon} size={19} />
@@ -209,8 +240,8 @@ function SideNav({
         </span>
         <strong>기록은 보호자 중심으로</strong>
         <p>
-          이 기기의 브라우저에만 최근 기록을 저장합니다. 의료 진단을 대신하지
-          않아요.
+          로그인 기록은 계정에 동기화됩니다. 보호자 관찰을 정리할 뿐 의료
+          진단을 대신하지 않아요.
         </p>
       </div>
     </aside>
@@ -239,7 +270,11 @@ function MobileNav({
         건강 기록
       </button>
       <button
-        className={view === "history" || view === "result" ? "active" : ""}
+        className={
+          view === "history" || view === "result" || view === "episode-report"
+            ? "active"
+            : ""
+        }
         onClick={() => setView("history")}
       >
         <Icon name="history" size={20} />
@@ -936,9 +971,13 @@ function ResultView({
     "idle" | "shared" | "copied" | "failed"
   >("idle");
   async function copyBrief() {
-    await navigator.clipboard.writeText(result.vetBrief);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
+    try {
+      await copyText(result.vetBrief);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setShareState("failed");
+    }
   }
   async function shareReport() {
     const title = `${record.input.petName || "반려동물"} 건강 리포트`;
@@ -965,7 +1004,7 @@ function ResultView({
     }
 
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       setShareState("copied");
     } catch {
       setShareState("failed");
@@ -1101,6 +1140,7 @@ function HistoryView({
   onSelect,
   onStart,
   onCloseEpisode,
+  onOpenReport,
   closingEpisodeId,
   episodeError,
 }: {
@@ -1112,6 +1152,7 @@ function HistoryView({
   onSelect: (record: HistoryRecord) => void;
   onStart: () => void;
   onCloseEpisode: (episodeId: string) => void;
+  onOpenReport: (records: HistoryRecord[], episode?: PetEpisode) => void;
   closingEpisodeId?: string;
   episodeError: string;
 }) {
@@ -1193,6 +1234,12 @@ function HistoryView({
                   </div>
                   <div className="episode-actions">
                     <span>{group.records.length}회 기록</span>
+                    <button
+                      className="secondary-button compact"
+                      onClick={() => onOpenReport(group.records, group.episode)}
+                    >
+                      <Icon name="share" size={14} /> 병원 전달 요약
+                    </button>
                     {isOpen && group.episode && (
                       <button
                         className="secondary-button compact"
@@ -1258,6 +1305,171 @@ function HistoryView({
   );
 }
 
+function EpisodeReportView({
+  selection,
+  petName,
+  onBack,
+  onSelectRecord,
+}: {
+  selection: EpisodeReportSelection;
+  petName: string;
+  onBack: () => void;
+  onSelectRecord: (record: HistoryRecord) => void;
+}) {
+  const report = useMemo(
+    () => buildEpisodeReport(selection.records, petName),
+    [petName, selection.records],
+  );
+  const [shareState, setShareState] = useState<
+    "idle" | "shared" | "copied" | "failed"
+  >("idle");
+
+  async function copyReport() {
+    try {
+      await copyText(report.shareText);
+      setShareState("copied");
+    } catch {
+      setShareState("failed");
+    }
+  }
+
+  async function shareReport() {
+    setShareState("idle");
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: report.title, text: report.shareText });
+        setShareState("shared");
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    }
+    await copyReport();
+  }
+
+  return (
+    <div className="content-wrap">
+      <div className="page-heading">
+        <button className="back-button" onClick={onBack} aria-label="건강 흐름으로">
+          <Icon name="arrow" size={20} />
+        </button>
+        <div>
+          <p className="eyebrow">VET SHARE</p>
+          <h1>병원 전달 요약</h1>
+          <p>이 기록 묶음만 간결하게 정리했어요.</p>
+        </div>
+      </div>
+
+      <section className="episode-report-hero">
+        <div>
+          <span className={`episode-status ${selection.episode?.status === "open" ? "open" : "closed"}`}>
+            {selection.episode?.status === "open"
+              ? "진행 중인 기록"
+              : selection.episode
+                ? "마무리된 기록"
+                : "개별 기록"}
+          </span>
+          <h2>{report.title}</h2>
+          <p>{report.periodLabel} · 보호자 관찰 {report.recordCount}회</p>
+        </div>
+        <div className="episode-report-actions">
+          <button className="primary-button" onClick={shareReport}>
+            <Icon
+              name={shareState === "shared" || shareState === "copied" ? "check" : "share"}
+              size={16}
+            />
+            {shareState === "shared"
+              ? "공유했어요"
+              : shareState === "copied"
+                ? "공유용 복사 완료"
+                : "기기에서 공유"}
+          </button>
+          <button className="secondary-button" onClick={copyReport}>
+            <Icon name={shareState === "copied" ? "check" : "copy"} size={15} />
+            {shareState === "copied" ? "전체 복사 완료" : "전체 내용 복사"}
+          </button>
+        </div>
+      </section>
+
+      {shareState === "failed" && (
+        <p className="share-error" role="alert">
+          공유하거나 복사하지 못했어요. 브라우저 권한을 확인해 주세요.
+        </p>
+      )}
+
+      <div className="episode-report-layout">
+        <section className="result-card episode-report-summary">
+          <h3>
+            <Icon name="stethoscope" size={18} /> 병원에서 먼저 볼 내용
+          </h3>
+          <div className="episode-report-stats">
+            <div>
+              <span>프로필</span>
+              <strong>{report.petProfile}</strong>
+            </div>
+            <div>
+              <span>가장 높은 앱 안내</span>
+              <strong>{report.highestRiskLabel}</strong>
+            </div>
+            <div>
+              <span>식욕 변화</span>
+              <strong>{report.appetiteChangeCount}회</strong>
+            </div>
+            <div>
+              <span>활력 변화</span>
+              <strong>{report.energyChangeCount}회</strong>
+            </div>
+          </div>
+          <div className="episode-report-repeat">
+            <span>반복 관찰</span>
+            <div className="flow-tags">
+              {report.repeatedSymptoms.length ? (
+                report.repeatedSymptoms.map((item) => <span key={item}>{item}</span>)
+              ) : (
+                <span>뚜렷한 반복 기록 없음</span>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="result-card">
+          <h3>
+            <Icon name="history" size={18} /> 시간순 보호자 관찰
+          </h3>
+          <div className="episode-report-timeline">
+            {report.timeline.map((item, index) => {
+              const sourceRecord = selection.records.find(
+                (record) => record.result.id === item.id,
+              );
+              return (
+                <button
+                  key={item.id}
+                  className="episode-report-entry"
+                  onClick={() => sourceRecord && onSelectRecord(sourceRecord)}
+                >
+                  <span className="episode-report-index">{index + 1}</span>
+                  <span>
+                    <strong>{item.dateLabel}</strong>
+                    <small>증상: {item.symptoms}</small>
+                    <small>
+                      식욕 {item.appetite} · 활력 {item.energy} · {item.duration}
+                    </small>
+                  </span>
+                  <em>{item.riskLabel}</em>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+
+      <div className="disclaimer episode-report-disclaimer">
+        <strong>자료의 범위</strong> {report.disclaimer}
+      </div>
+    </div>
+  );
+}
+
 export function PetFlowApp() {
   const [view, setView] = useState<View>("home");
   const [profile, setProfile] = useState<PetProfile>(initialProfile);
@@ -1271,6 +1483,8 @@ export function PetFlowApp() {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [selected, setSelected] = useState<HistoryRecord | null>(null);
+  const [selectedEpisodeReport, setSelectedEpisodeReport] =
+    useState<EpisodeReportSelection | null>(null);
   const [profileReturnView, setProfileReturnView] = useState<"home" | "check" | "account">(
     "home",
   );
@@ -1280,8 +1494,13 @@ export function PetFlowApp() {
   const [episodeError, setEpisodeError] = useState("");
   const [error, setError] = useState("");
   const currentView = useMemo(
-    () => (view === "result" && !selected ? "home" : view),
-    [view, selected],
+    () =>
+      view === "result" && !selected
+        ? "home"
+        : view === "episode-report" && !selectedEpisodeReport
+          ? "history"
+          : view,
+    [selected, selectedEpisodeReport, view],
   );
   const visibleHistory = useMemo(() => {
     if (!user) return history.filter((record) => !record.petId);
@@ -1344,6 +1563,7 @@ export function PetFlowApp() {
         setPets([]);
         setEpisodes([]);
         setTesterProfile(null);
+        setSelectedEpisodeReport(null);
         setSelectedPetId(undefined);
         setAuthReady(true);
         return;
@@ -1440,6 +1660,7 @@ export function PetFlowApp() {
     }
   }
   function selectPet(nextProfile: PetProfile) {
+    setSelectedEpisodeReport(null);
     setProfile(nextProfile);
     setSelectedPetId(nextProfile.id);
     setInput(profileToHealthInput(nextProfile));
@@ -1575,6 +1796,7 @@ export function PetFlowApp() {
     setPets([]);
     setEpisodes([]);
     setTesterProfile(null);
+    setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
     try {
       localStorage.removeItem("petflow-profile");
@@ -1787,7 +2009,23 @@ export function PetFlowApp() {
             onCloseEpisode={closeEpisode}
             closingEpisodeId={closingEpisodeId}
             episodeError={episodeError}
+            onOpenReport={(records, episode) => {
+              setSelectedEpisodeReport({ records, episode });
+              setView("episode-report");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
             onSelect={(record) => {
+              setSelected(record);
+              setView("result");
+            }}
+          />
+        )}
+        {currentView === "episode-report" && selectedEpisodeReport && (
+          <EpisodeReportView
+            selection={selectedEpisodeReport}
+            petName={profile.name}
+            onBack={() => setView("history")}
+            onSelectRecord={(record) => {
               setSelected(record);
               setView("result");
             }}

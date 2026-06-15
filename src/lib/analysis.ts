@@ -6,7 +6,7 @@ import type {
   SymptomId,
 } from "./types";
 
-const symptomLabels: Record<SymptomId, string> = {
+export const symptomLabels: Record<SymptomId, string> = {
   vomiting: "구토",
   diarrhea: "설사",
   cough: "기침·호흡기 증상",
@@ -17,21 +17,21 @@ const symptomLabels: Record<SymptomId, string> = {
   pain: "통증 반응",
 };
 
-const durationLabels: Record<HealthCheckInput["duration"], string> = {
+export const durationLabels: Record<HealthCheckInput["duration"], string> = {
   today: "오늘부터",
   "2-3days": "2~3일",
   "4-7days": "4~7일",
   "over-week": "1주 이상",
 };
 
-const levelLabels: Record<HealthCheckInput["appetite"], string> = {
+export const levelLabels: Record<HealthCheckInput["appetite"], string> = {
   normal: "평소와 같음",
   slight: "조금 줄었음",
   low: "많이 줄었음",
   none: "거의 없음",
 };
 
-const ageGroupLabels: Record<HealthCheckInput["ageGroup"], string> = {
+export const ageGroupLabels: Record<HealthCheckInput["ageGroup"], string> = {
   young: "어린 반려동물",
   adult: "성견·성묘",
   senior: "노령 반려동물",
