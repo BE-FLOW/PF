@@ -6,6 +6,7 @@ import {
 } from "./analysis";
 import type {
   EpisodePlan,
+  EpisodeProgress,
   HistoryRecord,
   RiskLevel,
   SymptomId,
@@ -21,6 +22,15 @@ const riskWeight: Record<RiskLevel, number> = {
   watch: 1,
   soon: 2,
   urgent: 3,
+};
+
+const conditionChangeLabels: Record<
+  EpisodeProgress["conditionChange"],
+  string
+> = {
+  better: "좋아짐",
+  same: "비슷함",
+  worse: "나빠짐",
 };
 
 const dayFormatter = new Intl.DateTimeFormat("ko-KR", {
@@ -61,6 +71,7 @@ export interface EpisodeReport {
   energyChangeCount: number;
   timeline: EpisodeReportTimelineItem[];
   planTasks: EpisodePlan["tasks"];
+  progress: EpisodeProgress[];
   shareText: string;
   disclaimer: string;
 }
@@ -69,6 +80,7 @@ export function buildEpisodeReport(
   records: HistoryRecord[],
   fallbackPetName = "반려동물",
   plan?: EpisodePlan,
+  progress: EpisodeProgress[] = [],
 ): EpisodeReport {
   const ordered = [...records].sort(
     (a, b) =>
@@ -154,6 +166,17 @@ export function buildEpisodeReport(
         )
         .join("\n")
     : "아직 입력한 계획이 없습니다.";
+  const orderedProgress = [...progress].sort(
+    (a, b) => a.followUpDay - b.followUpDay,
+  );
+  const progressText = orderedProgress.length
+    ? orderedProgress
+        .map(
+          (item) =>
+            `${item.followUpDay}일: ${conditionChangeLabels[item.conditionChange]} / 식욕 ${levelLabels[item.appetite]} / 활력 ${levelLabels[item.energy]}`,
+        )
+        .join("\n")
+    : "아직 입력한 경과 기록이 없습니다.";
   const shareText = [
     "[PetFlow 병원 전달 요약]",
     `반려동물: ${petName} / ${petProfile}`,
@@ -170,6 +193,10 @@ export function buildEpisodeReport(
     planText,
     "PetFlow에서 수의사가 직접 확인한 내용이 아닙니다.",
     "",
+    "[3일 · 7일 · 14일 경과 · 보호자 기록]",
+    progressText,
+    "PetFlow에서 수의사가 확인한 경과가 아닙니다.",
+    "",
     "[확인 안내]",
     disclaimer,
   ].join("\n");
@@ -185,6 +212,7 @@ export function buildEpisodeReport(
     energyChangeCount,
     timeline,
     planTasks: plan?.tasks ?? [],
+    progress: orderedProgress,
     shareText,
     disclaimer,
   };

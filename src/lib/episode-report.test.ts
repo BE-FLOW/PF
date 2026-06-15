@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { analyzeLocally } from "./analysis";
 import { buildEpisodeReport } from "./episode-report";
-import type { EpisodePlan, HealthCheckInput, HistoryRecord } from "./types";
+import type {
+  EpisodePlan,
+  EpisodeProgress,
+  HealthCheckInput,
+  HistoryRecord,
+} from "./types";
 
 const base: HealthCheckInput = {
   petName: "보리",
@@ -84,5 +89,33 @@ describe("buildEpisodeReport", () => {
     expect(report.shareText).toContain("[병원에서 받은 계획 · 보호자 기록]");
     expect(report.shareText).toContain("3일 뒤 상태를 다시 확인하기");
     expect(report.shareText).toContain("수의사가 직접 확인한 내용이 아닙니다");
+  });
+
+  it("adds structured 3, 7, and 14 day owner progress to the share summary", () => {
+    const progress: EpisodeProgress[] = [
+      {
+        id: "80000000-0000-4000-8000-000000000001",
+        episodeId: "50000000-0000-4000-8000-000000000001",
+        petId: "40000000-0000-4000-8000-000000000001",
+        followUpDay: 3,
+        conditionChange: "better",
+        appetite: "normal",
+        energy: "slight",
+        sourceType: "owner",
+        reviewStatus: "unreviewed",
+        recordedAt: "2026-06-15T00:00:00.000Z",
+      },
+    ];
+    const report = buildEpisodeReport(
+      [record("2026-06-10T00:00:00.000Z")],
+      "보리",
+      undefined,
+      progress,
+    );
+
+    expect(report.progress).toHaveLength(1);
+    expect(report.shareText).toContain("[3일 · 7일 · 14일 경과 · 보호자 기록]");
+    expect(report.shareText).toContain("3일: 좋아짐");
+    expect(report.shareText).toContain("수의사가 확인한 경과가 아닙니다");
   });
 });

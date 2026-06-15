@@ -108,6 +108,22 @@ export interface EpisodePlan {
   tasks: PlanTask[];
 }
 
+export type FollowUpDay = 3 | 7 | 14;
+export type ConditionChange = "better" | "same" | "worse";
+
+export interface EpisodeProgress {
+  id: string;
+  episodeId: string;
+  petId: string;
+  followUpDay: FollowUpDay;
+  conditionChange: ConditionChange;
+  appetite: Level;
+  energy: Level;
+  sourceType: "owner";
+  reviewStatus: "unreviewed";
+  recordedAt: string;
+}
+
 export type HealthTrend = "stable" | "watch" | "worsening";
 
 export interface HealthFlowSummary {

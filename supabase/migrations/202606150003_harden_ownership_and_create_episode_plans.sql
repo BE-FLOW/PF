@@ -207,7 +207,6 @@ begin
     now()
   )
   on conflict (episode_id) do update set
-    reported_at = excluded.reported_at,
     updated_at = excluded.updated_at
   returning id into saved_plan_id;
 

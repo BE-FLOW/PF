@@ -29,6 +29,7 @@
 - 건강 사건과 진행 상태: `episodes`
 - 구조화된 건강 통계: `health_reports`
 - 병원에서 받은 계획: `episode_plans`, `plan_tasks`
+- 3일·7일·14일 보호자 경과: `episode_progress_logs`
 - 피드백: `health_report_feedback`
 
 `episodes`에는 사건 식별자, 반려동물 연결, 진행 상태, 시작·최근 활동·종료
@@ -46,9 +47,9 @@
 
 `pets`와 `tester_profiles`는 RLS가 활성화되어 있으며 로그인 사용자는 자신의
 행만 조회·수정·삭제할 수 있다. 관리자 집계 뷰 `tester_management`는
-`service_role`만 조회할 수 있다. `health_reports`, `episode_plans`, `plan_tasks`는
-브라우저에서 직접 접근할 수 없고 소유권을 확인하는 Route Handler를 통해서만
-조회·저장한다.
+`service_role`만 조회할 수 있다. `health_reports`, `episode_plans`, `plan_tasks`,
+`episode_progress_logs`는 브라우저에서 직접 접근할 수 없고 소유권을 확인하는
+Route Handler를 통해서만 조회·저장한다.
 
 ## 관리 화면
 
@@ -57,8 +58,10 @@
 - 반려동물: Table Editor > `pets`
 - 리포트 통계: Table Editor > `health_reports`
 - 사건별 병원 계획: Table Editor > `episode_plans`, `plan_tasks`
+- 사건별 경과: Table Editor > `episode_progress_logs`
 - 피드백: Table Editor > `health_report_feedback`
 
 테스터 삭제 시 Auth 사용자를 삭제하면 테스터 프로필과 반려동물은 cascade로
 삭제된다. 계정에 연결된 사건, 건강 기록, 병원 계획과 체크 항목도 함께 삭제된다.
-계정과 연결되지 않은 익명 테스트 통계는 영향을 받지 않는다.
+경과 기록도 함께 삭제되며, 계정과 연결되지 않은 익명 테스트 통계는 영향을 받지
+않는다.

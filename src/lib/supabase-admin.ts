@@ -1,6 +1,7 @@
 import type {
   AnalysisResult,
   EpisodePlan,
+  EpisodeProgress,
   HealthCheckInput,
   PetEpisode,
 } from "./types";
@@ -105,6 +106,32 @@ function toEpisodePlan(row: {
         position: task.position,
         completedAt: task.completed_at,
       })),
+  };
+}
+
+function toEpisodeProgress(row: {
+  id: string;
+  episode_id: string;
+  pet_id: string;
+  follow_up_day: EpisodeProgress["followUpDay"];
+  condition_change: EpisodeProgress["conditionChange"];
+  appetite: EpisodeProgress["appetite"];
+  energy: EpisodeProgress["energy"];
+  source_type: EpisodeProgress["sourceType"];
+  review_status: EpisodeProgress["reviewStatus"];
+  recorded_at: string;
+}): EpisodeProgress {
+  return {
+    id: row.id,
+    episodeId: row.episode_id,
+    petId: row.pet_id,
+    followUpDay: row.follow_up_day,
+    conditionChange: row.condition_change,
+    appetite: row.appetite,
+    energy: row.energy,
+    sourceType: row.source_type,
+    reviewStatus: row.review_status,
+    recordedAt: row.recorded_at,
   };
 }
 
@@ -275,6 +302,74 @@ export async function listPetEpisodePlans(
     if (!response?.ok) return null;
     const rows = (await response.json()) as Parameters<typeof toEpisodePlan>[0][];
     return rows.map(toEpisodePlan);
+  } catch {
+    return null;
+  }
+}
+
+export async function listPetEpisodeProgress(
+  accessToken: string | null,
+  petId: string | null,
+): Promise<EpisodeProgress[] | null> {
+  const owner = await getReportOwner(accessToken, petId);
+  if (!owner) return null;
+  try {
+    const response = await supabaseRequest(
+      `episode_progress_logs?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,episode_id,pet_id,follow_up_day,condition_change,appetite,energy,source_type,review_status,recorded_at&order=follow_up_day.asc`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Parameters<typeof toEpisodeProgress>[0][];
+    return rows.map(toEpisodeProgress);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveEpisodeProgress(
+  accessToken: string | null,
+  episodeId: string | null,
+  input: Pick<
+    EpisodeProgress,
+    "followUpDay" | "conditionChange" | "appetite" | "energy"
+  >,
+): Promise<EpisodeProgress | null> {
+  if (!isUuid(episodeId)) return null;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (
+    !userId ||
+    ![3, 7, 14].includes(input.followUpDay) ||
+    !["better", "same", "worse"].includes(input.conditionChange) ||
+    !["normal", "slight", "low", "none"].includes(input.appetite) ||
+    !["normal", "slight", "low", "none"].includes(input.energy)
+  ) return null;
+
+  try {
+    const savedResponse = await supabaseRequest(
+      "rpc/save_owner_episode_progress",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          target_user_id: userId,
+          target_episode_id: episodeId,
+          target_follow_up_day: input.followUpDay,
+          target_condition_change: input.conditionChange,
+          target_appetite: input.appetite,
+          target_energy: input.energy,
+        }),
+      },
+    );
+    if (!savedResponse?.ok) return null;
+    const progressId = (await savedResponse.json()) as string;
+    if (!isUuid(progressId)) return null;
+
+    const response = await supabaseRequest(
+      `episode_progress_logs?id=eq.${progressId}&user_id=eq.${userId}&select=id,episode_id,pet_id,follow_up_day,condition_change,appetite,energy,source_type,review_status,recorded_at&limit=1`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Parameters<typeof toEpisodeProgress>[0][];
+    return rows[0] ? toEpisodeProgress(rows[0]) : null;
   } catch {
     return null;
   }

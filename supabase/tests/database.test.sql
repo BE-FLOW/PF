@@ -1,6 +1,6 @@
 begin;
 
-select plan(32);
+select plan(42);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -13,6 +13,11 @@ select has_table('public', 'episodes', 'episodes table exists');
 select has_table('public', 'tester_profiles', 'tester_profiles table exists');
 select has_table('public', 'episode_plans', 'episode plans table exists');
 select has_table('public', 'plan_tasks', 'plan tasks table exists');
+select has_table(
+  'public',
+  'episode_progress_logs',
+  'episode progress logs table exists'
+);
 select has_view('public', 'tester_management', 'tester management view exists');
 select col_not_null(
   'public',
@@ -123,6 +128,63 @@ select is(
   (select confdeltype::text from pg_constraint where conname = 'health_reports_episode_owner_fkey'),
   'c',
   'episode deletion removes linked reports'
+);
+select has_column(
+  'public',
+  'episode_progress_logs',
+  'follow_up_day',
+  'progress checkpoint day is stored'
+);
+select has_column(
+  'public',
+  'episode_progress_logs',
+  'condition_change',
+  'progress condition change is stored'
+);
+select has_column(
+  'public',
+  'episode_progress_logs',
+  'source_type',
+  'progress source is stored'
+);
+select has_column(
+  'public',
+  'episode_progress_logs',
+  'review_status',
+  'progress review status is stored'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.episode_progress_logs'::regclass),
+  true,
+  'RLS is enabled for episode progress logs'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'episode_progress_logs'),
+  0,
+  'progress data has no browser-facing policies'
+);
+select is(
+  (select confdeltype::text from pg_constraint where conname = 'episode_progress_logs_episode_owner_fkey'),
+  'c',
+  'episode deletion removes progress logs'
+);
+select is(
+  has_function_privilege(
+    'authenticated',
+    'public.save_owner_episode_progress(uuid,uuid,smallint,text,text,text)',
+    'EXECUTE'
+  ),
+  false,
+  'authenticated users cannot call progress RPC directly'
+);
+select is(
+  has_function_privilege(
+    'service_role',
+    'public.save_owner_episode_progress(uuid,uuid,smallint,text,text,text)',
+    'EXECUTE'
+  ),
+  true,
+  'service role can call progress RPC'
 );
 
 select * from finish();

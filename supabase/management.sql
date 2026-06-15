@@ -30,3 +30,15 @@ from public.episode_plans plan
 left join public.plan_tasks task on task.plan_id = plan.id
 group by plan.id
 order by plan.reported_at desc;
+
+select
+  progress.user_id,
+  progress.pet_id,
+  progress.episode_id,
+  progress.follow_up_day,
+  progress.condition_change,
+  progress.appetite,
+  progress.energy,
+  progress.recorded_at
+from public.episode_progress_logs progress
+order by progress.recorded_at desc;

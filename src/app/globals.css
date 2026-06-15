@@ -1806,6 +1806,140 @@ p {
   padding-top: 13px;
   border-top: 1px solid var(--line);
 }
+.episode-progress-card {
+  margin-top: 16px;
+  border-color: #d7dfef;
+}
+.progress-source-badge {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #eef2fb;
+  color: #64749a;
+  font-size: 9px;
+  font-weight: 900;
+}
+.progress-checkpoints {
+  display: grid;
+  gap: 10px;
+}
+.progress-checkpoint {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fbfcfb;
+}
+.progress-checkpoint.saved {
+  border-color: #c7dfd4;
+  background: #f7fbf9;
+}
+.progress-checkpoint-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.progress-day {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: #65769c;
+  background: #eef2fb;
+  font-size: 11px;
+  font-weight: 900;
+}
+.progress-checkpoint.saved .progress-day {
+  color: var(--mint-dark);
+  background: var(--mint-soft);
+}
+.progress-checkpoint-head > div {
+  display: grid;
+  gap: 4px;
+}
+.progress-checkpoint-head strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+.progress-checkpoint-head small {
+  color: #75857f;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.progress-editor {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.progress-editor fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.progress-editor legend,
+.progress-level-grid label {
+  color: #60716b;
+  font-size: 10px;
+  font-weight: 900;
+}
+.progress-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.progress-choice-grid button {
+  display: grid;
+  gap: 4px;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+  color: #687872;
+  text-align: left;
+  cursor: pointer;
+}
+.progress-choice-grid button.selected {
+  border-color: var(--mint);
+  color: var(--mint-dark);
+  background: var(--mint-soft);
+}
+.progress-choice-grid strong {
+  font-size: 11px;
+}
+.progress-choice-grid small {
+  font-size: 9px;
+  line-height: 1.4;
+}
+.progress-level-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.progress-level-grid label {
+  display: grid;
+  gap: 7px;
+}
+.progress-level-grid select {
+  width: 100%;
+  height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+}
+.progress-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .history-card {
   width: 100%;
   display: grid;
@@ -1944,15 +2078,29 @@ p {
     grid-template-columns: 1fr;
   }
   .episode-plan-head,
-  .plan-editor-actions {
+  .plan-editor-actions,
+  .progress-editor-actions {
     flex-direction: column;
     align-items: stretch;
   }
-  .plan-source-badge {
+  .plan-source-badge,
+  .progress-source-badge {
     align-self: flex-start;
   }
-  .plan-editor-actions button {
+  .plan-editor-actions button,
+  .progress-editor-actions button {
     width: 100%;
+  }
+  .progress-checkpoint-head {
+    grid-template-columns: auto 1fr;
+  }
+  .progress-checkpoint-head > button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .progress-choice-grid,
+  .progress-level-grid {
+    grid-template-columns: 1fr;
   }
   .episode-report-entry {
     grid-template-columns: auto 1fr;

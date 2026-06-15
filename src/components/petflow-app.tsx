@@ -16,7 +16,10 @@ import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AnalysisResult,
+  ConditionChange,
   EpisodePlan,
+  EpisodeProgress,
+  FollowUpDay,
   HealthCheckInput,
   HealthFlowSummary,
   HistoryRecord,
@@ -107,6 +110,35 @@ const riskLabel = {
   urgent: "즉시 상담",
 } as const;
 
+const conditionChangeOptions: Array<{
+  id: ConditionChange;
+  label: string;
+  description: string;
+}> = [
+  { id: "better", label: "좋아졌어요", description: "전보다 편안해 보여요" },
+  { id: "same", label: "비슷해요", description: "큰 변화가 없어요" },
+  { id: "worse", label: "나빠졌어요", description: "불편함이 더 보여요" },
+];
+
+const followUpDays: FollowUpDay[] = [3, 7, 14];
+
+function conditionChangeLabel(value: ConditionChange) {
+  return conditionChangeOptions.find((option) => option.id === value)?.label ?? "비슷해요";
+}
+
+function levelLabel(value: Level) {
+  return levels.find((option) => option.id === value)?.label ?? "평소와 같음";
+}
+
+function followUpDate(startedAt: string, day: FollowUpDay) {
+  const date = new Date(startedAt);
+  date.setDate(date.getDate() + day);
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+  }).format(date);
+}
+
 function toggle<T>(items: T[], item: T) {
   return items.includes(item)
     ? items.filter((value) => value !== item)
@@ -160,16 +192,22 @@ async function fetchPetHistory(
   records: HistoryRecord[];
   episodes: PetEpisode[];
   plans: EpisodePlan[];
+  progress: EpisodeProgress[];
 }> {
-  if (!profile.id) return { records: [], episodes: [], plans: [] };
+  if (!profile.id) {
+    return { records: [], episodes: [], plans: [], progress: [] };
+  }
   const response = await fetch(`/api/pets/${profile.id}/history`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) return { records: [], episodes: [], plans: [] };
+  if (!response.ok) {
+    return { records: [], episodes: [], plans: [], progress: [] };
+  }
   const payload = (await response.json()) as {
     reports: DisplayHealthReport[];
     episodes: PetEpisode[];
     plans: EpisodePlan[];
+    progress: EpisodeProgress[];
   };
   return {
     records: payload.reports.map((report) =>
@@ -177,6 +215,7 @@ async function fetchPetHistory(
     ),
     episodes: payload.episodes,
     plans: payload.plans,
+    progress: payload.progress,
   };
 }
 
@@ -1143,6 +1182,7 @@ function HistoryView({
   flow,
   episodes,
   plans,
+  progress,
   petName,
   onBack,
   onSelect,
@@ -1156,6 +1196,7 @@ function HistoryView({
   flow: HealthFlowSummary;
   episodes: PetEpisode[];
   plans: EpisodePlan[];
+  progress: EpisodeProgress[];
   petName: string;
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
@@ -1169,6 +1210,13 @@ function HistoryView({
     () => new Map(plans.map((plan) => [plan.episodeId, plan])),
     [plans],
   );
+  const progressCountByEpisode = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of progress) {
+      counts.set(item.episodeId, (counts.get(item.episodeId) ?? 0) + 1);
+    }
+    return counts;
+  }, [progress]);
   const episodeGroups = useMemo(() => {
     const episodeById = new Map(episodes.map((episode) => [episode.id, episode]));
     const grouped = new Map<
@@ -1234,6 +1282,9 @@ function HistoryView({
             const completedTasks = plan?.tasks.filter(
               (task) => task.completedAt,
             ).length ?? 0;
+            const progressCount = group.episode
+              ? progressCountByEpisode.get(group.episode.id) ?? 0
+              : 0;
             return (
               <section
                 className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
@@ -1259,12 +1310,13 @@ function HistoryView({
                         : hasEpisode
                           ? " · 계획 미등록"
                           : ""}
+                      {hasEpisode ? ` · 경과 ${progressCount}/3` : ""}
                     </span>
                     <button
                       className="secondary-button compact"
                       onClick={() => onOpenReport(group.records, group.episode)}
                     >
-                      <Icon name="share" size={14} /> 요약 · 병원 계획
+                      <Icon name="share" size={14} /> 요약 · 계획 · 경과
                     </button>
                     {isOpen && group.episode && (
                       <button
@@ -1335,14 +1387,17 @@ function EpisodeReportView({
   selection,
   petName,
   plan,
+  progress,
   onBack,
   onSelectRecord,
   onSavePlan,
   onTogglePlanTask,
+  onSaveProgress,
 }: {
   selection: EpisodeReportSelection;
   petName: string;
   plan?: EpisodePlan;
+  progress: EpisodeProgress[];
   onBack: () => void;
   onSelectRecord: (record: HistoryRecord) => void;
   onSavePlan: (episodeId: string, tasks: string[]) => Promise<string>;
@@ -1351,10 +1406,17 @@ function EpisodeReportView({
     taskId: string,
     completed: boolean,
   ) => Promise<string>;
+  onSaveProgress: (
+    episodeId: string,
+    input: Pick<
+      EpisodeProgress,
+      "followUpDay" | "conditionChange" | "appetite" | "energy"
+    >,
+  ) => Promise<string>;
 }) {
   const report = useMemo(
-    () => buildEpisodeReport(selection.records, petName, plan),
-    [petName, plan, selection.records],
+    () => buildEpisodeReport(selection.records, petName, plan, progress),
+    [petName, plan, progress, selection.records],
   );
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
@@ -1365,6 +1427,14 @@ function EpisodeReportView({
   const [editingPlan, setEditingPlan] = useState(!plan);
   const [planBusy, setPlanBusy] = useState(false);
   const [planError, setPlanError] = useState("");
+  const [progressDraft, setProgressDraft] = useState<{
+    followUpDay: FollowUpDay;
+    conditionChange: ConditionChange;
+    appetite: Level;
+    energy: Level;
+  } | null>(null);
+  const [progressBusy, setProgressBusy] = useState(false);
+  const [progressError, setProgressError] = useState("");
 
   async function copyReport() {
     try {
@@ -1418,6 +1488,30 @@ function EpisodeReportView({
     );
     setPlanBusy(false);
     if (message) setPlanError(message);
+  }
+
+  function openProgressEditor(day: FollowUpDay) {
+    const existing = progress.find((item) => item.followUpDay === day);
+    setProgressDraft({
+      followUpDay: day,
+      conditionChange: existing?.conditionChange ?? "same",
+      appetite: existing?.appetite ?? "normal",
+      energy: existing?.energy ?? "normal",
+    });
+    setProgressError("");
+  }
+
+  async function saveProgress() {
+    if (!selection.episode || !progressDraft) return;
+    setProgressBusy(true);
+    setProgressError("");
+    const message = await onSaveProgress(selection.episode.id, progressDraft);
+    setProgressBusy(false);
+    if (message) {
+      setProgressError(message);
+      return;
+    }
+    setProgressDraft(null);
   }
 
   return (
@@ -1654,6 +1748,167 @@ function EpisodeReportView({
         </p>
       </section>
 
+      <section className="result-card episode-progress-card" id="episode-progress">
+        <div className="episode-plan-head">
+          <div>
+            <span className="episode-plan-step">SOAP-LOOP · FOLLOW UP</span>
+            <h3>
+              <Icon name="activity" size={18} /> 3일 · 7일 · 14일 경과
+            </h3>
+            <p>같은 사건에서 달라진 정도와 식욕·활력만 짧게 남겨요.</p>
+          </div>
+          <span className="progress-source-badge">보호자 경과 · 확인 전</span>
+        </div>
+
+        {!selection.episode ? (
+          <p className="plan-empty">
+            계정에 연결된 건강 기록부터 남기면 경과를 이어서 관리할 수 있어요.
+          </p>
+        ) : (
+          <div className="progress-checkpoints">
+            {followUpDays.map((day) => {
+              const saved = progress.find((item) => item.followUpDay === day);
+              const isEditing = progressDraft?.followUpDay === day;
+              return (
+                <section
+                  className={`progress-checkpoint ${saved ? "saved" : ""}`}
+                  key={day}
+                >
+                  <div className="progress-checkpoint-head">
+                    <span className="progress-day">{day}일</span>
+                    <div>
+                      <strong>
+                        {selection.episode
+                          ? `${followUpDate(plan?.reportedAt ?? selection.episode.startedAt, day)} 확인`
+                          : `${day}일 경과`}
+                      </strong>
+                      <small>
+                        {saved
+                          ? `${conditionChangeLabel(saved.conditionChange)} · 식욕 ${levelLabel(saved.appetite)} · 활력 ${levelLabel(saved.energy)}`
+                          : "아직 경과를 기록하지 않았어요"}
+                      </small>
+                    </div>
+                    {!isEditing && (
+                      <button
+                        type="button"
+                        className="secondary-button compact"
+                        onClick={() => openProgressEditor(day)}
+                      >
+                        {saved ? "수정" : "경과 기록"}
+                      </button>
+                    )}
+                  </div>
+
+                  {isEditing && progressDraft && (
+                    <div className="progress-editor">
+                      <fieldset>
+                        <legend>전반적인 변화</legend>
+                        <div className="progress-choice-grid">
+                          {conditionChangeOptions.map((option) => (
+                            <button
+                              type="button"
+                              className={
+                                progressDraft.conditionChange === option.id
+                                  ? "selected"
+                                  : ""
+                              }
+                              key={option.id}
+                              onClick={() =>
+                                setProgressDraft((current) =>
+                                  current
+                                    ? { ...current, conditionChange: option.id }
+                                    : current,
+                                )
+                              }
+                            >
+                              <strong>{option.label}</strong>
+                              <small>{option.description}</small>
+                            </button>
+                          ))}
+                        </div>
+                      </fieldset>
+
+                      <div className="progress-level-grid">
+                        <label>
+                          식욕
+                          <select
+                            value={progressDraft.appetite}
+                            onChange={(event) =>
+                              setProgressDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      appetite: event.target.value as Level,
+                                    }
+                                  : current,
+                              )
+                            }
+                          >
+                            {levels.map((level) => (
+                              <option value={level.id} key={level.id}>
+                                {level.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          활력
+                          <select
+                            value={progressDraft.energy}
+                            onChange={(event) =>
+                              setProgressDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      energy: event.target.value as Level,
+                                    }
+                                  : current,
+                              )
+                            }
+                          >
+                            {levels.map((level) => (
+                              <option value={level.id} key={level.id}>
+                                {level.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="progress-editor-actions">
+                        <button
+                          type="button"
+                          className="secondary-button compact"
+                          onClick={() => setProgressDraft(null)}
+                          disabled={progressBusy}
+                        >
+                          취소
+                        </button>
+                        <button
+                          type="button"
+                          className="primary-button compact"
+                          onClick={saveProgress}
+                          disabled={progressBusy}
+                        >
+                          <Icon name="check" size={14} />
+                          {progressBusy ? "저장 중..." : `${day}일 경과 저장`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
+        {progressError && (
+          <p className="share-error" role="alert">{progressError}</p>
+        )}
+        <p className="plan-safety-note">
+          이 내용은 보호자가 관찰해 기록한 경과이며, 수의사의 확인이나 진단을 대신하지 않습니다.
+        </p>
+      </section>
+
       <div className="disclaimer episode-report-disclaimer">
         <strong>자료의 범위</strong> {report.disclaimer}
       </div>
@@ -1674,6 +1929,7 @@ export function PetFlowApp() {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [plans, setPlans] = useState<EpisodePlan[]>([]);
+  const [progress, setProgress] = useState<EpisodeProgress[]>([]);
   const [selected, setSelected] = useState<HistoryRecord | null>(null);
   const [selectedEpisodeReport, setSelectedEpisodeReport] =
     useState<EpisodeReportSelection | null>(null);
@@ -1755,6 +2011,7 @@ export function PetFlowApp() {
         setPets([]);
         setEpisodes([]);
         setPlans([]);
+        setProgress([]);
         setTesterProfile(null);
         setSelectedEpisodeReport(null);
         setSelectedPetId(undefined);
@@ -1807,12 +2064,14 @@ export function PetFlowApp() {
           );
           setEpisodes(timeline.episodes);
           setPlans(timeline.plans);
+          setProgress(timeline.progress);
           setHistory((current) =>
             mergePetHistory(current, timeline.records, nextPet.id as string),
           );
         }
       } else {
         setPlans([]);
+        setProgress([]);
         setProfile(initialProfile);
         setInput(initialInput);
       }
@@ -1840,6 +2099,7 @@ export function PetFlowApp() {
     setFlowLoading(true);
     setEpisodes([]);
     setPlans([]);
+    setProgress([]);
     try {
       const { data } = await supabase.auth.getSession();
       if (!data.session) return;
@@ -1849,6 +2109,7 @@ export function PetFlowApp() {
       );
       setEpisodes(timeline.episodes);
       setPlans(timeline.plans);
+      setProgress(timeline.progress);
       setHistory((current) =>
         mergePetHistory(current, timeline.records, nextProfile.id as string),
       );
@@ -1993,6 +2254,7 @@ export function PetFlowApp() {
     setPets([]);
     setEpisodes([]);
     setPlans([]);
+    setProgress([]);
     setTesterProfile(null);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
@@ -2175,6 +2437,55 @@ export function PetFlowApp() {
       return "계획 체크 상태를 저장하지 못했어요.";
     }
   }
+  async function saveProgress(
+    episodeId: string,
+    input: Pick<
+      EpisodeProgress,
+      "followUpDay" | "conditionChange" | "appetite" | "energy"
+    >,
+  ) {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
+      const response = await fetch(`/api/episodes/${episodeId}/progress`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) return "경과 기록을 저장하지 못했어요.";
+      const payload = (await response.json()) as {
+        progress: EpisodeProgress;
+      };
+      setProgress((current) => {
+        const exists = current.some(
+          (item) => item.id === payload.progress.id,
+        );
+        return exists
+          ? current.map((item) =>
+              item.id === payload.progress.id ? payload.progress : item,
+            )
+          : [...current, payload.progress].sort(
+              (a, b) => a.followUpDay - b.followUpDay,
+            );
+      });
+      setEpisodes((current) =>
+        current.map((episode) =>
+          episode.id === episodeId
+            ? { ...episode, lastActivityAt: payload.progress.recordedAt }
+            : episode,
+        ),
+      );
+      return "";
+    } catch {
+      return "경과 기록을 저장하지 못했어요.";
+    }
+  }
   async function updateFeedback(value: HistoryRecord["feedback"]) {
     if (!selected) return;
     const updated = { ...selected, feedback: value };
@@ -2270,6 +2581,7 @@ export function PetFlowApp() {
             flow={healthFlow}
             episodes={episodes}
             plans={plans}
+            progress={progress}
             petName={profile.name}
             onBack={() => setView("home")}
             onStart={startNew}
@@ -2299,9 +2611,18 @@ export function PetFlowApp() {
                   )
                 : undefined
             }
+            progress={
+              selectedEpisodeReport.episode
+                ? progress.filter(
+                    (item) =>
+                      item.episodeId === selectedEpisodeReport.episode?.id,
+                  )
+                : []
+            }
             onBack={() => setView("history")}
             onSavePlan={savePlan}
             onTogglePlanTask={togglePlanTask}
+            onSaveProgress={saveProgress}
             onSelectRecord={(record) => {
               setSelected(record);
               setView("result");
