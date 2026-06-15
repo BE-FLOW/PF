@@ -16,5 +16,7 @@
 ## 건강 기록 연결
 
 로그인 상태에서 만든 리포트는 `health_reports.user_id`와
-`health_reports.pet_id`에 계정과 선택된 반려동물이 연결된다. 기존 익명 기록은
-두 필드가 `null`인 상태로 계속 사용할 수 있다.
+`health_reports.pet_id`에 계정과 선택된 반려동물이 연결된다. 관련 기록은
+`health_reports.episode_id`로 진행 중인 `episodes` 행에 묶인다. 사용자가 사건을
+마무리한 뒤 남기는 다음 기록은 새 사건을 자동 생성한다. 기존 익명 기록은 계정과
+사건 연결 없이 계속 사용할 수 있다.

@@ -74,9 +74,21 @@ export interface AnalysisResult {
 
 export interface HistoryRecord {
   petId?: string;
+  episodeId?: string;
   input: HealthCheckInput;
   result: AnalysisResult;
   feedback?: "helpful" | "not-helpful";
+}
+
+export type EpisodeStatus = "open" | "closed";
+
+export interface PetEpisode {
+  id: string;
+  petId: string;
+  status: EpisodeStatus;
+  startedAt: string;
+  lastActivityAt: string;
+  closedAt: string | null;
 }
 
 export type HealthTrend = "stable" | "watch" | "worsening";

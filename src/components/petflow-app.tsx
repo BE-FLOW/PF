@@ -19,6 +19,7 @@ import type {
   HealthFlowSummary,
   HistoryRecord,
   Level,
+  PetEpisode,
   PetProfile,
   RedFlagId,
   SymptomId,
@@ -123,16 +124,22 @@ function getOrCreateClientId() {
 async function fetchPetHistory(
   profile: PetProfile,
   accessToken: string,
-): Promise<HistoryRecord[]> {
-  if (!profile.id) return [];
+): Promise<{ records: HistoryRecord[]; episodes: PetEpisode[] }> {
+  if (!profile.id) return { records: [], episodes: [] };
   const response = await fetch(`/api/pets/${profile.id}/history`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) return [];
-  const payload = (await response.json()) as { reports: DisplayHealthReport[] };
-  return payload.reports.map((report) =>
-    storedReportToHistoryRecord(report, profile),
-  );
+  if (!response.ok) return { records: [], episodes: [] };
+  const payload = (await response.json()) as {
+    reports: DisplayHealthReport[];
+    episodes: PetEpisode[];
+  };
+  return {
+    records: payload.reports.map((report) =>
+      storedReportToHistoryRecord(report, profile),
+    ),
+    episodes: payload.episodes,
+  };
 }
 
 function mergePetHistory(
@@ -251,6 +258,7 @@ function HomeView({
   onAccount,
   flow,
   flowLoading,
+  activeEpisode,
 }: {
   profile: PetProfile;
   history: HistoryRecord[];
@@ -260,6 +268,7 @@ function HomeView({
   onAccount: () => void;
   flow: HealthFlowSummary;
   flowLoading: boolean;
+  activeEpisode?: PetEpisode;
 }) {
   const recent = history[0];
   const hasProfile = Boolean(profile.name.trim());
@@ -329,7 +338,11 @@ function HomeView({
           </p>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
-            {hasProfile ? "오늘 건강 기록하기" : "등록하고 시작하기"}
+            {hasProfile
+              ? activeEpisode
+                ? "이어서 기록하기"
+                : "오늘 건강 기록하기"
+              : "등록하고 시작하기"}
           </button>
         </div>
         <div className="hero-visual" aria-hidden="true">
@@ -989,7 +1002,7 @@ function ResultView({
               ? "AI가 기록 문장을 정리했습니다."
               : "안전 규칙 기반으로 정리했습니다."}{" "}
             {result.storage === "remote"
-              ? "익명 테스트 데이터가 서버에 저장됐어요."
+              ? "구조화된 테스트 기록이 서버에 저장됐어요."
               : "이 기록은 현재 기기에만 저장돼요."}
           </p>
         </aside>
@@ -1069,7 +1082,8 @@ function ResultView({
               <Icon name="home" size={17} /> 홈으로
             </button>
             <button className="secondary-button" onClick={onRestart}>
-              <Icon name="plus" size={17} /> 새 기록 남기기
+              <Icon name="plus" size={17} />{" "}
+              {record.episodeId ? "경과 이어 기록" : "새 기록 남기기"}
             </button>
           </div>
         </div>
@@ -1081,16 +1095,53 @@ function ResultView({
 function HistoryView({
   history,
   flow,
+  episodes,
+  petName,
   onBack,
   onSelect,
   onStart,
+  onCloseEpisode,
+  closingEpisodeId,
+  episodeError,
 }: {
   history: HistoryRecord[];
   flow: HealthFlowSummary;
+  episodes: PetEpisode[];
+  petName: string;
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
   onStart: () => void;
+  onCloseEpisode: (episodeId: string) => void;
+  closingEpisodeId?: string;
+  episodeError: string;
 }) {
+  const episodeGroups = useMemo(() => {
+    const episodeById = new Map(episodes.map((episode) => [episode.id, episode]));
+    const grouped = new Map<
+      string,
+      { episode?: PetEpisode; records: HistoryRecord[] }
+    >();
+
+    for (const record of history) {
+      const key = record.episodeId ?? `record:${record.result.id}`;
+      const group = grouped.get(key) ?? {
+        episode: record.episodeId ? episodeById.get(record.episodeId) : undefined,
+        records: [],
+      };
+      group.records.push(record);
+      grouped.set(key, group);
+    }
+
+    return [...grouped.values()].sort((a, b) => {
+      if (a.episode?.status !== b.episode?.status) {
+        return a.episode?.status === "open" ? -1 : 1;
+      }
+      const aTime = a.episode?.lastActivityAt ?? a.records[0]?.result.createdAt ?? "";
+      const bTime = b.episode?.lastActivityAt ?? b.records[0]?.result.createdAt ?? "";
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
+    });
+  }, [episodes, history]);
+
   return (
     <div className="content-wrap">
       <div className="page-heading">
@@ -1112,31 +1163,77 @@ function HistoryView({
         {flow.recordCount > 0 && <pre>{flow.vetBrief}</pre>}
       </section>
       {history.length ? (
-        <div className="history-grid">
-          {history.map((record) => (
-            <button
-              key={record.result.id}
-              className="history-card"
-              onClick={() => onSelect(record)}
-            >
-              <span className="history-date">
-                {new Date(record.result.createdAt).getDate()}일
-              </span>
-              <span>
-                <h3>
-                  {record.input.petName || "반려동물"} ·{" "}
-                  {record.result.headline}
-                </h3>
-                <p>
-                  {formatDate(record.result.createdAt)} · 증상{" "}
-                  {record.input.symptoms.length}개 기록
-                </p>
-              </span>
-              <span className={`history-risk ${record.result.riskLevel}`}>
-                {riskLabel[record.result.riskLevel]}
-              </span>
-            </button>
-          ))}
+        <div className="episode-list">
+          {episodeGroups.map((group) => {
+            const latest = group.records[0];
+            const episodeFlow = summarizeHealthFlow(
+              group.records,
+              petName || "반려동물",
+              new Date(latest.result.createdAt),
+            );
+            const isOpen = group.episode?.status === "open";
+            const hasEpisode = Boolean(group.episode);
+            const groupKey = group.episode?.id ?? latest.result.id;
+            return (
+              <section
+                className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
+                key={groupKey}
+              >
+                <div className="episode-head">
+                  <div>
+                    <span className={`episode-status ${isOpen ? "open" : "closed"}`}>
+                      {isOpen ? "진행 중" : hasEpisode ? "마무리됨" : "개별 기록"}
+                    </span>
+                    <h2>
+                      {isOpen
+                        ? "진행 중인 건강 기록"
+                        : `${new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" }).format(new Date(latest.result.createdAt))} 건강 기록`}
+                    </h2>
+                    <p>{episodeFlow.description}</p>
+                  </div>
+                  <div className="episode-actions">
+                    <span>{group.records.length}회 기록</span>
+                    {isOpen && group.episode && (
+                      <button
+                        className="secondary-button compact"
+                        onClick={() => onCloseEpisode(group.episode?.id as string)}
+                        disabled={closingEpisodeId === group.episode.id}
+                      >
+                        <Icon name="check" size={14} />
+                        {closingEpisodeId === group.episode.id
+                          ? "마무리 중..."
+                          : "이번 기록 마무리"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="history-grid">
+                  {group.records.map((record) => (
+                    <button
+                      key={record.result.id}
+                      className="history-card"
+                      onClick={() => onSelect(record)}
+                    >
+                      <span className="history-date">
+                        {new Date(record.result.createdAt).getDate()}일
+                      </span>
+                      <span>
+                        <h3>{record.result.headline}</h3>
+                        <p>
+                          {formatDate(record.result.createdAt)} · 증상{" "}
+                          {record.input.symptoms.length}개 기록
+                        </p>
+                      </span>
+                      <span className={`history-risk ${record.result.riskLevel}`}>
+                        {riskLabel[record.result.riskLevel]}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+          {episodeError && <p className="share-error" role="alert">{episodeError}</p>}
         </div>
       ) : (
         <div
@@ -1172,12 +1269,15 @@ export function PetFlowApp() {
   const [authReady, setAuthReady] = useState(false);
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [selected, setSelected] = useState<HistoryRecord | null>(null);
   const [profileReturnView, setProfileReturnView] = useState<"home" | "check" | "account">(
     "home",
   );
   const [loading, setLoading] = useState(false);
   const [flowLoading, setFlowLoading] = useState(false);
+  const [closingEpisodeId, setClosingEpisodeId] = useState<string>();
+  const [episodeError, setEpisodeError] = useState("");
   const [error, setError] = useState("");
   const currentView = useMemo(
     () => (view === "result" && !selected ? "home" : view),
@@ -1191,6 +1291,12 @@ export function PetFlowApp() {
   const healthFlow = useMemo(
     () => summarizeHealthFlow(visibleHistory, profile.name || "반려동물"),
     [profile.name, visibleHistory],
+  );
+  const activeEpisode = useMemo(
+    () => episodes.find(
+      (episode) => episode.petId === selectedPetId && episode.status === "open",
+    ),
+    [episodes, selectedPetId],
   );
 
   useEffect(() => {
@@ -1236,6 +1342,7 @@ export function PetFlowApp() {
       setUser(nextUser);
       if (!nextUser || !supabase) {
         setPets([]);
+        setEpisodes([]);
         setTesterProfile(null);
         setSelectedPetId(undefined);
         setAuthReady(true);
@@ -1281,12 +1388,13 @@ export function PetFlowApp() {
         setInput(profileToHealthInput(nextPet));
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData.session && nextPet.id) {
-          const remoteRecords = await fetchPetHistory(
+          const timeline = await fetchPetHistory(
             nextPet,
             sessionData.session.access_token,
           );
+          setEpisodes(timeline.episodes);
           setHistory((current) =>
-            mergePetHistory(current, remoteRecords, nextPet.id as string),
+            mergePetHistory(current, timeline.records, nextPet.id as string),
           );
         }
       } else {
@@ -1315,15 +1423,17 @@ export function PetFlowApp() {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !nextProfile.id) return;
     setFlowLoading(true);
+    setEpisodes([]);
     try {
       const { data } = await supabase.auth.getSession();
       if (!data.session) return;
-      const remoteRecords = await fetchPetHistory(
+      const timeline = await fetchPetHistory(
         nextProfile,
         data.session.access_token,
       );
+      setEpisodes(timeline.episodes);
       setHistory((current) =>
-        mergePetHistory(current, remoteRecords, nextProfile.id as string),
+        mergePetHistory(current, timeline.records, nextProfile.id as string),
       );
     } finally {
       setFlowLoading(false);
@@ -1463,6 +1573,7 @@ export function PetFlowApp() {
     setProfile(initialProfile);
     setInput(initialInput);
     setPets([]);
+    setEpisodes([]);
     setTesterProfile(null);
     setSelectedPetId(undefined);
     try {
@@ -1507,9 +1618,40 @@ export function PetFlowApp() {
         body: JSON.stringify(input),
       });
       if (!response.ok) throw new Error("analysis failed");
-      const result = (await response.json()) as AnalysisResult;
-      const record: HistoryRecord = { input, result, petId: selectedPetId };
+      const responsePayload = (await response.json()) as AnalysisResult & {
+        episodeId?: string | null;
+      };
+      const { episodeId, ...result } = responsePayload;
+      const record: HistoryRecord = {
+        input,
+        result,
+        petId: selectedPetId,
+        episodeId: episodeId ?? undefined,
+      };
       persist([record, ...history].slice(0, 100));
+      if (episodeId && selectedPetId) {
+        setEpisodes((current) => {
+          const existing = current.find((episode) => episode.id === episodeId);
+          if (existing) {
+            return current.map((episode) =>
+              episode.id === episodeId
+                ? { ...episode, lastActivityAt: result.createdAt }
+                : episode,
+            );
+          }
+          return [
+            {
+              id: episodeId,
+              petId: selectedPetId,
+              status: "open",
+              startedAt: result.createdAt,
+              lastActivityAt: result.createdAt,
+              closedAt: null,
+            },
+            ...current,
+          ];
+        });
+      }
       setSelected(record);
       setView("result");
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1517,6 +1659,32 @@ export function PetFlowApp() {
       setError("리포트를 만들지 못했어요. 잠시 후 다시 시도해 주세요.");
     } finally {
       setLoading(false);
+    }
+  }
+  async function closeEpisode(episodeId: string) {
+    const supabase = getSupabaseBrowserClient();
+    setClosingEpisodeId(episodeId);
+    setEpisodeError("");
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) throw new Error("no session");
+      const response = await fetch(`/api/episodes/${episodeId}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      if (!response.ok) throw new Error("close failed");
+      const payload = (await response.json()) as { episode: PetEpisode };
+      setEpisodes((current) =>
+        current.map((episode) =>
+          episode.id === payload.episode.id ? payload.episode : episode,
+        ),
+      );
+    } catch {
+      setEpisodeError("이번 기록을 마무리하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setClosingEpisodeId(undefined);
     }
   }
   async function updateFeedback(value: HistoryRecord["feedback"]) {
@@ -1562,6 +1730,7 @@ export function PetFlowApp() {
             onAccount={() => setView("account")}
             flow={healthFlow}
             flowLoading={flowLoading}
+            activeEpisode={activeEpisode}
           />
         )}{" "}
         {currentView === "profile" && (
@@ -1611,8 +1780,13 @@ export function PetFlowApp() {
           <HistoryView
             history={visibleHistory}
             flow={healthFlow}
+            episodes={episodes}
+            petName={profile.name}
             onBack={() => setView("home")}
             onStart={startNew}
+            onCloseEpisode={closeEpisode}
+            closingEpisodeId={closingEpisodeId}
+            episodeError={episodeError}
             onSelect={(record) => {
               setSelected(record);
               setView("result");

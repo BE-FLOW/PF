@@ -1,6 +1,6 @@
 begin;
 
-select plan(15);
+select plan(19);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -9,6 +9,7 @@ select has_table(
   'health_report_feedback table exists'
 );
 select has_table('public', 'pets', 'pets table exists');
+select has_table('public', 'episodes', 'episodes table exists');
 select has_table('public', 'tester_profiles', 'tester_profiles table exists');
 select has_view('public', 'tester_management', 'tester management view exists');
 select col_not_null(
@@ -16,6 +17,12 @@ select col_not_null(
   'health_reports',
   'client_id',
   'anonymous client id is required'
+);
+select has_column(
+  'public',
+  'health_reports',
+  'episode_id',
+  'health reports can be linked to an episode'
 );
 select col_not_null(
   'public',
@@ -34,9 +41,19 @@ select is(
   'RLS is enabled for pets'
 );
 select is(
+  (select relrowsecurity from pg_class where oid = 'public.episodes'::regclass),
+  true,
+  'RLS is enabled for episodes'
+);
+select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'pets'),
   4,
   'pets has owner-only CRUD policies'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'episodes'),
+  4,
+  'episodes has owner-only CRUD policies'
 );
 select is(
   (select relrowsecurity from pg_class where oid = 'public.tester_profiles'::regclass),

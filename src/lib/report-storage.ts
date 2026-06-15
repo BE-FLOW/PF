@@ -14,6 +14,7 @@ export interface StoredHealthReport {
   client_id: string;
   user_id: string | null;
   pet_id: string | null;
+  episode_id: string | null;
   species: HealthCheckInput["species"];
   breed: string | null;
   age_group: HealthCheckInput["ageGroup"];
@@ -50,6 +51,7 @@ export function toStoredHealthReport(
     isTest?: boolean;
     userId?: string | null;
     petId?: string | null;
+    episodeId?: string | null;
   } = {},
 ): StoredHealthReport {
   return {
@@ -57,6 +59,7 @@ export function toStoredHealthReport(
     client_id: clientId,
     user_id: options.userId ?? null,
     pet_id: options.petId ?? null,
+    episode_id: options.episodeId ?? null,
     species: input.species,
     breed: input.breed?.trim().slice(0, 80) || null,
     age_group: input.ageGroup,
@@ -90,6 +93,7 @@ export function storedReportToHistoryRecord(
   const generated = analyzeLocally(input);
   return {
     petId: stored.pet_id ?? profile.id,
+    episodeId: stored.episode_id ?? undefined,
     input,
     result: {
       ...generated,

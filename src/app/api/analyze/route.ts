@@ -146,6 +146,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ...result,
-    storage: saved ? "remote" : "local",
+    storage: saved.saved ? "remote" : "local",
+    episodeId: saved.episodeId,
   });
 }

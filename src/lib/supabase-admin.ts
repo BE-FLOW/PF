@@ -1,4 +1,4 @@
-import type { AnalysisResult, HealthCheckInput } from "./types";
+import type { AnalysisResult, HealthCheckInput, PetEpisode } from "./types";
 import {
   isUuid,
   toStoredHealthReport,
@@ -8,6 +8,11 @@ import {
 const requestTimeoutMs = 3500;
 
 export type DatabaseStatus = "connected" | "unconfigured" | "error";
+
+export interface HealthReportSaveResult {
+  saved: boolean;
+  episodeId: string | null;
+}
 
 function getConfig() {
   const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
@@ -48,22 +53,93 @@ function deploymentEnvironment() {
   return process.env.VERCEL_ENV || process.env.NODE_ENV || "development";
 }
 
+function toPetEpisode(row: {
+  id: string;
+  pet_id: string;
+  status: PetEpisode["status"];
+  started_at: string;
+  last_activity_at: string;
+  closed_at: string | null;
+}): PetEpisode {
+  return {
+    id: row.id,
+    petId: row.pet_id,
+    status: row.status,
+    startedAt: row.started_at,
+    lastActivityAt: row.last_activity_at,
+    closedAt: row.closed_at,
+  };
+}
+
+async function getAuthenticatedUserId(
+  accessToken: string | null,
+): Promise<string | null> {
+  const config = getConfig();
+  if (!config || !accessToken) return null;
+  try {
+    const response = await fetch(`${config.url}/auth/v1/user`, {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+    if (!response.ok) return null;
+    const user = (await response.json()) as { id?: string };
+    return isUuid(user.id) ? user.id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureOpenEpisode(
+  userId: string,
+  petId: string,
+  activityAt: string,
+): Promise<string | null> {
+  try {
+    const response = await supabaseRequest("rpc/ensure_open_episode", {
+      method: "POST",
+      body: JSON.stringify({
+        target_user_id: userId,
+        target_pet_id: petId,
+        activity_at: activityAt,
+      }),
+    });
+    if (!response?.ok) return null;
+    const episodeId = (await response.json()) as string;
+    return isUuid(episodeId) ? episodeId : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function saveHealthReport(
   input: HealthCheckInput,
   result: AnalysisResult,
   clientId: string | null,
   isTest = false,
   account: { userId?: string | null; petId?: string | null } = {},
-): Promise<boolean> {
-  if (!isUuid(clientId)) return false;
+): Promise<HealthReportSaveResult> {
+  if (!isUuid(clientId)) return { saved: false, episodeId: null };
 
   try {
+    const episodeId =
+      isUuid(account.userId) && isUuid(account.petId)
+        ? await ensureOpenEpisode(
+            account.userId,
+            account.petId,
+            result.createdAt,
+          )
+        : null;
     const payload = toStoredHealthReport(input, result, clientId, {
       appVersion: appVersion(),
       environment: deploymentEnvironment(),
       isTest,
       userId: account.userId,
       petId: account.petId,
+      episodeId,
     });
     const response = await supabaseRequest(
       "health_reports?on_conflict=id%2Cclient_id",
@@ -73,9 +149,10 @@ export async function saveHealthReport(
         body: JSON.stringify(payload),
       },
     );
-    return response?.ok ?? false;
+    const saved = response?.ok ?? false;
+    return { saved, episodeId: saved ? episodeId : null };
   } catch {
-    return false;
+    return { saved: false, episodeId: null };
   }
 }
 
@@ -86,24 +163,15 @@ export async function getReportOwner(
   const config = getConfig();
   if (!config || !accessToken || !isUuid(petId)) return null;
   try {
-    const userResponse = await fetch(`${config.url}/auth/v1/user`, {
-      headers: {
-        apikey: config.serviceRoleKey,
-        Authorization: `Bearer ${accessToken}`,
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
-    if (!userResponse.ok) return null;
-    const user = (await userResponse.json()) as { id?: string };
-    if (!isUuid(user.id)) return null;
+    const userId = await getAuthenticatedUserId(accessToken);
+    if (!userId) return null;
     const petResponse = await supabaseRequest(
-      `pets?id=eq.${petId}&user_id=eq.${user.id}&select=id&limit=1`,
+      `pets?id=eq.${petId}&user_id=eq.${userId}&select=id&limit=1`,
       { method: "GET" },
     );
     if (!petResponse?.ok) return null;
     const pets = (await petResponse.json()) as Array<{ id: string }>;
-    return pets[0]?.id === petId ? { userId: user.id, petId } : null;
+    return pets[0]?.id === petId ? { userId, petId } : null;
   } catch {
     return null;
   }
@@ -117,11 +185,89 @@ export async function listPetHealthReports(
   if (!owner) return null;
   try {
     const response = await supabaseRequest(
-      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc&limit=60`,
+      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,episode_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc&limit=60`,
       { method: "GET" },
     );
     if (!response?.ok) return null;
     return (await response.json()) as DisplayHealthReport[];
+  } catch {
+    return null;
+  }
+}
+
+export async function listPetEpisodes(
+  accessToken: string | null,
+  petId: string | null,
+): Promise<PetEpisode[] | null> {
+  const owner = await getReportOwner(accessToken, petId);
+  if (!owner) return null;
+  try {
+    const response = await supabaseRequest(
+      `episodes?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&order=last_activity_at.desc&limit=60`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{
+      id: string;
+      pet_id: string;
+      status: PetEpisode["status"];
+      started_at: string;
+      last_activity_at: string;
+      closed_at: string | null;
+    }>;
+    return rows.map(toPetEpisode);
+  } catch {
+    return null;
+  }
+}
+
+export async function closePetEpisode(
+  accessToken: string | null,
+  episodeId: string | null,
+): Promise<PetEpisode | null> {
+  if (!isUuid(episodeId)) return null;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return null;
+  try {
+    const existingResponse = await supabaseRequest(
+      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&limit=1`,
+      { method: "GET" },
+    );
+    if (!existingResponse?.ok) return null;
+    const existing = (await existingResponse.json()) as Array<{
+      id: string;
+      pet_id: string;
+      status: PetEpisode["status"];
+      started_at: string;
+      last_activity_at: string;
+      closed_at: string | null;
+    }>;
+    if (!existing[0]) return null;
+    if (existing[0].status === "closed") return toPetEpisode(existing[0]);
+
+    const closedAt = new Date().toISOString();
+    const response = await supabaseRequest(
+      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&status=eq.open`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          status: "closed",
+          closed_at: closedAt,
+          updated_at: closedAt,
+        }),
+      },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{
+      id: string;
+      pet_id: string;
+      status: PetEpisode["status"];
+      started_at: string;
+      last_activity_at: string;
+      closed_at: string | null;
+    }>;
+    return rows[0] ? toPetEpisode(rows[0]) : null;
   } catch {
     return null;
   }

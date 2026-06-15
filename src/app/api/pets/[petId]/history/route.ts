@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { listPetHealthReports } from "@/lib/supabase-admin";
+import {
+  listPetEpisodes,
+  listPetHealthReports,
+} from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
 
@@ -12,12 +15,15 @@ export async function GET(
     ? authorization.slice(7)
     : null;
   const { petId } = await context.params;
-  const reports = await listPetHealthReports(accessToken, petId);
-  if (!reports) {
+  const [reports, episodes] = await Promise.all([
+    listPetHealthReports(accessToken, petId),
+    listPetEpisodes(accessToken, petId),
+  ]);
+  if (!reports || !episodes) {
     return NextResponse.json(
-      { error: "기록을 불러올 수 없습니다." },
+      { error: "기록을 불러올 수 없어요." },
       { status: 401 },
     );
   }
-  return NextResponse.json({ reports });
+  return NextResponse.json({ reports, episodes });
 }
