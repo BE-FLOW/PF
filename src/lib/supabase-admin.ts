@@ -1,4 +1,6 @@
 import type {
+  AiAccessStatus,
+  AiReportFeedbackInput,
   AnalysisResult,
   EpisodePlan,
   EpisodeProgress,
@@ -27,6 +29,24 @@ export interface EpisodeVetReviewBundle {
   reports: DisplayHealthReport[];
   plan?: EpisodePlan;
   progress: EpisodeProgress[];
+}
+
+export interface AiReportAccess {
+  userId: string;
+  status: AiAccessStatus;
+}
+
+export interface AiReportUsageInput {
+  userId: string;
+  grantId?: string;
+  petId?: string | null;
+  episodeId?: string | null;
+  status: "succeeded" | "failed";
+  model?: string | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  errorCode?: string | null;
 }
 
 function getConfig() {
@@ -183,6 +203,261 @@ async function getAuthenticatedUserId(
     return isUuid(user.id) ? user.id : null;
   } catch {
     return null;
+  }
+}
+
+function monthStartIso(now = new Date()) {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+}
+
+function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
+  return {
+    enabled: false,
+    reason,
+    monthlyReportLimit: 0,
+    totalReportLimit: null,
+    usedThisMonth: 0,
+    usedTotal: 0,
+    remainingThisMonth: 0,
+  };
+}
+
+async function countSucceededAiReports(
+  userId: string,
+  sinceIso?: string,
+): Promise<number | null> {
+  try {
+    const sinceFilter = sinceIso
+      ? `&generated_at=gte.${encodeURIComponent(sinceIso)}`
+      : "";
+    const response = await supabaseRequest(
+      `ai_report_usage?user_id=eq.${userId}&status=eq.succeeded${sinceFilter}&select=id`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{ id: string }>;
+    return rows.length;
+  } catch {
+    return null;
+  }
+}
+
+async function buildAiAccessStatus(userId: string): Promise<AiAccessStatus> {
+  try {
+    const grantResponse = await supabaseRequest(
+      `ai_access_grants?user_id=eq.${userId}&select=id,code_id,status,monthly_report_limit,total_report_limit,granted_at&limit=1`,
+      { method: "GET" },
+    );
+    if (!grantResponse?.ok) return emptyAiAccessStatus("no_code");
+    const grants = (await grantResponse.json()) as Array<{
+      id: string;
+      code_id: string;
+      status: "active" | "revoked";
+      monthly_report_limit: number;
+      total_report_limit: number | null;
+      granted_at: string;
+    }>;
+    const grant = grants[0];
+    if (!grant) return emptyAiAccessStatus("no_code");
+
+    const [codeResponse, usedThisMonth, usedTotal] = await Promise.all([
+      supabaseRequest(
+        `ai_access_codes?id=eq.${grant.code_id}&select=label,disabled_at,expires_at&limit=1`,
+        { method: "GET" },
+      ),
+      countSucceededAiReports(userId, monthStartIso()),
+      countSucceededAiReports(userId),
+    ]);
+    if (!codeResponse?.ok || usedThisMonth === null || usedTotal === null) {
+      return emptyAiAccessStatus("no_code");
+    }
+    const codes = (await codeResponse.json()) as Array<{
+      label: string;
+      disabled_at: string | null;
+      expires_at: string | null;
+    }>;
+    const code = codes[0];
+    if (!code) return emptyAiAccessStatus("no_code");
+
+    const disabledOrExpired =
+      Boolean(code.disabled_at) ||
+      Boolean(code.expires_at && new Date(code.expires_at) <= new Date());
+    const remainingThisMonth = Math.max(
+      grant.monthly_report_limit - usedThisMonth,
+      0,
+    );
+    const totalLimitHit =
+      grant.total_report_limit !== null && usedTotal >= grant.total_report_limit;
+    const reason: AiAccessStatus["reason"] =
+      grant.status === "revoked" || disabledOrExpired
+        ? "revoked"
+        : totalLimitHit
+          ? "total_limit"
+          : remainingThisMonth <= 0
+            ? "monthly_limit"
+            : "active";
+
+    return {
+      enabled: reason === "active",
+      reason,
+      grantId: grant.id,
+      codeLabel: code.label,
+      monthlyReportLimit: grant.monthly_report_limit,
+      totalReportLimit: grant.total_report_limit,
+      usedThisMonth,
+      usedTotal,
+      remainingThisMonth,
+      grantedAt: grant.granted_at,
+    };
+  } catch {
+    return emptyAiAccessStatus("no_code");
+  }
+}
+
+export async function getAiAccessStatus(
+  accessToken: string | null,
+): Promise<AiAccessStatus | null> {
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return null;
+  return buildAiAccessStatus(userId);
+}
+
+export async function getAiReportAccess(
+  accessToken: string | null,
+): Promise<AiReportAccess | null> {
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return null;
+  return { userId, status: await buildAiAccessStatus(userId) };
+}
+
+export async function redeemAiAccessCode(
+  accessToken: string | null,
+  code: string,
+): Promise<AiAccessStatus | null> {
+  const userId = await getAuthenticatedUserId(accessToken);
+  const cleanedCode = code.trim();
+  if (!userId || cleanedCode.length < 6 || cleanedCode.length > 40) return null;
+  try {
+    const response = await supabaseRequest("rpc/redeem_ai_access_code", {
+      method: "POST",
+      body: JSON.stringify({
+        target_user_id: userId,
+        raw_code: cleanedCode,
+      }),
+    });
+    if (!response?.ok) return null;
+    return buildAiAccessStatus(userId);
+  } catch {
+    return null;
+  }
+}
+
+function estimatedOpenAiCostUsd(
+  promptTokens?: number | null,
+  completionTokens?: number | null,
+) {
+  const inputRate = Number(process.env.OPENAI_INPUT_COST_USD_PER_1M_TOKENS);
+  const outputRate = Number(process.env.OPENAI_OUTPUT_COST_USD_PER_1M_TOKENS);
+  if (
+    !Number.isFinite(inputRate) ||
+    !Number.isFinite(outputRate) ||
+    inputRate < 0 ||
+    outputRate < 0
+  ) {
+    return null;
+  }
+  return (
+    ((promptTokens ?? 0) * inputRate + (completionTokens ?? 0) * outputRate) /
+    1_000_000
+  );
+}
+
+export async function recordAiReportUsage(
+  input: AiReportUsageInput,
+): Promise<string | null> {
+  if (!isUuid(input.userId)) return null;
+  try {
+    const payload = {
+      user_id: input.userId,
+      grant_id: isUuid(input.grantId) ? input.grantId : null,
+      pet_id: isUuid(input.petId) ? input.petId : null,
+      episode_id: isUuid(input.episodeId) ? input.episodeId : null,
+      status: input.status,
+      model: input.model ?? null,
+      prompt_tokens: input.promptTokens ?? null,
+      completion_tokens: input.completionTokens ?? null,
+      total_tokens: input.totalTokens ?? null,
+      estimated_cost_usd:
+        input.status === "succeeded"
+          ? estimatedOpenAiCostUsd(input.promptTokens, input.completionTokens)
+          : null,
+      error_code: input.errorCode ?? null,
+    };
+    const response = await supabaseRequest("ai_report_usage", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{ id: string }>;
+    return rows[0]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveAiReportFeedback(
+  accessToken: string | null,
+  input: AiReportFeedbackInput,
+): Promise<boolean> {
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (
+    !userId ||
+    !isUuid(input.usageId) ||
+    ![1, 2, 3, 4, 5].includes(input.usefulnessScore) ||
+    !["no", "maybe", "yes"].includes(input.wouldPay) ||
+    (input.willingnessToPayKrw !== undefined &&
+      input.willingnessToPayKrw !== null &&
+      (!Number.isInteger(input.willingnessToPayKrw) ||
+        input.willingnessToPayKrw < 0 ||
+        input.willingnessToPayKrw > 1_000_000)) ||
+    (input.comment !== undefined && input.comment.length > 500)
+  ) {
+    return false;
+  }
+  try {
+    const usageResponse = await supabaseRequest(
+      `ai_report_usage?id=eq.${input.usageId}&user_id=eq.${userId}&select=id,episode_id&limit=1`,
+      { method: "GET" },
+    );
+    if (!usageResponse?.ok) return false;
+    const usageRows = (await usageResponse.json()) as Array<{
+      id: string;
+      episode_id: string | null;
+    }>;
+    const usage = usageRows[0];
+    if (!usage) return false;
+
+    const response = await supabaseRequest(
+      "ai_report_feedback?on_conflict=usage_id%2Cuser_id",
+      {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          usage_id: input.usageId,
+          user_id: userId,
+          episode_id: usage.episode_id ?? input.episodeId ?? null,
+          usefulness_score: input.usefulnessScore,
+          would_pay: input.wouldPay,
+          willingness_to_pay_krw: input.willingnessToPayKrw ?? null,
+          comment: input.comment?.trim() || null,
+          updated_at: new Date().toISOString(),
+        }),
+      },
+    );
+    return response?.ok ?? false;
+  } catch {
+    return false;
   }
 }
 

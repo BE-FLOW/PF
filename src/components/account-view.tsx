@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { formatKoreanMobile, normalizeKoreanMobile } from "@/lib/phone";
 import { testerConsentVersion, testerPrivacySummary } from "@/lib/privacy";
-import type { PetProfile, TesterProfile } from "@/lib/types";
+import type { AiAccessStatus, PetProfile, TesterProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
@@ -111,15 +111,33 @@ function PrivacyNotice() {
   );
 }
 
+function aiAccessCopy(access: AiAccessStatus | null) {
+  if (!access || access.reason === "no_code") {
+    return "참여코드를 입력하면 GPT 기반 수의사 검토용 리포트를 만들 수 있어요.";
+  }
+  if (access.reason === "monthly_limit") {
+    return "이번 달 GPT 리포트 사용량을 모두 사용했어요.";
+  }
+  if (access.reason === "total_limit") {
+    return "이 참여코드의 전체 GPT 리포트 사용량을 모두 사용했어요.";
+  }
+  if (access.reason === "revoked") {
+    return "이 참여코드는 현재 사용할 수 없어요.";
+  }
+  return "GPT 기반 수의사 검토용 리포트를 만들 수 있어요.";
+}
+
 export function AccountView({
   user,
   testerProfile,
+  aiAccess,
   pets,
   selectedPetId,
   authReady,
   onBack,
   onAuth,
   onSaveTesterProfile,
+  onRedeemAiCode,
   onLogout,
   onAddPet,
   onEditPet,
@@ -127,6 +145,7 @@ export function AccountView({
 }: {
   user: User | null;
   testerProfile: TesterProfile | null;
+  aiAccess: AiAccessStatus | null;
   pets: PetProfile[];
   selectedPetId?: string;
   authReady: boolean;
@@ -139,6 +158,7 @@ export function AccountView({
     consented: boolean,
   ) => Promise<string>;
   onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
+  onRedeemAiCode: (code: string) => Promise<string>;
   onLogout: () => Promise<void>;
   onAddPet: () => void;
   onEditPet: (pet: PetProfile) => void;
@@ -163,6 +183,9 @@ export function AccountView({
   const [editingTester, setEditingTester] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [aiCode, setAiCode] = useState("");
+  const [aiCodeSaving, setAiCodeSaving] = useState(false);
+  const [aiCodeMessage, setAiCodeMessage] = useState("");
 
   const needsTesterProfile = Boolean(
     user &&
@@ -208,6 +231,18 @@ export function AccountView({
     setEditingTester(true);
   }
 
+  async function redeemAiCode() {
+    if (!aiCode.trim()) {
+      setAiCodeMessage("참여코드를 입력해 주세요.");
+      return;
+    }
+    setAiCodeSaving(true);
+    const result = await onRedeemAiCode(aiCode);
+    setAiCodeSaving(false);
+    setAiCodeMessage(result || "참여코드가 등록됐어요.");
+    if (!result) setAiCode("");
+  }
+
   return (
     <div className="content-wrap narrow-wrap">
       <div className="page-heading">
@@ -235,6 +270,63 @@ export function AccountView({
               {testerProfile && <button className="text-button" onClick={startEditingTester}>정보 수정</button>}
               <button className="text-button muted" onClick={onLogout}>로그아웃</button>
             </div>
+          </section>
+
+          <section className={`panel ai-access-panel ${aiAccess?.enabled ? "enabled" : ""}`}>
+            <div className="panel-head">
+              <div>
+                <h3>GPT AI 리포트 권한</h3>
+                <p>{aiAccessCopy(aiAccess)}</p>
+              </div>
+              <span className={`ai-access-state ${aiAccess?.enabled ? "enabled" : ""}`}>
+                {aiAccess?.enabled ? "사용 가능" : "코드 필요"}
+              </span>
+            </div>
+            {aiAccess?.enabled ? (
+              <div className="ai-usage-row">
+                <div>
+                  <span>이번 달</span>
+                  <strong>
+                    {aiAccess.usedThisMonth}/{aiAccess.monthlyReportLimit}회
+                  </strong>
+                </div>
+                <div>
+                  <span>전체</span>
+                  <strong>
+                    {aiAccess.usedTotal}
+                    {aiAccess.totalReportLimit ? `/${aiAccess.totalReportLimit}` : ""}회
+                  </strong>
+                </div>
+                <div>
+                  <span>코드 그룹</span>
+                  <strong>{aiAccess.codeLabel ?? "테스터"}</strong>
+                </div>
+              </div>
+            ) : (
+              <div className="ai-code-form">
+                <input
+                  value={aiCode}
+                  onChange={(event) => {
+                    setAiCode(event.target.value.toUpperCase());
+                    setAiCodeMessage("");
+                  }}
+                  placeholder="PF-ABCD-1234-EFGH"
+                  autoComplete="off"
+                />
+                <button
+                  className="primary-button compact"
+                  onClick={redeemAiCode}
+                  disabled={aiCodeSaving}
+                >
+                  {aiCodeSaving ? "확인 중..." : "참여코드 등록"}
+                </button>
+              </div>
+            )}
+            {aiCodeMessage && (
+              <p className={aiCodeMessage.includes("등록") ? "form-success" : "form-error"} role="alert">
+                {aiCodeMessage}
+              </p>
+            )}
           </section>
 
           {showTesterForm && (

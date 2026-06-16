@@ -42,3 +42,44 @@ select
   progress.recorded_at
 from public.episode_progress_logs progress
 order by progress.recorded_at desc;
+
+-- Create a new GPT report participation code. Copy the returned code and share it
+-- only with approved testers. The raw code is shown once and only its hash is stored.
+select *
+from public.create_ai_access_code(
+  target_label => 'pilot-vet-report-001',
+  target_max_redemptions => 20,
+  target_monthly_report_limit => 10,
+  target_total_report_limit => 30,
+  target_expires_at => now() + interval '30 days',
+  target_created_by => 'admin'
+);
+
+select *
+from public.ai_usage_management
+order by last_ai_report_at desc nulls last, granted_at desc;
+
+select
+  usage.user_id,
+  usage.episode_id,
+  usage.status,
+  usage.model,
+  usage.prompt_tokens,
+  usage.completion_tokens,
+  usage.total_tokens,
+  usage.estimated_cost_usd,
+  usage.error_code,
+  usage.generated_at
+from public.ai_report_usage usage
+order by usage.generated_at desc;
+
+select
+  feedback.user_id,
+  feedback.episode_id,
+  feedback.usefulness_score,
+  feedback.would_pay,
+  feedback.willingness_to_pay_krw,
+  feedback.comment,
+  feedback.created_at
+from public.ai_report_feedback feedback
+order by feedback.created_at desc;

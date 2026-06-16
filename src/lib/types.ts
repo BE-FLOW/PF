@@ -41,6 +41,33 @@ export interface TesterProfile {
   phoneConsentedAt: string;
 }
 
+export interface AiAccessStatus {
+  enabled: boolean;
+  reason:
+    | "active"
+    | "no_code"
+    | "revoked"
+    | "monthly_limit"
+    | "total_limit";
+  grantId?: string;
+  codeLabel?: string;
+  monthlyReportLimit: number;
+  totalReportLimit: number | null;
+  usedThisMonth: number;
+  usedTotal: number;
+  remainingThisMonth: number;
+  grantedAt?: string;
+}
+
+export interface AiReportFeedbackInput {
+  usageId: string;
+  episodeId?: string;
+  usefulnessScore: 1 | 2 | 3 | 4 | 5;
+  wouldPay: "no" | "maybe" | "yes";
+  willingnessToPayKrw?: number | null;
+  comment?: string;
+}
+
 export interface HealthCheckInput {
   petName: string;
   species: Species;
@@ -142,6 +169,7 @@ export interface VetReviewDraft {
   generatedAt: string;
   source: "local" | "openai";
   reviewStatus: "unreviewed";
+  usageId?: string;
   overview: string;
   keyObservations: string[];
   timeline: string[];

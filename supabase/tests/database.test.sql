@@ -1,6 +1,6 @@
 begin;
 
-select plan(42);
+select plan(61);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -19,6 +19,11 @@ select has_table(
   'episode progress logs table exists'
 );
 select has_view('public', 'tester_management', 'tester management view exists');
+select has_table('public', 'ai_access_codes', 'ai access codes table exists');
+select has_table('public', 'ai_access_grants', 'ai access grants table exists');
+select has_table('public', 'ai_report_usage', 'ai report usage table exists');
+select has_table('public', 'ai_report_feedback', 'ai report feedback table exists');
+select has_view('public', 'ai_usage_management', 'ai usage management view exists');
 select col_not_null(
   'public',
   'health_reports',
@@ -185,6 +190,80 @@ select is(
   ),
   true,
   'service role can call progress RPC'
+);
+
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.ai_access_codes'::regclass),
+  true,
+  'RLS is enabled for AI access codes'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.ai_access_grants'::regclass),
+  true,
+  'RLS is enabled for AI access grants'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.ai_report_usage'::regclass),
+  true,
+  'RLS is enabled for AI report usage'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.ai_report_feedback'::regclass),
+  true,
+  'RLS is enabled for AI report feedback'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename in (
+    'ai_access_codes',
+    'ai_access_grants',
+    'ai_report_usage',
+    'ai_report_feedback'
+  )),
+  0,
+  'AI access and usage data has no browser-facing policies'
+);
+select has_column('public', 'ai_access_codes', 'code_hash', 'AI access code hash is stored');
+select has_column('public', 'ai_access_codes', 'monthly_report_limit', 'AI code monthly limit is stored');
+select has_column('public', 'ai_access_grants', 'monthly_report_limit', 'AI grant monthly limit is stored');
+select has_column('public', 'ai_report_usage', 'total_tokens', 'AI report token usage is stored');
+select has_column('public', 'ai_report_usage', 'estimated_cost_usd', 'AI report cost estimate is stored');
+select has_column('public', 'ai_report_feedback', 'usefulness_score', 'AI report usefulness score is stored');
+select has_column('public', 'ai_report_feedback', 'would_pay', 'AI report willingness to pay is stored');
+select is(
+  has_function_privilege(
+    'authenticated',
+    'public.create_ai_access_code(text,integer,integer,integer,timestamp with time zone,text)',
+    'EXECUTE'
+  ),
+  false,
+  'authenticated users cannot create AI access codes'
+);
+select is(
+  has_function_privilege(
+    'service_role',
+    'public.create_ai_access_code(text,integer,integer,integer,timestamp with time zone,text)',
+    'EXECUTE'
+  ),
+  true,
+  'service role can create AI access codes'
+);
+select is(
+  has_function_privilege(
+    'authenticated',
+    'public.redeem_ai_access_code(uuid,text)',
+    'EXECUTE'
+  ),
+  false,
+  'authenticated users cannot call AI code redemption RPC directly'
+);
+select is(
+  has_function_privilege(
+    'service_role',
+    'public.redeem_ai_access_code(uuid,text)',
+    'EXECUTE'
+  ),
+  true,
+  'service role can redeem AI access codes through route handlers'
 );
 
 select * from finish();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
@@ -15,6 +15,8 @@ import {
 import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
+  AiAccessStatus,
+  AiReportFeedbackInput,
   AnalysisResult,
   ConditionChange,
   EpisodePlan,
@@ -44,6 +46,20 @@ type View =
 interface EpisodeReportSelection {
   episode?: PetEpisode;
   records: HistoryRecord[];
+}
+
+const views: View[] = [
+  "home",
+  "profile",
+  "check",
+  "result",
+  "history",
+  "episode-report",
+  "account",
+];
+
+function isView(value: unknown): value is View {
+  return typeof value === "string" && views.includes(value as View);
 }
 
 const initialProfile: PetProfile = {
@@ -218,6 +234,17 @@ async function fetchPetHistory(
     plans: payload.plans,
     progress: payload.progress,
   };
+}
+
+async function fetchAiAccessStatus(
+  accessToken: string,
+): Promise<AiAccessStatus | null> {
+  const response = await fetch("/api/ai-access", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as { access: AiAccessStatus };
+  return payload.access;
 }
 
 function mergePetHistory(
@@ -1429,6 +1456,10 @@ function EpisodeReportView({
   onTogglePlanTask,
   onSaveProgress,
   onCreateVetDraft,
+  canUseAiReport,
+  aiAccess,
+  onOpenAccount,
+  onSaveAiFeedback,
 }: {
   selection: EpisodeReportSelection;
   petName: string;
@@ -1452,6 +1483,10 @@ function EpisodeReportView({
   onCreateVetDraft: (
     episodeId: string,
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
+  canUseAiReport: boolean;
+  aiAccess: AiAccessStatus | null;
+  onOpenAccount: () => void;
+  onSaveAiFeedback: (input: AiReportFeedbackInput) => Promise<string>;
 }) {
   const report = useMemo(
     () => buildEpisodeReport(selection.records, petName, plan, progress),
@@ -1479,6 +1514,16 @@ function EpisodeReportView({
     "idle" | "loading" | "ready" | "copied" | "failed"
   >("idle");
   const [vetDraftError, setVetDraftError] = useState("");
+  const [feedbackScore, setFeedbackScore] =
+    useState<AiReportFeedbackInput["usefulnessScore"]>(5);
+  const [feedbackPay, setFeedbackPay] =
+    useState<AiReportFeedbackInput["wouldPay"]>("maybe");
+  const [feedbackPrice, setFeedbackPrice] = useState("");
+  const [feedbackComment, setFeedbackComment] = useState("");
+  const [feedbackState, setFeedbackState] = useState<
+    "idle" | "saving" | "saved" | "failed"
+  >("idle");
+  const [feedbackError, setFeedbackError] = useState("");
 
   async function copyReport() {
     try {
@@ -1563,6 +1608,10 @@ function EpisodeReportView({
       setVetDraftError("계정에 연결된 Episode 기록에서만 초안을 만들 수 있어요.");
       return;
     }
+    if (!canUseAiReport) {
+      setVetDraftError("참여코드를 입력한 테스터만 GPT AI 리포트를 만들 수 있어요.");
+      return;
+    }
     setVetDraftState("loading");
     setVetDraftError("");
     const result = await onCreateVetDraft(selection.episode.id);
@@ -1584,6 +1633,32 @@ function EpisodeReportView({
       setVetDraftState("failed");
       setVetDraftError("초안을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
     }
+  }
+
+  async function saveAiFeedback() {
+    if (!vetDraft?.usageId) return;
+    setFeedbackState("saving");
+    setFeedbackError("");
+    const parsedPrice = feedbackPrice.trim()
+      ? Number(feedbackPrice.replace(/[^0-9]/g, ""))
+      : null;
+    const message = await onSaveAiFeedback({
+      usageId: vetDraft.usageId,
+      episodeId: selection.episode?.id,
+      usefulnessScore: feedbackScore,
+      wouldPay: feedbackPay,
+      willingnessToPayKrw:
+        parsedPrice !== null && Number.isFinite(parsedPrice)
+          ? parsedPrice
+          : null,
+      comment: feedbackComment.trim() || undefined,
+    });
+    if (message) {
+      setFeedbackState("failed");
+      setFeedbackError(message);
+      return;
+    }
+    setFeedbackState("saved");
   }
 
   return (
@@ -1641,19 +1716,37 @@ function EpisodeReportView({
           <div>
             <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
             <h3>
-              <Icon name="spark" size={18} /> 수의사 검토용 AI 초안
+              <Icon name="spark" size={18} /> 수의사 검토용 GPT 리포트
             </h3>
             <p>
               여러 날의 관찰과 병원 계획, 3일·7일·14일 경과를 제출용으로 짧게 정리해요.
             </p>
           </div>
-          <span className="vet-draft-badge">AI 초안 · 확인 전</span>
+          <span className="vet-draft-badge">GPT 작성 · 확인 전</span>
         </div>
 
         {!selection.episode ? (
           <p className="plan-empty">
             계정에 연결된 Episode 기록부터 남기면 AI 초안을 만들 수 있어요.
           </p>
+        ) : !canUseAiReport ? (
+          <div className="vet-draft-locked">
+            <strong>참여코드가 있는 테스터에게만 GPT 리포트를 열어두고 있어요.</strong>
+            <p>
+              {aiAccess?.reason === "monthly_limit"
+                ? "이번 달 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
+                : aiAccess?.reason === "total_limit"
+                  ? "이 참여코드의 전체 사용량을 모두 사용했어요."
+                  : "계정 화면에서 관리자에게 받은 참여코드를 입력하면 수의사 검토용 AI 보고서를 만들 수 있어요."}
+            </p>
+            <button
+              type="button"
+              className="secondary-button compact"
+              onClick={onOpenAccount}
+            >
+              참여코드 입력하기
+            </button>
+          </div>
         ) : (
           <>
             <div className="vet-draft-actions">
@@ -1667,8 +1760,8 @@ function EpisodeReportView({
                 {vetDraftState === "loading"
                   ? "초안 만드는 중..."
                   : vetDraft
-                    ? "초안 다시 만들기"
-                    : "AI 초안 만들기"}
+                    ? "GPT 리포트 다시 만들기"
+                    : "GPT 리포트 만들기"}
               </button>
               {vetDraft && (
                 <button
@@ -1699,6 +1792,78 @@ function EpisodeReportView({
                     <p key={item}>{item}</p>
                   ))}
                 </div>
+                {vetDraft.usageId && (
+                  <div className="ai-feedback-box">
+                    <span>테스터 피드백</span>
+                    <div className="ai-feedback-grid">
+                      <label>
+                        수의사 검토에 유용했나요?
+                        <select
+                          value={feedbackScore}
+                          onChange={(event) =>
+                            setFeedbackScore(
+                              Number(event.target.value) as AiReportFeedbackInput["usefulnessScore"],
+                            )
+                          }
+                        >
+                          <option value={5}>5점 · 매우 유용</option>
+                          <option value={4}>4점 · 유용</option>
+                          <option value={3}>3점 · 보통</option>
+                          <option value={2}>2점 · 부족</option>
+                          <option value={1}>1점 · 거의 도움 안 됨</option>
+                        </select>
+                      </label>
+                      <label>
+                        비용을 낼 의향
+                        <select
+                          value={feedbackPay}
+                          onChange={(event) =>
+                            setFeedbackPay(event.target.value as AiReportFeedbackInput["wouldPay"])
+                          }
+                        >
+                          <option value="maybe">상황에 따라 가능</option>
+                          <option value="yes">낼 의향 있음</option>
+                          <option value="no">아직 없음</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="ai-feedback-grid">
+                      <label>
+                        적정 가격 (선택)
+                        <input
+                          value={feedbackPrice}
+                          onChange={(event) => setFeedbackPrice(event.target.value)}
+                          inputMode="numeric"
+                          placeholder="예: 3000"
+                        />
+                      </label>
+                      <label>
+                        짧은 의견 (선택)
+                        <input
+                          value={feedbackComment}
+                          onChange={(event) => setFeedbackComment(event.target.value)}
+                          maxLength={500}
+                          placeholder="빠진 정보나 아쉬운 점"
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-button compact"
+                      onClick={saveAiFeedback}
+                      disabled={feedbackState === "saving"}
+                    >
+                      {feedbackState === "saved"
+                        ? "피드백 저장 완료"
+                        : feedbackState === "saving"
+                          ? "저장 중..."
+                          : "피드백 저장"}
+                    </button>
+                    {feedbackError && (
+                      <p className="share-error" role="alert">{feedbackError}</p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -1707,7 +1872,7 @@ function EpisodeReportView({
           <p className="share-error" role="alert">{vetDraftError}</p>
         )}
         <p className="plan-safety-note">
-          AI 초안은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
+          GPT 리포트는 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
           수의사 확인 전 정보로 표시합니다.
         </p>
       </section>
@@ -2065,13 +2230,15 @@ function EpisodeReportView({
 }
 
 export function PetFlowApp() {
-  const [view, setView] = useState<View>("home");
+  const [view, setViewState] = useState<View>("home");
+  const applyingPopState = useRef(false);
   const [profile, setProfile] = useState<PetProfile>(initialProfile);
   const [editingProfile, setEditingProfile] = useState<PetProfile>(initialProfile);
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string>();
   const [user, setUser] = useState<User | null>(null);
   const [testerProfile, setTesterProfile] = useState<TesterProfile | null>(null);
+  const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
@@ -2089,6 +2256,18 @@ export function PetFlowApp() {
   const [closingEpisodeId, setClosingEpisodeId] = useState<string>();
   const [episodeError, setEpisodeError] = useState("");
   const [error, setError] = useState("");
+  const setView = useCallback((nextView: View) => {
+    setViewState((current) => {
+      if (current === nextView) return current;
+      if (
+        typeof window !== "undefined" &&
+        !applyingPopState.current
+      ) {
+        window.history.pushState({ petflowView: nextView }, "", window.location.href);
+      }
+      return nextView;
+    });
+  }, []);
   const currentView = useMemo(
     () =>
       view === "result" && !selected
@@ -2098,6 +2277,21 @@ export function PetFlowApp() {
           : view,
     [selected, selectedEpisodeReport, view],
   );
+
+  useEffect(() => {
+    window.history.replaceState({ petflowView: view }, "", window.location.href);
+    function handlePopState(event: PopStateEvent) {
+      applyingPopState.current = true;
+      setViewState(isView(event.state?.petflowView) ? event.state.petflowView : "home");
+      window.requestAnimationFrame(() => {
+        applyingPopState.current = false;
+      });
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+    // The initial replace must run once; later view changes are pushed by setView.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const visibleHistory = useMemo(() => {
     if (!user) return history.filter((record) => !record.petId);
     if (!selectedPetId) return [];
@@ -2161,6 +2355,7 @@ export function PetFlowApp() {
         setPlans([]);
         setProgress([]);
         setTesterProfile(null);
+        setAiAccess(null);
         setSelectedEpisodeReport(null);
         setSelectedPetId(undefined);
         setAuthReady(true);
@@ -2200,11 +2395,16 @@ export function PetFlowApp() {
           : null,
       );
       const nextPet = loadedPets[0];
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData.session) {
+        setAiAccess(await fetchAiAccessStatus(sessionData.session.access_token));
+      } else {
+        setAiAccess(null);
+      }
       if (nextPet) {
         setProfile(nextPet);
         setSelectedPetId(nextPet.id);
         setInput(profileToHealthInput(nextPet));
-        const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData.session && nextPet.id) {
           const timeline = await fetchPetHistory(
             nextPet,
@@ -2394,6 +2594,34 @@ export function PetFlowApp() {
     });
     return "";
   }
+  async function redeemAiCode(code: string) {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
+      const response = await fetch("/api/ai-access", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code }),
+      });
+      const payload = (await response.json()) as {
+        access?: AiAccessStatus;
+        error?: string;
+      };
+      if (!response.ok || !payload.access) {
+        return payload.error ?? "참여코드를 등록하지 못했어요.";
+      }
+      setAiAccess(payload.access);
+      return "";
+    } catch {
+      return "참여코드를 등록하지 못했어요.";
+    }
+  }
   async function logout() {
     const supabase = getSupabaseBrowserClient();
     await supabase?.auth.signOut();
@@ -2404,6 +2632,7 @@ export function PetFlowApp() {
     setPlans([]);
     setProgress([]);
     setTesterProfile(null);
+    setAiAccess(null);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
     try {
@@ -2647,14 +2876,39 @@ export function PetFlowApp() {
       });
       const payload = (await response.json()) as {
         draft?: VetReviewDraft;
+        access?: AiAccessStatus;
         error?: string;
       };
       if (!response.ok || !payload.draft) {
+        if (payload.access) setAiAccess(payload.access);
         return { error: payload.error ?? "수의사 검토용 초안을 만들지 못했어요." };
       }
+      setAiAccess(await fetchAiAccessStatus(data.session.access_token));
       return { draft: payload.draft };
     } catch {
       return { error: "수의사 검토용 초안을 만들지 못했어요." };
+    }
+  }
+  async function submitAiReportFeedback(input: AiReportFeedbackInput) {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
+      const response = await fetch("/api/ai-report-feedback", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) return payload.error ?? "피드백을 저장하지 못했어요.";
+      return "";
+    } catch {
+      return "피드백을 저장하지 못했어요.";
     }
   }
   async function updateFeedback(value: HistoryRecord["feedback"]) {
@@ -2719,12 +2973,14 @@ export function PetFlowApp() {
             key={`${user?.id ?? "guest"}:${testerProfile?.consentVersion ?? "none"}:${testerProfile?.phone ?? "none"}`}
             user={user}
             testerProfile={testerProfile}
+            aiAccess={aiAccess}
             pets={pets}
             selectedPetId={selectedPetId}
             authReady={authReady}
             onBack={() => setView("home")}
             onAuth={handleAuth}
             onSaveTesterProfile={saveTesterProfile}
+            onRedeemAiCode={redeemAiCode}
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
             onEditPet={(pet) => openProfile("account", pet)}
@@ -2803,6 +3059,10 @@ export function PetFlowApp() {
             onTogglePlanTask={togglePlanTask}
             onSaveProgress={saveProgress}
             onCreateVetDraft={createVetDraft}
+            canUseAiReport={Boolean(aiAccess?.enabled)}
+            aiAccess={aiAccess}
+            onOpenAccount={() => setView("account")}
+            onSaveAiFeedback={submitAiReportFeedback}
             onSelectRecord={(record) => {
               setSelected(record);
               setView("result");
