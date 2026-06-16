@@ -135,7 +135,7 @@ export interface EpisodePlan {
   tasks: PlanTask[];
 }
 
-export type FollowUpDay = 3 | 7 | 14;
+export type FollowUpDay = 3 | 7 | 14 | 30 | 60 | 90;
 export type ConditionChange = "better" | "same" | "worse";
 
 export interface EpisodeProgress {
@@ -171,6 +171,7 @@ export interface VetReviewDraft {
   reviewStatus: "unreviewed";
   usageId?: string;
   overview: string;
+  handoffNote: string;
   keyObservations: string[];
   timeline: string[];
   planAndProgress: string[];

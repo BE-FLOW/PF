@@ -49,7 +49,7 @@ describe("buildVetReviewDraft", () => {
     expect(draft.reviewStatus).toBe("unreviewed");
   });
 
-  it("keeps owner-reported plan and 3/7/14 progress separate from confirmed vet content", () => {
+  it("keeps owner-reported plan and follow-up progress separate from confirmed vet content", () => {
     const plan: EpisodePlan = {
       id: "60000000-0000-4000-8000-000000000001",
       episodeId: "50000000-0000-4000-8000-000000000001",
@@ -91,7 +91,9 @@ describe("buildVetReviewDraft", () => {
     expect(draft.planAndProgress.join("\n")).toContain("보호자 기록 병원 계획");
     expect(draft.planAndProgress.join("\n")).toContain("3일 경과");
     expect(draft.planAndProgress.join("\n")).toContain("확인 전");
-    expect(draft.copyText).toContain("[병원 계획과 3일·7일·14일 경과]");
+    expect(draft.copyText).toContain("[병원 계획과 경과 기록]");
+    expect(draft.copyText).toContain("[다른 병원 첫 설명]");
+    expect(draft.handoffNote).toContain("다른 병원");
   });
 
   it("states that the draft is not diagnosis or prescription", () => {

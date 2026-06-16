@@ -137,7 +137,22 @@ const conditionChangeOptions: Array<{
   { id: "worse", label: "나빠졌어요", description: "불편함이 더 보여요" },
 ];
 
-const followUpDays: FollowUpDay[] = [3, 7, 14];
+const followUpGroups: Array<{
+  title: string;
+  description: string;
+  days: FollowUpDay[];
+}> = [
+  {
+    title: "초기 경과",
+    description: "진료 직후 다시 설명해야 하는 변화를 3·7·14일에 정리해요.",
+    days: [3, 7, 14],
+  },
+  {
+    title: "장기 경과",
+    description: "다른 병원 방문이나 재진 때 필요한 큰 흐름을 30·60·90일에 남겨요.",
+    days: [30, 60, 90],
+  },
+];
 
 function conditionChangeLabel(value: ConditionChange) {
   return conditionChangeOptions.find((option) => option.id === value)?.label ?? "비슷해요";
@@ -1492,6 +1507,14 @@ function EpisodeReportView({
     () => buildEpisodeReport(selection.records, petName, plan, progress),
     [petName, plan, progress, selection.records],
   );
+  const completedPlanTaskCount = plan?.tasks.filter((task) => task.completedAt).length ?? 0;
+  const totalPlanTaskCount = plan?.tasks.length ?? 0;
+  const initialProgressCount = progress.filter((item) =>
+    [3, 7, 14].includes(item.followUpDay),
+  ).length;
+  const longTermProgressCount = progress.filter((item) =>
+    [30, 60, 90].includes(item.followUpDay),
+  ).length;
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
   >("idle");
@@ -1719,10 +1742,19 @@ function EpisodeReportView({
               <Icon name="spark" size={18} /> 수의사 검토용 GPT 리포트
             </h3>
             <p>
-              여러 날의 관찰과 병원 계획, 3일·7일·14일 경과를 제출용으로 짧게 정리해요.
+              기록해 둔 관찰, 병원 계획, 초기·장기 경과를 자동으로 묶어 다른 병원에도 바로 전달해요.
             </p>
           </div>
           <span className="vet-draft-badge">GPT 작성 · 확인 전</span>
+        </div>
+
+        <div className="vet-draft-includes" aria-label="GPT 리포트 자동 포함 자료">
+          <span>자동 포함</span>
+          <strong>관찰 {report.recordCount}회</strong>
+          <strong>계획 {completedPlanTaskCount}/{totalPlanTaskCount}개</strong>
+          <strong>초기 경과 {initialProgressCount}/3</strong>
+          <strong>장기 경과 {longTermProgressCount}/3</strong>
+          <strong>다른 병원 첫 설명</strong>
         </div>
 
         {!selection.episode ? (
@@ -1780,6 +1812,10 @@ function EpisodeReportView({
                 <div>
                   <span>{vetDraft.source === "openai" ? "AI 정리" : "규칙 기반 정리"}</span>
                   <strong>{vetDraft.overview}</strong>
+                </div>
+                <div className="vet-draft-handoff">
+                  <span>다른 병원 첫 설명</span>
+                  <p>{vetDraft.handoffNote}</p>
                 </div>
                 <ul>
                   {vetDraft.keyObservations.slice(0, 3).map((item) => (
@@ -2066,9 +2102,9 @@ function EpisodeReportView({
           <div>
             <span className="episode-plan-step">SOAP-LOOP · FOLLOW UP</span>
             <h3>
-              <Icon name="activity" size={18} /> 3일 · 7일 · 14일 경과
+              <Icon name="activity" size={18} /> 경과 기록
             </h3>
-            <p>같은 사건에서 달라진 정도와 식욕·활력만 짧게 남겨요.</p>
+            <p>초기 3·7·14일과 장기 30·60·90일 흐름을 같은 사건에 이어 남겨요.</p>
           </div>
           <span className="progress-source-badge">보호자 경과 · 확인 전</span>
         </div>
@@ -2079,139 +2115,147 @@ function EpisodeReportView({
           </p>
         ) : (
           <div className="progress-checkpoints">
-            {followUpDays.map((day) => {
-              const saved = progress.find((item) => item.followUpDay === day);
-              const isEditing = progressDraft?.followUpDay === day;
-              return (
-                <section
-                  className={`progress-checkpoint ${saved ? "saved" : ""}`}
-                  key={day}
-                >
-                  <div className="progress-checkpoint-head">
-                    <span className="progress-day">{day}일</span>
-                    <div>
-                      <strong>
-                        {selection.episode
-                          ? `${followUpDate(plan?.reportedAt ?? selection.episode.startedAt, day)} 확인`
-                          : `${day}일 경과`}
-                      </strong>
-                      <small>
-                        {saved
-                          ? `${conditionChangeLabel(saved.conditionChange)} · 식욕 ${levelLabel(saved.appetite)} · 활력 ${levelLabel(saved.energy)}`
-                          : "아직 경과를 기록하지 않았어요"}
-                      </small>
-                    </div>
-                    {!isEditing && (
-                      <button
-                        type="button"
-                        className="secondary-button compact"
-                        onClick={() => openProgressEditor(day)}
-                      >
-                        {saved ? "수정" : "경과 기록"}
-                      </button>
-                    )}
-                  </div>
+            {followUpGroups.map((group) => (
+              <div className="progress-group" key={group.title}>
+                <div className="progress-group-head">
+                  <strong>{group.title}</strong>
+                  <span>{group.description}</span>
+                </div>
+                {group.days.map((day) => {
+                  const saved = progress.find((item) => item.followUpDay === day);
+                  const isEditing = progressDraft?.followUpDay === day;
+                  return (
+                    <section
+                      className={`progress-checkpoint ${saved ? "saved" : ""}`}
+                      key={day}
+                    >
+                      <div className="progress-checkpoint-head">
+                        <span className="progress-day">{day}일</span>
+                        <div>
+                          <strong>
+                            {selection.episode
+                              ? `${followUpDate(plan?.reportedAt ?? selection.episode.startedAt, day)} 확인`
+                              : `${day}일 경과`}
+                          </strong>
+                          <small>
+                            {saved
+                              ? `${conditionChangeLabel(saved.conditionChange)} · 식욕 ${levelLabel(saved.appetite)} · 활력 ${levelLabel(saved.energy)}`
+                              : "아직 경과를 기록하지 않았어요"}
+                          </small>
+                        </div>
+                        {!isEditing && (
+                          <button
+                            type="button"
+                            className="secondary-button compact"
+                            onClick={() => openProgressEditor(day)}
+                          >
+                            {saved ? "수정" : "경과 기록"}
+                          </button>
+                        )}
+                      </div>
 
-                  {isEditing && progressDraft && (
-                    <div className="progress-editor">
-                      <fieldset>
-                        <legend>전반적인 변화</legend>
-                        <div className="progress-choice-grid">
-                          {conditionChangeOptions.map((option) => (
+                      {isEditing && progressDraft && (
+                        <div className="progress-editor">
+                          <fieldset>
+                            <legend>전반적인 변화</legend>
+                            <div className="progress-choice-grid">
+                              {conditionChangeOptions.map((option) => (
+                                <button
+                                  type="button"
+                                  className={
+                                    progressDraft.conditionChange === option.id
+                                      ? "selected"
+                                      : ""
+                                  }
+                                  key={option.id}
+                                  onClick={() =>
+                                    setProgressDraft((current) =>
+                                      current
+                                        ? { ...current, conditionChange: option.id }
+                                        : current,
+                                    )
+                                  }
+                                >
+                                  <strong>{option.label}</strong>
+                                  <small>{option.description}</small>
+                                </button>
+                              ))}
+                            </div>
+                          </fieldset>
+
+                          <div className="progress-level-grid">
+                            <label>
+                              식욕
+                              <select
+                                value={progressDraft.appetite}
+                                onChange={(event) =>
+                                  setProgressDraft((current) =>
+                                    current
+                                      ? {
+                                          ...current,
+                                          appetite: event.target.value as Level,
+                                        }
+                                      : current,
+                                  )
+                                }
+                              >
+                                {levels.map((level) => (
+                                  <option value={level.id} key={level.id}>
+                                    {level.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              활력
+                              <select
+                                value={progressDraft.energy}
+                                onChange={(event) =>
+                                  setProgressDraft((current) =>
+                                    current
+                                      ? {
+                                          ...current,
+                                          energy: event.target.value as Level,
+                                        }
+                                      : current,
+                                  )
+                                }
+                              >
+                                {levels.map((level) => (
+                                  <option value={level.id} key={level.id}>
+                                    {level.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+
+                          <div className="progress-editor-actions">
                             <button
                               type="button"
-                              className={
-                                progressDraft.conditionChange === option.id
-                                  ? "selected"
-                                  : ""
-                              }
-                              key={option.id}
-                              onClick={() =>
-                                setProgressDraft((current) =>
-                                  current
-                                    ? { ...current, conditionChange: option.id }
-                                    : current,
-                                )
-                              }
+                              className="secondary-button compact"
+                              onClick={() => setProgressDraft(null)}
+                              disabled={progressBusy}
                             >
-                              <strong>{option.label}</strong>
-                              <small>{option.description}</small>
+                              취소
                             </button>
-                          ))}
+                            <button
+                              type="button"
+                              className="primary-button compact"
+                              onClick={saveProgress}
+                              disabled={progressBusy}
+                            >
+                              <Icon name="check" size={14} />
+                              {progressBusy ? "저장 중..." : `${day}일 경과 저장`}
+                            </button>
+                          </div>
                         </div>
-                      </fieldset>
-
-                      <div className="progress-level-grid">
-                        <label>
-                          식욕
-                          <select
-                            value={progressDraft.appetite}
-                            onChange={(event) =>
-                              setProgressDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      appetite: event.target.value as Level,
-                                    }
-                                  : current,
-                              )
-                            }
-                          >
-                            {levels.map((level) => (
-                              <option value={level.id} key={level.id}>
-                                {level.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          활력
-                          <select
-                            value={progressDraft.energy}
-                            onChange={(event) =>
-                              setProgressDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      energy: event.target.value as Level,
-                                    }
-                                  : current,
-                              )
-                            }
-                          >
-                            {levels.map((level) => (
-                              <option value={level.id} key={level.id}>
-                                {level.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-
-                      <div className="progress-editor-actions">
-                        <button
-                          type="button"
-                          className="secondary-button compact"
-                          onClick={() => setProgressDraft(null)}
-                          disabled={progressBusy}
-                        >
-                          취소
-                        </button>
-                        <button
-                          type="button"
-                          className="primary-button compact"
-                          onClick={saveProgress}
-                          disabled={progressBusy}
-                        >
-                          <Icon name="check" size={14} />
-                          {progressBusy ? "저장 중..." : `${day}일 경과 저장`}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </section>
-              );
-            })}
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         )}
         {progressError && (

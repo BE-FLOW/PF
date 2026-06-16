@@ -193,7 +193,7 @@ export function buildEpisodeReport(
     planText,
     "PetFlow에서 수의사가 직접 확인한 내용이 아닙니다.",
     "",
-    "[3일 · 7일 · 14일 경과 · 보호자 기록]",
+    "[초기·장기 경과 · 보호자 기록]",
     progressText,
     "PetFlow에서 수의사가 확인한 경과가 아닙니다.",
     "",

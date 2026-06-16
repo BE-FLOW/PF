@@ -81,6 +81,7 @@ async function enrichWithOpenAI(
               additionalProperties: false,
               properties: {
                 overview: { type: "string" },
+                handoffNote: { type: "string" },
                 keyObservations: {
                   type: "array",
                   items: { type: "string" },
@@ -103,6 +104,7 @@ async function enrichWithOpenAI(
               },
               required: [
                 "overview",
+                "handoffNote",
                 "keyObservations",
                 "planAndProgress",
                 "questionsForVet",
@@ -123,6 +125,7 @@ async function enrichWithOpenAI(
                   "입력된 사실만 사용하고 새 의학적 판단을 추가하지 마세요. " +
                   "진단명, 질병 확정, 약물명, 용량, 치료 처방, 치료 계획을 생성하지 마세요. " +
                   "보호자가 입력한 병원 계획과 경과는 수의사 확인 전 정보로 분리하세요. " +
+                  "다른 병원에 처음 방문해도 이전 경과를 다시 설명하는 시간을 줄일 수 있게 handoffNote를 작성하세요. " +
                   "보고서는 진료 시간을 줄이기 위한 사전 문진 요약이며, 진단을 대신한다고 쓰지 마세요. 한국어로 짧고 밀도 있게 작성하세요.",
               },
             ],
@@ -135,6 +138,7 @@ async function enrichWithOpenAI(
                 text: JSON.stringify({
                   title: baseDraft.title,
                   overview: baseDraft.overview,
+                  handoffNote: baseDraft.handoffNote,
                   keyObservations: baseDraft.keyObservations,
                   timeline: baseDraft.timeline,
                   planAndProgress: baseDraft.planAndProgress,
@@ -162,6 +166,10 @@ async function enrichWithOpenAI(
     const keyObservations =
       cleanStringArray(generated.keyObservations, 2, 5) ??
       baseDraft.keyObservations;
+    const handoffNote =
+      typeof generated.handoffNote === "string" && generated.handoffNote.trim()
+        ? generated.handoffNote.trim()
+        : baseDraft.handoffNote;
     const planAndProgress =
       cleanStringArray(generated.planAndProgress, 1, 6) ??
       baseDraft.planAndProgress;
@@ -177,6 +185,7 @@ async function enrichWithOpenAI(
       ...baseDraft,
       source: "openai",
       overview,
+      handoffNote,
       keyObservations,
       planAndProgress,
       questionsForVet,

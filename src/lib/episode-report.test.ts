@@ -91,7 +91,7 @@ describe("buildEpisodeReport", () => {
     expect(report.shareText).toContain("수의사가 직접 확인한 내용이 아닙니다");
   });
 
-  it("adds structured 3, 7, and 14 day owner progress to the share summary", () => {
+  it("adds structured owner progress checkpoints to the share summary", () => {
     const progress: EpisodeProgress[] = [
       {
         id: "80000000-0000-4000-8000-000000000001",
@@ -105,6 +105,18 @@ describe("buildEpisodeReport", () => {
         reviewStatus: "unreviewed",
         recordedAt: "2026-06-15T00:00:00.000Z",
       },
+      {
+        id: "80000000-0000-4000-8000-000000000002",
+        episodeId: "50000000-0000-4000-8000-000000000001",
+        petId: "40000000-0000-4000-8000-000000000001",
+        followUpDay: 30,
+        conditionChange: "same",
+        appetite: "normal",
+        energy: "normal",
+        sourceType: "owner",
+        reviewStatus: "unreviewed",
+        recordedAt: "2026-07-12T00:00:00.000Z",
+      },
     ];
     const report = buildEpisodeReport(
       [record("2026-06-10T00:00:00.000Z")],
@@ -113,9 +125,10 @@ describe("buildEpisodeReport", () => {
       progress,
     );
 
-    expect(report.progress).toHaveLength(1);
-    expect(report.shareText).toContain("[3일 · 7일 · 14일 경과 · 보호자 기록]");
+    expect(report.progress).toHaveLength(2);
+    expect(report.shareText).toContain("[초기·장기 경과 · 보호자 기록]");
     expect(report.shareText).toContain("3일: 좋아짐");
+    expect(report.shareText).toContain("30일: 비슷함");
     expect(report.shareText).toContain("수의사가 확인한 경과가 아닙니다");
   });
 });

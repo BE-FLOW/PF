@@ -722,7 +722,7 @@ export async function saveEpisodeProgress(
   const userId = await getAuthenticatedUserId(accessToken);
   if (
     !userId ||
-    ![3, 7, 14].includes(input.followUpDay) ||
+    ![3, 7, 14, 30, 60, 90].includes(input.followUpDay) ||
     !["better", "same", "worse"].includes(input.conditionChange) ||
     !["normal", "slight", "low", "none"].includes(input.appetite) ||
     !["normal", "slight", "low", "none"].includes(input.energy)

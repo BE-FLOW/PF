@@ -1853,6 +1853,31 @@ p {
   gap: 8px;
   margin-top: 8px;
 }
+.vet-draft-includes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 13px;
+}
+.vet-draft-includes span,
+.vet-draft-includes strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 900;
+}
+.vet-draft-includes span {
+  background: #f2ecff;
+  color: #765ea8;
+}
+.vet-draft-includes strong {
+  background: #fff;
+  color: #687872;
+  border: 1px solid #eee5fa;
+}
 .vet-draft-locked {
   display: grid;
   gap: 8px;
@@ -1893,6 +1918,20 @@ p {
   color: var(--ink);
   font-size: 13px;
   line-height: 1.6;
+}
+.vet-draft-handoff {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #eee5fa;
+  border-radius: 14px;
+  background: #fff;
+}
+.vet-draft-handoff p {
+  margin: 0;
+  color: #5d6f69;
+  font-size: 11px;
+  line-height: 1.65;
 }
 .vet-draft-preview ul {
   display: grid;
@@ -2097,7 +2136,24 @@ p {
 }
 .progress-checkpoints {
   display: grid;
-  gap: 10px;
+  gap: 14px;
+}
+.progress-group {
+  display: grid;
+  gap: 9px;
+}
+.progress-group-head {
+  display: grid;
+  gap: 3px;
+}
+.progress-group-head strong {
+  color: #536488;
+  font-size: 12px;
+}
+.progress-group-head span {
+  color: #71817b;
+  font-size: 10px;
+  line-height: 1.5;
 }
 .progress-checkpoint {
   padding: 14px;

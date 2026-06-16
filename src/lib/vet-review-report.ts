@@ -55,13 +55,16 @@ export function formatVetReviewDraft(
     "[요약]",
     draft.overview,
     "",
+    "[다른 병원 첫 설명]",
+    draft.handoffNote,
+    "",
     "[핵심 관찰]",
     ...draft.keyObservations.map((item) => `- ${item}`),
     "",
     "[시간순 기록]",
     ...draft.timeline.map((item) => `- ${item}`),
     "",
-    "[병원 계획과 3일·7일·14일 경과]",
+    "[병원 계획과 경과 기록]",
     ...draft.planAndProgress.map((item) => `- ${item}`),
     "",
     "[수의사에게 확인할 질문]",
@@ -126,8 +129,14 @@ export function buildVetReviewDraft(
           (item) =>
             `${item.followUpDay}일 경과: ${conditionChangeLabels[item.conditionChange]} · 식욕 ${levelLabels[item.appetite]} · 활력 ${levelLabels[item.energy]} · 보호자 기록/확인 전`,
         )
-    : ["3일·7일·14일 경과 기록은 아직 없습니다."];
+    : ["아직 입력한 경과 기록은 없습니다."];
   const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const completedProgressDays = progress.length
+    ? [...progress]
+        .sort((a, b) => a.followUpDay - b.followUpDay)
+        .map((item) => `${item.followUpDay}일`)
+        .join(", ")
+    : "없음";
   const draftWithoutCopy: Omit<VetReviewDraft, "copyText"> = {
     title: `${latest?.input.petName || petName} 수의사 검토용 보고서 초안`,
     generatedAt,
@@ -136,6 +145,10 @@ export function buildVetReviewDraft(
     overview:
       `${report.periodLabel} 동안 보호자 관찰 ${report.recordCount}회를 묶어 정리했습니다. ` +
       `가장 높은 앱 안내는 ${report.highestRiskLabel}이며, 이 문서는 수의사 검토 전 초안입니다.`,
+    handoffNote:
+      `다른 병원에 처음 전달할 때는 ${report.periodLabel}의 관찰 ${report.recordCount}회, ` +
+      `가장 높은 앱 안내 ${report.highestRiskLabel}, 경과 기록 ${completedProgressDays}, ` +
+      "보호자가 입력한 병원 계획이 수의사 확인 전 정보임을 함께 설명해 주세요.",
     keyObservations: [
       repeatedLine,
       `식욕 변화 ${report.appetiteChangeCount}회 · 활력 변화 ${report.energyChangeCount}회`,
@@ -145,16 +158,17 @@ export function buildVetReviewDraft(
       latest
         ? `가장 최근 CHECK SCORE는 ${latest.result.riskScore}점입니다.`
         : "아직 CHECK SCORE 기록이 없습니다.",
+      `기록된 경과 시점: ${completedProgressDays}`,
     ],
     timeline,
     planAndProgress: [...planLines, ...progressLines],
     questionsForVet: [
       "이 변화가 재진 또는 추가 확인이 필요한 흐름인지 확인해 주세요.",
       "다음 상담 전 보호자가 계속 기록해야 할 항목이 무엇인지 알려주세요.",
-      "3일·7일·14일 경과 중 특히 주의해서 볼 변화가 있는지 확인해 주세요.",
+      "초기 경과와 장기 경과 중 특히 주의해서 볼 변화가 있는지 확인해 주세요.",
     ],
     submissionNote:
-      "보호자가 입력한 관찰과 병원 계획, 경과 기록을 제출용으로 정리한 초안입니다. 병원에서 확인한 내용은 별도로 구분해 주세요.",
+      "보호자가 입력한 관찰과 병원 계획, 초기·장기 경과 기록을 제출용으로 정리한 초안입니다. 다른 병원 전달 시 병원에서 확인한 내용은 별도로 구분해 주세요.",
     disclaimer:
       "이 초안은 진단, 처방, 약물명, 용량, 치료 계획을 생성하지 않으며 수의사의 확인된 진료기록을 대신하지 않습니다.",
   };
