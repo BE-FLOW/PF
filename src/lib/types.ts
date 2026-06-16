@@ -99,11 +99,28 @@ export interface AnalysisResult {
   storage?: "local" | "remote";
 }
 
+export type ReportMediaKind = "image" | "video";
+
+export interface ReportMediaAttachment {
+  id: string;
+  reportId: string;
+  petId: string;
+  episodeId: string;
+  kind: ReportMediaKind;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+  createdAt: string;
+  signedUrl?: string;
+}
+
 export interface HistoryRecord {
   petId?: string;
   episodeId?: string;
   input: HealthCheckInput;
   result: AnalysisResult;
+  media?: ReportMediaAttachment[];
   feedback?: "helpful" | "not-helpful";
 }
 
@@ -174,6 +191,7 @@ export interface VetReviewDraft {
   handoffNote: string;
   keyObservations: string[];
   timeline: string[];
+  mediaSummary: string[];
   planAndProgress: string[];
   questionsForVet: string[];
   submissionNote: string;

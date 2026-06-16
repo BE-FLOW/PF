@@ -43,6 +43,18 @@ function sortRecords(records: HistoryRecord[]) {
   );
 }
 
+function mediaCountLabel(record: HistoryRecord) {
+  const media = record.media ?? [];
+  const imageCount = media.filter((item) => item.kind === "image").length;
+  const videoCount = media.filter((item) => item.kind === "video").length;
+  return [
+    imageCount ? `사진 ${imageCount}개` : "",
+    videoCount ? `영상 ${videoCount}개` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
 export function formatVetReviewDraft(
   draft: Omit<VetReviewDraft, "copyText">,
 ) {
@@ -63,6 +75,9 @@ export function formatVetReviewDraft(
     "",
     "[시간순 기록]",
     ...draft.timeline.map((item) => `- ${item}`),
+    "",
+    "[첨부 자료]",
+    ...draft.mediaSummary.map((item) => `- ${item}`),
     "",
     "[병원 계획과 경과 기록]",
     ...draft.planAndProgress.map((item) => `- ${item}`),
@@ -105,6 +120,7 @@ export function buildVetReviewDraft(
               .map((symptom) => symptomLabels[symptom])
               .join(", ")
           : "선택한 주요 증상 없음";
+        const mediaLabel = mediaCountLabel(record);
         return [
           dateTimeFormatter.format(new Date(record.result.createdAt)),
           `증상 ${symptoms}`,
@@ -113,9 +129,18 @@ export function buildVetReviewDraft(
           `기간 ${durationLabels[record.input.duration]}`,
           `CHECK SCORE ${record.result.riskScore}`,
           `앱 안내 ${riskLabels[record.result.riskLevel]}`,
-        ].join(" · ");
+          mediaLabel ? `첨부 ${mediaLabel}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
       })
     : ["아직 연결된 관찰 기록이 없습니다."];
+  const mediaSummary = report.mediaSummary.length
+    ? [
+        ...report.mediaSummary,
+        "첨부 자료는 보호자가 저장한 참고 파일이며, 이 초안은 이미지·영상 내용을 판독하지 않았습니다.",
+      ]
+    : ["첨부 사진·영상 없음"];
   const planLines = plan?.tasks.length
     ? plan.tasks.map(
         (task) =>
@@ -159,8 +184,12 @@ export function buildVetReviewDraft(
         ? `가장 최근 CHECK SCORE는 ${latest.result.riskScore}점입니다.`
         : "아직 CHECK SCORE 기록이 없습니다.",
       `기록된 경과 시점: ${completedProgressDays}`,
+      report.mediaCount
+        ? `첨부 자료 ${report.mediaCount}개가 있으며 사진·영상 내용은 판독 전입니다.`
+        : "첨부 사진·영상은 없습니다.",
     ],
     timeline,
+    mediaSummary,
     planAndProgress: [...planLines, ...progressLines],
     questionsForVet: [
       "이 변화가 재진 또는 추가 확인이 필요한 흐름인지 확인해 주세요.",

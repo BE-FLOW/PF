@@ -48,6 +48,22 @@ const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
   minute: "2-digit",
 });
 
+function mediaCounts(record: HistoryRecord) {
+  const media = record.media ?? [];
+  const imageCount = media.filter((item) => item.kind === "image").length;
+  const videoCount = media.filter((item) => item.kind === "video").length;
+  return { imageCount, videoCount, mediaCount: media.length };
+}
+
+function mediaCountLabel(imageCount: number, videoCount: number) {
+  return [
+    imageCount ? `사진 ${imageCount}개` : "",
+    videoCount ? `영상 ${videoCount}개` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
 export interface EpisodeReportTimelineItem {
   id: string;
   recordedAt: string;
@@ -58,6 +74,9 @@ export interface EpisodeReportTimelineItem {
   duration: string;
   riskLabel: string;
   redFlagCount: number;
+  imageCount: number;
+  videoCount: number;
+  mediaCount: number;
 }
 
 export interface EpisodeReport {
@@ -69,6 +88,8 @@ export interface EpisodeReport {
   repeatedSymptoms: string[];
   appetiteChangeCount: number;
   energyChangeCount: number;
+  mediaCount: number;
+  mediaSummary: string[];
   timeline: EpisodeReportTimelineItem[];
   planTasks: EpisodePlan["tasks"];
   progress: EpisodeProgress[];
@@ -135,26 +156,39 @@ export function buildEpisodeReport(
   const energyChangeCount = ordered.filter(
     (record) => record.input.energy !== "normal",
   ).length;
-  const timeline = ordered.map<EpisodeReportTimelineItem>((record) => ({
-    id: record.result.id,
-    recordedAt: record.result.createdAt,
-    dateLabel: dateTimeFormatter.format(new Date(record.result.createdAt)),
-    symptoms: record.input.symptoms.length
-      ? record.input.symptoms.map((symptom) => symptomLabels[symptom]).join(", ")
-      : "선택한 주요 증상 없음",
-    appetite: levelLabels[record.input.appetite],
-    energy: levelLabels[record.input.energy],
-    duration: durationLabels[record.input.duration],
-    riskLabel: riskLabels[record.result.riskLevel],
-    redFlagCount: record.input.redFlags.length,
-  }));
+  const timeline = ordered.map<EpisodeReportTimelineItem>((record) => {
+    const counts = mediaCounts(record);
+    return {
+      id: record.result.id,
+      recordedAt: record.result.createdAt,
+      dateLabel: dateTimeFormatter.format(new Date(record.result.createdAt)),
+      symptoms: record.input.symptoms.length
+        ? record.input.symptoms
+            .map((symptom) => symptomLabels[symptom])
+            .join(", ")
+        : "선택한 주요 증상 없음",
+      appetite: levelLabels[record.input.appetite],
+      energy: levelLabels[record.input.energy],
+      duration: durationLabels[record.input.duration],
+      riskLabel: riskLabels[record.result.riskLevel],
+      redFlagCount: record.input.redFlags.length,
+      ...counts,
+    };
+  });
+  const mediaSummary = timeline
+    .filter((item) => item.mediaCount > 0)
+    .map(
+      (item) =>
+        `${item.dateLabel}: ${mediaCountLabel(item.imageCount, item.videoCount)}`,
+    );
+  const mediaCount = timeline.reduce((total, item) => total + item.mediaCount, 0);
   const disclaimer =
     "이 요약은 보호자가 입력한 관찰과 앱의 안전 분류를 정리한 자료이며, 수의사의 진단이나 확인된 진료기록이 아닙니다.";
   const timelineText = timeline.length
     ? timeline
         .map(
           (item, index) =>
-            `${index + 1}. ${item.dateLabel}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration} / 앱 안내: ${item.riskLabel}${item.redFlagCount ? ` / 위험 신호 ${item.redFlagCount}개 입력` : ""}`,
+            `${index + 1}. ${item.dateLabel}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration} / 앱 안내: ${item.riskLabel}${item.redFlagCount ? ` / 위험 신호 ${item.redFlagCount}개 입력` : ""}${item.mediaCount ? `\n첨부: ${mediaCountLabel(item.imageCount, item.videoCount)}` : ""}`,
         )
         .join("\n\n")
     : "기록 없음";
@@ -177,6 +211,12 @@ export function buildEpisodeReport(
         )
         .join("\n")
     : "아직 입력한 경과 기록이 없습니다.";
+  const mediaText = mediaSummary.length
+    ? [
+        ...mediaSummary,
+        "사진·영상은 보호자가 저장한 참고 자료이며 PetFlow가 내용을 판독하지 않았습니다.",
+      ].join("\n")
+    : "첨부 자료 없음";
   const shareText = [
     "[PetFlow 병원 전달 요약]",
     `반려동물: ${petName} / ${petProfile}`,
@@ -188,6 +228,9 @@ export function buildEpisodeReport(
     "",
     "[보호자 관찰 기록]",
     timelineText,
+    "",
+    "[첨부 자료 · 보호자 저장]",
+    mediaText,
     "",
     "[병원에서 받은 계획 · 보호자 기록]",
     planText,
@@ -210,6 +253,8 @@ export function buildEpisodeReport(
     repeatedSymptoms,
     appetiteChangeCount,
     energyChangeCount,
+    mediaCount,
+    mediaSummary,
     timeline,
     planTasks: plan?.tasks ?? [],
     progress: orderedProgress,

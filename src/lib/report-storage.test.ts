@@ -78,4 +78,45 @@ describe("report storage", () => {
     expect(rebuilt.petId).toBe(stored.pet_id);
     expect(rebuilt.episodeId).toBe(stored.episode_id);
   });
+
+  it("carries media metadata into display history without adding it to structured reports", () => {
+    const result = analyzeLocally(input);
+    const stored = toStoredHealthReport(
+      input,
+      result,
+      "20000000-0000-4000-8000-000000000001",
+      {
+        userId: "30000000-0000-4000-8000-000000000001",
+        petId: "40000000-0000-4000-8000-000000000001",
+        episodeId: "50000000-0000-4000-8000-000000000001",
+      },
+    );
+    const media = {
+      id: "60000000-0000-4000-8000-000000000001",
+      reportId: stored.id,
+      petId: stored.pet_id as string,
+      episodeId: stored.episode_id as string,
+      kind: "image" as const,
+      fileName: "walk.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 1200,
+      storagePath: "user/pet/report/walk.jpg",
+      createdAt: "2026-06-16T00:00:00.000Z",
+    };
+    const rebuilt = storedReportToHistoryRecord(
+      { ...stored, media: [media] },
+      {
+        id: stored.pet_id ?? undefined,
+        name: "보리",
+        species: "dog",
+        breed: "말티즈",
+        birthDate: "2021-05-02",
+        sex: "neutered-male",
+        weight: "4.2kg",
+      },
+    );
+
+    expect(JSON.stringify(stored)).not.toContain("walk.jpg");
+    expect(rebuilt.media).toEqual([media]);
+  });
 });

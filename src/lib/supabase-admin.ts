@@ -1,3 +1,4 @@
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
   AiAccessStatus,
   AiReportFeedbackInput,
@@ -7,6 +8,8 @@ import type {
   HealthCheckInput,
   PetEpisode,
   PetProfile,
+  ReportMediaAttachment,
+  ReportMediaKind,
 } from "./types";
 import {
   isUuid,
@@ -15,6 +18,21 @@ import {
 } from "./report-storage";
 
 const requestTimeoutMs = 3500;
+const reportMediaBucket = "petflow-report-media";
+const maxReportMediaFiles = 4;
+const maxReportMediaSizeBytes = 50 * 1024 * 1024;
+const allowedMediaTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+]);
+
+let adminClient: SupabaseClient | null | undefined;
 
 export type DatabaseStatus = "connected" | "unconfigured" | "error";
 
@@ -29,6 +47,14 @@ export interface EpisodeVetReviewBundle {
   reports: DisplayHealthReport[];
   plan?: EpisodePlan;
   progress: EpisodeProgress[];
+}
+
+export interface ReportMediaRegistrationInput {
+  storagePath: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: ReportMediaKind;
 }
 
 export interface AiReportAccess {
@@ -54,6 +80,17 @@ function getConfig() {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRoleKey) return null;
   return { url, serviceRoleKey };
+}
+
+function getAdminClient() {
+  if (adminClient !== undefined) return adminClient;
+  const config = getConfig();
+  adminClient = config
+    ? createClient(config.url, config.serviceRoleKey, {
+        auth: { persistSession: false },
+      })
+    : null;
+  return adminClient;
 }
 
 async function supabaseRequest(
@@ -182,6 +219,86 @@ function toPetProfile(row: {
     sex: row.sex,
     weight: row.weight ?? "",
   };
+}
+
+interface ReportMediaRow {
+  id: string;
+  report_id: string;
+  pet_id: string;
+  episode_id: string;
+  kind: ReportMediaKind;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  storage_path: string;
+  created_at: string;
+}
+
+const reportMediaSelect =
+  "id,report_id,pet_id,episode_id,kind,file_name,mime_type,size_bytes,storage_path,created_at";
+
+function toReportMediaAttachment(
+  row: ReportMediaRow,
+  signedUrl?: string,
+): ReportMediaAttachment {
+  return {
+    id: row.id,
+    reportId: row.report_id,
+    petId: row.pet_id,
+    episodeId: row.episode_id,
+    kind: row.kind,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    sizeBytes: row.size_bytes,
+    storagePath: row.storage_path,
+    createdAt: row.created_at,
+    signedUrl,
+  };
+}
+
+async function signReportMediaRows(
+  rows: ReportMediaRow[],
+): Promise<ReportMediaAttachment[]> {
+  const client = getAdminClient();
+  if (!client || !rows.length) return rows.map((row) => toReportMediaAttachment(row));
+
+  const signed = await Promise.all(
+    rows.map(async (row) => {
+      const { data } = await client.storage
+        .from(reportMediaBucket)
+        .createSignedUrl(row.storage_path, 60 * 60);
+      return toReportMediaAttachment(row, data?.signedUrl);
+    }),
+  );
+  return signed;
+}
+
+function groupMediaByReport(media: ReportMediaAttachment[]) {
+  const grouped = new Map<string, ReportMediaAttachment[]>();
+  for (const item of media) {
+    const items = grouped.get(item.reportId) ?? [];
+    items.push(item);
+    grouped.set(item.reportId, items);
+  }
+  return grouped;
+}
+
+function isValidMediaInput(
+  input: ReportMediaRegistrationInput,
+): input is ReportMediaRegistrationInput {
+  return Boolean(
+    input &&
+      ["image", "video"].includes(input.kind) &&
+      allowedMediaTypes.has(input.mimeType) &&
+      Number.isInteger(input.sizeBytes) &&
+      input.sizeBytes > 0 &&
+      input.sizeBytes <= maxReportMediaSizeBytes &&
+      typeof input.fileName === "string" &&
+      input.fileName.trim().length > 0 &&
+      input.fileName.trim().length <= 160 &&
+      typeof input.storagePath === "string" &&
+      input.storagePath.length <= 500,
+  );
 }
 
 async function getAuthenticatedUserId(
@@ -548,6 +665,92 @@ export async function getReportOwner(
   }
 }
 
+export async function registerHealthReportMedia(
+  accessToken: string | null,
+  reportId: string | null,
+  clientId: string | null,
+  files: ReportMediaRegistrationInput[],
+): Promise<ReportMediaAttachment[] | null> {
+  if (
+    !isUuid(reportId) ||
+    !isUuid(clientId) ||
+    !Array.isArray(files) ||
+    files.length < 1 ||
+    files.length > maxReportMediaFiles
+  ) {
+    return null;
+  }
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId || files.some((file) => !isValidMediaInput(file))) return null;
+
+  try {
+    const reportResponse = await supabaseRequest(
+      `health_reports?id=eq.${reportId}&client_id=eq.${clientId}&user_id=eq.${userId}&select=id,client_id,user_id,pet_id,episode_id&limit=1`,
+      { method: "GET" },
+    );
+    if (!reportResponse?.ok) return null;
+    const reportRows = (await reportResponse.json()) as Array<{
+      id: string;
+      client_id: string;
+      user_id: string;
+      pet_id: string | null;
+      episode_id: string | null;
+    }>;
+    const report = reportRows[0];
+    if (!report?.pet_id || !report.episode_id) return null;
+
+    const existingResponse = await supabaseRequest(
+      `health_report_media?report_id=eq.${report.id}&client_id=eq.${report.client_id}&select=id`,
+      { method: "GET" },
+    );
+    if (!existingResponse?.ok) return null;
+    const existing = (await existingResponse.json()) as Array<{ id: string }>;
+    if (existing.length + files.length > maxReportMediaFiles) return null;
+
+    const pathPrefix = `${userId}/${report.pet_id}/${report.id}/`;
+    const rows = files.map((file) => {
+      const kindMatchesMime =
+        file.kind === "image"
+          ? file.mimeType.startsWith("image/")
+          : file.mimeType.startsWith("video/");
+      if (
+        !kindMatchesMime ||
+        !file.storagePath.startsWith(pathPrefix) ||
+        file.storagePath.includes("..") ||
+        file.storagePath.includes("//")
+      ) {
+        throw new Error("invalid media path");
+      }
+      return {
+        report_id: report.id,
+        client_id: report.client_id,
+        user_id: userId,
+        pet_id: report.pet_id,
+        episode_id: report.episode_id,
+        kind: file.kind,
+        file_name: file.fileName.trim().slice(0, 160),
+        mime_type: file.mimeType,
+        size_bytes: file.sizeBytes,
+        storage_path: file.storagePath,
+      };
+    });
+
+    const response = await supabaseRequest(
+      "health_report_media?on_conflict=storage_path",
+      {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+        body: JSON.stringify(rows),
+      },
+    );
+    if (!response?.ok) return null;
+    const inserted = (await response.json()) as ReportMediaRow[];
+    return signReportMediaRows(inserted);
+  } catch {
+    return null;
+  }
+}
+
 export async function listPetHealthReports(
   accessToken: string | null,
   petId: string | null,
@@ -560,7 +763,18 @@ export async function listPetHealthReports(
       { method: "GET" },
     );
     if (!response?.ok) return null;
-    return (await response.json()) as DisplayHealthReport[];
+    const reports = (await response.json()) as DisplayHealthReport[];
+    const mediaResponse = await supabaseRequest(
+      `health_report_media?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=${reportMediaSelect}&order=created_at.asc`,
+      { method: "GET" },
+    );
+    if (!mediaResponse?.ok) return reports.map((report) => ({ ...report, media: [] }));
+    const mediaRows = (await mediaResponse.json()) as ReportMediaRow[];
+    const mediaByReport = groupMediaByReport(await signReportMediaRows(mediaRows));
+    return reports.map((report) => ({
+      ...report,
+      media: mediaByReport.get(report.id) ?? [],
+    }));
   } catch {
     return null;
   }
@@ -656,7 +870,13 @@ export async function getEpisodeVetReviewBundle(
     if (!episodeRow) return null;
     const episode = toPetEpisode(episodeRow);
 
-    const [petResponse, reportsResponse, plansResponse, progressResponse] =
+    const [
+      petResponse,
+      reportsResponse,
+      mediaResponse,
+      plansResponse,
+      progressResponse,
+    ] =
       await Promise.all([
         supabaseRequest(
           `pets?id=eq.${episode.petId}&user_id=eq.${userId}&select=id,name,species,breed,birth_date,sex,weight&limit=1`,
@@ -664,6 +884,10 @@ export async function getEpisodeVetReviewBundle(
         ),
         supabaseRequest(
           `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc&limit=60`,
+          { method: "GET" },
+        ),
+        supabaseRequest(
+          `health_report_media?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=${reportMediaSelect}&order=created_at.asc`,
           { method: "GET" },
         ),
         supabaseRequest(
@@ -689,6 +913,10 @@ export async function getEpisodeVetReviewBundle(
       typeof toPetProfile
     >[0][];
     const reports = (await reportsResponse.json()) as DisplayHealthReport[];
+    const mediaRows = mediaResponse?.ok
+      ? ((await mediaResponse.json()) as ReportMediaRow[])
+      : [];
+    const mediaByReport = groupMediaByReport(await signReportMediaRows(mediaRows));
     const planRows = (await plansResponse.json()) as Parameters<
       typeof toEpisodePlan
     >[0][];
@@ -701,7 +929,10 @@ export async function getEpisodeVetReviewBundle(
     return {
       episode,
       pet,
-      reports,
+      reports: reports.map((report) => ({
+        ...report,
+        media: mediaByReport.get(report.id) ?? [],
+      })),
       plan: planRows[0] ? toEpisodePlan(planRows[0]) : undefined,
       progress: progressRows.map(toEpisodeProgress),
     };

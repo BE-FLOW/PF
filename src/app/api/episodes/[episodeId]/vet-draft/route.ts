@@ -94,6 +94,12 @@ async function enrichWithOpenAI(
                   minItems: 1,
                   maxItems: 6,
                 },
+                mediaSummary: {
+                  type: "array",
+                  items: { type: "string" },
+                  minItems: 1,
+                  maxItems: 5,
+                },
                 questionsForVet: {
                   type: "array",
                   items: { type: "string" },
@@ -106,6 +112,7 @@ async function enrichWithOpenAI(
                 "overview",
                 "handoffNote",
                 "keyObservations",
+                "mediaSummary",
                 "planAndProgress",
                 "questionsForVet",
                 "submissionNote",
@@ -125,6 +132,7 @@ async function enrichWithOpenAI(
                   "입력된 사실만 사용하고 새 의학적 판단을 추가하지 마세요. " +
                   "진단명, 질병 확정, 약물명, 용량, 치료 처방, 치료 계획을 생성하지 마세요. " +
                   "보호자가 입력한 병원 계획과 경과는 수의사 확인 전 정보로 분리하세요. " +
+                  "첨부 사진·영상은 종류와 개수만 요약하고 이미지·영상 내용을 판독하거나 해석하지 마세요. " +
                   "다른 병원에 처음 방문해도 이전 경과를 다시 설명하는 시간을 줄일 수 있게 handoffNote를 작성하세요. " +
                   "보고서는 진료 시간을 줄이기 위한 사전 문진 요약이며, 진단을 대신한다고 쓰지 마세요. 한국어로 짧고 밀도 있게 작성하세요.",
               },
@@ -141,6 +149,7 @@ async function enrichWithOpenAI(
                   handoffNote: baseDraft.handoffNote,
                   keyObservations: baseDraft.keyObservations,
                   timeline: baseDraft.timeline,
+                  mediaSummary: baseDraft.mediaSummary,
                   planAndProgress: baseDraft.planAndProgress,
                   questionsForVet: baseDraft.questionsForVet,
                   submissionNote: baseDraft.submissionNote,
@@ -173,6 +182,8 @@ async function enrichWithOpenAI(
     const planAndProgress =
       cleanStringArray(generated.planAndProgress, 1, 6) ??
       baseDraft.planAndProgress;
+    const mediaSummary =
+      cleanStringArray(generated.mediaSummary, 1, 5) ?? baseDraft.mediaSummary;
     const questionsForVet =
       cleanStringArray(generated.questionsForVet, 2, 4) ??
       baseDraft.questionsForVet;
@@ -187,6 +198,7 @@ async function enrichWithOpenAI(
       overview,
       handoffNote,
       keyObservations,
+      mediaSummary,
       planAndProgress,
       questionsForVet,
       submissionNote,

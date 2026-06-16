@@ -29,6 +29,8 @@ import type {
   PetEpisode,
   PetProfile,
   RedFlagId,
+  ReportMediaAttachment,
+  ReportMediaKind,
   SymptomId,
   TesterProfile,
   VetReviewDraft,
@@ -46,6 +48,13 @@ type View =
 interface EpisodeReportSelection {
   episode?: PetEpisode;
   records: HistoryRecord[];
+}
+
+interface PendingMediaFile {
+  id: string;
+  file: File;
+  kind: ReportMediaKind;
+  previewUrl: string;
 }
 
 const views: View[] = [
@@ -72,6 +81,20 @@ const initialProfile: PetProfile = {
 };
 
 const initialInput = profileToHealthInput(initialProfile);
+
+const reportMediaBucket = "petflow-report-media";
+const maxReportMediaFiles = 4;
+const maxReportMediaSizeBytes = 50 * 1024 * 1024;
+const allowedMediaMimeTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+]);
 
 const breedOptions = {
   dog: [
@@ -184,6 +207,49 @@ function formatDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)}MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+function mediaKindFromType(mimeType: string): ReportMediaKind | null {
+  if (!allowedMediaMimeTypes.has(mimeType)) return null;
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  return null;
+}
+
+function mediaExtension(file: File) {
+  const extensionFromName = file.name
+    .split(".")
+    .pop()
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 8);
+  if (extensionFromName) return extensionFromName;
+  if (file.type === "image/jpeg") return "jpg";
+  if (file.type === "video/quicktime") return "mov";
+  return file.type.split("/")[1]?.replace(/[^a-z0-9]/g, "") || "bin";
+}
+
+function mediaSummaryLabel(media: Array<{ kind: ReportMediaKind }>) {
+  return mediaCountLabelFromCounts(
+    media.filter((item) => item.kind === "image").length,
+    media.filter((item) => item.kind === "video").length,
+  );
+}
+
+function mediaCountLabelFromCounts(imageCount: number, videoCount: number) {
+  return [
+    imageCount ? `사진 ${imageCount}개` : "",
+    videoCount ? `영상 ${videoCount}개` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 function getOrCreateClientId() {
@@ -831,6 +897,11 @@ function ProfileView({
 function CheckView({
   input,
   setInput,
+  mediaFiles,
+  setMediaFiles,
+  mediaEnabled,
+  mediaError,
+  setMediaError,
   onBack,
   onEditProfile,
   onSubmit,
@@ -839,6 +910,11 @@ function CheckView({
 }: {
   input: HealthCheckInput;
   setInput: (value: HealthCheckInput) => void;
+  mediaFiles: PendingMediaFile[];
+  setMediaFiles: (files: PendingMediaFile[]) => void;
+  mediaEnabled: boolean;
+  mediaError: string;
+  setMediaError: (message: string) => void;
   onBack: () => void;
   onEditProfile: () => void;
   onSubmit: () => void;
@@ -873,6 +949,45 @@ function CheckView({
       redFlags: [],
       note: "",
     });
+  }
+  function addMediaFiles(fileList: FileList | null) {
+    if (!fileList?.length) return;
+    if (!mediaEnabled) {
+      setMediaError("사진·영상 저장은 로그인 후 등록된 반려동물 기록에서 사용할 수 있어요.");
+      return;
+    }
+    const files = Array.from(fileList);
+    const nextFiles: PendingMediaFile[] = [];
+    let nextError = "";
+    for (const file of files) {
+      if (mediaFiles.length + nextFiles.length >= maxReportMediaFiles) {
+        nextError = `사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`;
+        break;
+      }
+      const kind = mediaKindFromType(file.type);
+      if (!kind) {
+        nextError = "JPG, PNG, WEBP, HEIC 이미지 또는 MP4, MOV, WEBM 영상만 저장할 수 있어요.";
+        continue;
+      }
+      if (file.size > maxReportMediaSizeBytes) {
+        nextError = "파일 하나는 50MB 이하로 올려 주세요.";
+        continue;
+      }
+      nextFiles.push({
+        id: crypto.randomUUID(),
+        file,
+        kind,
+        previewUrl: URL.createObjectURL(file),
+      });
+    }
+    setMediaError(nextError);
+    if (nextFiles.length) setMediaFiles([...mediaFiles, ...nextFiles]);
+  }
+  function removeMediaFile(id: string) {
+    const target = mediaFiles.find((item) => item.id === id);
+    if (target) URL.revokeObjectURL(target.previewUrl);
+    setMediaFiles(mediaFiles.filter((item) => item.id !== id));
+    setMediaError("");
   }
   return (
     <div className="content-wrap">
@@ -1045,6 +1160,67 @@ function CheckView({
                 placeholder="언제, 어떤 상황에서 달라졌는지만 짧게 적어도 충분해요."
               />
             </div>
+            <div className="field full">
+              <span className="field-label">사진·영상 (선택)</span>
+              <div className="media-uploader">
+                <label className={`media-dropzone ${mediaEnabled ? "" : "disabled"}`}>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/webm"
+                    multiple
+                    disabled={!mediaEnabled || mediaFiles.length >= maxReportMediaFiles}
+                    onChange={(event) => {
+                      addMediaFiles(event.currentTarget.files);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  <span>
+                    <strong>말로 설명하기 어려운 장면만 가볍게 추가</strong>
+                    <small>
+                      사진·영상 최대 {maxReportMediaFiles}개, 파일당 50MB까지 저장해요.
+                    </small>
+                  </span>
+                  <em>{mediaFiles.length}/{maxReportMediaFiles}</em>
+                </label>
+                {!mediaEnabled && (
+                  <p className="media-helper">
+                    로그인 후 등록된 반려동물을 선택하면 계정 기록에 첨부할 수 있어요.
+                  </p>
+                )}
+                {mediaFiles.length > 0 && (
+                  <div className="media-preview-grid">
+                    {mediaFiles.map((item) => (
+                      <div className="media-preview-card" key={item.id}>
+                        <div className="media-preview-thumb">
+                          {item.kind === "image" ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- Blob previews cannot be optimized by next/image.
+                            <img src={item.previewUrl} alt="" />
+                          ) : (
+                            <video src={item.previewUrl} muted playsInline />
+                          )}
+                        </div>
+                        <span>
+                          <strong>{item.file.name}</strong>
+                          <small>
+                            {item.kind === "image" ? "사진" : "영상"} ·{" "}
+                            {formatFileSize(item.file.size)}
+                          </small>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeMediaFile(item.id)}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {mediaError && (
+                  <p className="media-error" role="alert">{mediaError}</p>
+                )}
+              </div>
+            </div>
           </div>
         </section>
         {error && (
@@ -1079,16 +1255,20 @@ function CheckView({
 
 function ResultView({
   record,
+  mediaWarning,
   onHome,
   onRestart,
   onFeedback,
 }: {
   record: HistoryRecord;
+  mediaWarning: string;
   onHome: () => void;
   onRestart: () => void;
   onFeedback: (value: HistoryRecord["feedback"]) => void;
 }) {
   const { result } = record;
+  const media = record.media ?? [];
+  const mediaSummary = mediaSummaryLabel(media);
   const [copied, setCopied] = useState(false);
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
@@ -1108,6 +1288,7 @@ function ResultView({
       title,
       `${riskLabel[result.riskLevel]} · ${result.headline}`,
       result.summary,
+      media.length ? `첨부 자료: ${mediaSummary} (보호자 저장, 내용 판독 전)` : "",
       "",
       "병원에 보여줄 요약",
       result.vetBrief,
@@ -1189,6 +1370,54 @@ function ResultView({
               ))}
             </ul>
           </section>
+          {mediaWarning && (
+            <p className="media-warning" role="alert">
+              {mediaWarning}
+            </p>
+          )}
+          {media.length > 0 && (
+            <section className="result-card">
+              <h3>
+                <Icon name="history" size={18} /> 저장한 사진·영상
+              </h3>
+              <p className="media-helper">
+                {mediaSummary}를 이 기록에 연결했어요. PetFlow는 사진·영상 내용을 판독하지 않아요.
+              </p>
+              <div className="result-media-grid">
+                {media.map((item) => (
+                  <div
+                    className="result-media-card"
+                    key={item.id}
+                  >
+                    <div className="result-media-thumb">
+                      {item.signedUrl ? (
+                        item.kind === "image" ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- Private signed URLs should not pass through next/image optimization.
+                          <img src={item.signedUrl} alt={item.fileName} />
+                        ) : (
+                          <video src={item.signedUrl} controls preload="metadata" />
+                        )
+                      ) : (
+                        <span>{item.kind === "image" ? "사진" : "영상"}</span>
+                      )}
+                    </div>
+                    <span>
+                      <strong>{item.fileName}</strong>
+                      <small>
+                        {item.kind === "image" ? "사진" : "영상"} ·{" "}
+                        {formatFileSize(item.sizeBytes)}
+                      </small>
+                      {item.signedUrl && (
+                        <a href={item.signedUrl} target="_blank" rel="noreferrer">
+                          원본 열기
+                        </a>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
           <section className="result-card">
             <h3>
               <Icon name="stethoscope" size={18} /> 병원에 보여줄 요약
@@ -1362,6 +1591,10 @@ function HistoryView({
             const progressCount = group.episode
               ? progressCountByEpisode.get(group.episode.id) ?? 0
               : 0;
+            const mediaCount = group.records.reduce(
+              (total, record) => total + (record.media?.length ?? 0),
+              0,
+            );
             return (
               <section
                 className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
@@ -1388,6 +1621,7 @@ function HistoryView({
                           ? " · 계획 미등록"
                           : ""}
                       {hasEpisode ? ` · 경과 ${progressCount}/3` : ""}
+                      {mediaCount ? ` · 첨부 ${mediaCount}개` : ""}
                     </span>
                     <button
                       className="secondary-button compact"
@@ -1424,6 +1658,9 @@ function HistoryView({
                         <p>
                           {formatDate(record.result.createdAt)} · 증상{" "}
                           {record.input.symptoms.length}개 기록
+                          {record.media?.length
+                            ? ` · 첨부 ${record.media.length}개`
+                            : ""}
                         </p>
                       </span>
                       <span className={`history-risk ${record.result.riskLevel}`}>
@@ -1707,7 +1944,10 @@ function EpisodeReportView({
                 : "개별 기록"}
           </span>
           <h2>{report.title}</h2>
-          <p>{report.periodLabel} · 보호자 관찰 {report.recordCount}회</p>
+          <p>
+            {report.periodLabel} · 보호자 관찰 {report.recordCount}회
+            {report.mediaCount ? ` · 첨부 ${report.mediaCount}개` : ""}
+          </p>
         </div>
         <div className="episode-report-actions">
           <button className="primary-button" onClick={shareReport}>
@@ -1754,6 +1994,7 @@ function EpisodeReportView({
           <strong>계획 {completedPlanTaskCount}/{totalPlanTaskCount}개</strong>
           <strong>초기 경과 {initialProgressCount}/3</strong>
           <strong>장기 경과 {longTermProgressCount}/3</strong>
+          <strong>첨부 {report.mediaCount}개</strong>
           <strong>다른 병원 첫 설명</strong>
         </div>
 
@@ -1822,6 +2063,10 @@ function EpisodeReportView({
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
+                <div className="vet-draft-handoff">
+                  <span>첨부 자료</span>
+                  <p>{vetDraft.mediaSummary.slice(0, 2).join(" · ")}</p>
+                </div>
                 <div className="vet-draft-questions">
                   <span>확인 질문</span>
                   {vetDraft.questionsForVet.slice(0, 2).map((item) => (
@@ -1935,6 +2180,10 @@ function EpisodeReportView({
               <span>활력 변화</span>
               <strong>{report.energyChangeCount}회</strong>
             </div>
+            <div>
+              <span>첨부 자료</span>
+              <strong>{report.mediaCount ? `${report.mediaCount}개` : "없음"}</strong>
+            </div>
           </div>
           <div className="episode-report-repeat">
             <span>반복 관찰</span>
@@ -1970,6 +2219,11 @@ function EpisodeReportView({
                     <small>
                       식욕 {item.appetite} · 활력 {item.energy} · {item.duration}
                     </small>
+                    {item.mediaCount > 0 && (
+                      <small>
+                        첨부 {mediaCountLabelFromCounts(item.imageCount, item.videoCount)}
+                      </small>
+                    )}
                   </span>
                   <em>{item.riskLabel}</em>
                 </button>
@@ -2289,6 +2543,10 @@ export function PetFlowApp() {
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [plans, setPlans] = useState<EpisodePlan[]>([]);
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
+  const [pendingMedia, setPendingMedia] = useState<PendingMediaFile[]>([]);
+  const pendingMediaRef = useRef<PendingMediaFile[]>([]);
+  const [mediaError, setMediaError] = useState("");
+  const [mediaUploadWarning, setMediaUploadWarning] = useState("");
   const [selected, setSelected] = useState<HistoryRecord | null>(null);
   const [selectedEpisodeReport, setSelectedEpisodeReport] =
     useState<EpisodeReportSelection | null>(null);
@@ -2323,6 +2581,19 @@ export function PetFlowApp() {
   );
 
   useEffect(() => {
+    pendingMediaRef.current = pendingMedia;
+  }, [pendingMedia]);
+
+  useEffect(
+    () => () => {
+      pendingMediaRef.current.forEach((item) =>
+        URL.revokeObjectURL(item.previewUrl),
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
     window.history.replaceState({ petflowView: view }, "", window.location.href);
     function handlePopState(event: PopStateEvent) {
       applyingPopState.current = true;
@@ -2351,6 +2622,13 @@ export function PetFlowApp() {
     ),
     [episodes, selectedPetId],
   );
+  const clearPendingMedia = useCallback(() => {
+    setPendingMedia((current) => {
+      current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      return [];
+    });
+    setMediaError("");
+  }, []);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -2398,6 +2676,8 @@ export function PetFlowApp() {
         setEpisodes([]);
         setPlans([]);
         setProgress([]);
+        clearPendingMedia();
+        setMediaUploadWarning("");
         setTesterProfile(null);
         setAiAccess(null);
         setSelectedEpisodeReport(null);
@@ -2475,7 +2755,7 @@ export function PetFlowApp() {
       void loadAccount(session?.user ?? null);
     });
     return () => listener.subscription.unsubscribe();
-  }, []);
+  }, [clearPendingMedia]);
 
   function persist(records: HistoryRecord[]) {
     setHistory(records);
@@ -2483,6 +2763,72 @@ export function PetFlowApp() {
       localStorage.setItem("petflow-history", JSON.stringify(records));
     } catch {
       /* Continue without persistence. */
+    }
+  }
+  async function uploadPendingMediaFiles({
+    reportId,
+    clientId,
+    accessToken,
+    userId,
+    petId,
+    files,
+  }: {
+    reportId: string;
+    clientId: string;
+    accessToken: string;
+    userId: string;
+    petId: string;
+    files: PendingMediaFile[];
+  }): Promise<ReportMediaAttachment[]> {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !files.length) return [];
+    const uploadedPaths: string[] = [];
+    const registeredFiles: Array<{
+      storagePath: string;
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+      kind: ReportMediaKind;
+    }> = [];
+    try {
+      for (const [index, item] of files.entries()) {
+        const storagePath = `${userId}/${petId}/${reportId}/${Date.now()}-${index}-${crypto.randomUUID()}.${mediaExtension(item.file)}`;
+        const { error: uploadError } = await supabase.storage
+          .from(reportMediaBucket)
+          .upload(storagePath, item.file, {
+            cacheControl: "3600",
+            contentType: item.file.type,
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
+        uploadedPaths.push(storagePath);
+        registeredFiles.push({
+          storagePath,
+          fileName: item.file.name.slice(0, 160),
+          mimeType: item.file.type,
+          sizeBytes: item.file.size,
+          kind: item.kind,
+        });
+      }
+
+      const response = await fetch(`/api/reports/${reportId}/media`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ clientId, files: registeredFiles }),
+      });
+      const payload = (await response.json()) as {
+        media?: ReportMediaAttachment[];
+      };
+      if (!response.ok || !payload.media) throw new Error("media registration failed");
+      return payload.media;
+    } catch (error) {
+      if (uploadedPaths.length) {
+        await supabase.storage.from(reportMediaBucket).remove(uploadedPaths);
+      }
+      throw error;
     }
   }
   async function loadPetHistory(nextProfile: PetProfile) {
@@ -2511,6 +2857,8 @@ export function PetFlowApp() {
   }
   function selectPet(nextProfile: PetProfile) {
     setSelectedEpisodeReport(null);
+    clearPendingMedia();
+    setMediaUploadWarning("");
     setProfile(nextProfile);
     setSelectedPetId(nextProfile.id);
     setInput(profileToHealthInput(nextProfile));
@@ -2669,6 +3017,8 @@ export function PetFlowApp() {
   async function logout() {
     const supabase = getSupabaseBrowserClient();
     await supabase?.auth.signOut();
+    clearPendingMedia();
+    setMediaUploadWarning("");
     setProfile(initialProfile);
     setInput(initialInput);
     setPets([]);
@@ -2691,6 +3041,8 @@ export function PetFlowApp() {
       openProfile("check");
       return;
     }
+    clearPendingMedia();
+    setMediaUploadWarning("");
     setInput(profileToHealthInput(profile));
     setError("");
     setView("check");
@@ -2702,6 +3054,7 @@ export function PetFlowApp() {
     }
     setLoading(true);
     setError("");
+    setMediaUploadWarning("");
     try {
       const clientId = getOrCreateClientId();
       const supabase = getSupabaseBrowserClient();
@@ -2725,12 +3078,43 @@ export function PetFlowApp() {
         episodeId?: string | null;
       };
       const { episodeId, ...result } = responsePayload;
+      let media: ReportMediaAttachment[] = [];
+      if (pendingMedia.length) {
+        if (
+          result.storage === "remote" &&
+          episodeId &&
+          selectedPetId &&
+          sessionData.session?.access_token &&
+          sessionData.session.user.id
+        ) {
+          try {
+            media = await uploadPendingMediaFiles({
+              reportId: result.id,
+              clientId,
+              accessToken: sessionData.session.access_token,
+              userId: sessionData.session.user.id,
+              petId: selectedPetId,
+              files: pendingMedia,
+            });
+          } catch {
+            setMediaUploadWarning(
+              "기록은 저장됐지만 사진·영상 첨부는 저장하지 못했어요. 잠시 후 같은 기록에 다시 남겨 주세요.",
+            );
+          }
+        } else {
+          setMediaUploadWarning(
+            "기록은 저장됐지만 사진·영상은 계정에 연결된 기록에서만 저장할 수 있어요.",
+          );
+        }
+      }
       const record: HistoryRecord = {
         input,
         result,
         petId: selectedPetId,
         episodeId: episodeId ?? undefined,
+        media,
       };
+      clearPendingMedia();
       persist([record, ...history].slice(0, 100));
       if (episodeId && selectedPetId) {
         setEpisodes((current) => {
@@ -2997,6 +3381,7 @@ export function PetFlowApp() {
             onProfile={() => openProfile("home")}
             onAccount={() => setView("account")}
             onSelectLatest={(record) => {
+              setMediaUploadWarning("");
               setSelected(record);
               setView("result");
             }}
@@ -3035,6 +3420,11 @@ export function PetFlowApp() {
           <CheckView
             input={input}
             setInput={setInput}
+            mediaFiles={pendingMedia}
+            setMediaFiles={setPendingMedia}
+            mediaEnabled={Boolean(user && selectedPetId)}
+            mediaError={mediaError}
+            setMediaError={setMediaError}
             onBack={() => setView("home")}
             onEditProfile={() => openProfile("check")}
             onSubmit={submit}
@@ -3045,6 +3435,7 @@ export function PetFlowApp() {
         {currentView === "result" && selected && (
           <ResultView
             record={selected}
+            mediaWarning={mediaUploadWarning}
             onHome={() => setView("home")}
             onRestart={startNew}
             onFeedback={updateFeedback}
@@ -3069,6 +3460,7 @@ export function PetFlowApp() {
               window.scrollTo({ top: 0, behavior: "smooth" });
             }}
             onSelect={(record) => {
+              setMediaUploadWarning("");
               setSelected(record);
               setView("result");
             }}
@@ -3108,6 +3500,7 @@ export function PetFlowApp() {
             onOpenAccount={() => setView("account")}
             onSaveAiFeedback={submitAiReportFeedback}
             onSelectRecord={(record) => {
+              setMediaUploadWarning("");
               setSelected(record);
               setView("result");
             }}

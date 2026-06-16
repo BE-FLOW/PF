@@ -4,6 +4,7 @@ import type {
   HealthCheckInput,
   HistoryRecord,
   PetProfile,
+  ReportMediaAttachment,
 } from "./types";
 
 const uuidPattern =
@@ -35,7 +36,9 @@ export interface StoredHealthReport {
 export type DisplayHealthReport = Omit<
   StoredHealthReport,
   "client_id" | "user_id" | "app_version" | "deployment_environment" | "is_test"
->;
+> & {
+  media?: ReportMediaAttachment[];
+};
 
 export function isUuid(value: string | null | undefined): value is string {
   return Boolean(value && uuidPattern.test(value));
@@ -104,5 +107,6 @@ export function storedReportToHistoryRecord(
       source: stored.analysis_source,
       storage: "remote",
     },
+    media: stored.media ?? [],
   };
 }

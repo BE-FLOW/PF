@@ -109,4 +109,34 @@ describe("buildVetReviewDraft", () => {
     expect(draft.disclaimer).toContain("처방");
     expect(draft.disclaimer).toContain("치료 계획");
   });
+
+  it("keeps attached media as unreviewed reference material", () => {
+    const item = record("2026-06-10T00:00:00.000Z");
+    item.media = [
+      {
+        id: "90000000-0000-4000-8000-000000000001",
+        reportId: item.result.id,
+        petId: "40000000-0000-4000-8000-000000000001",
+        episodeId: "50000000-0000-4000-8000-000000000001",
+        kind: "image",
+        fileName: "eye.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: 1200,
+        storagePath: "user/pet/report/eye.jpg",
+        createdAt: "2026-06-10T00:00:00.000Z",
+      },
+    ];
+    const draft = buildVetReviewDraft(
+      [item],
+      "보리",
+      undefined,
+      [],
+      { generatedAt: "2026-06-15T00:00:00.000Z" },
+    );
+
+    expect(draft.mediaSummary.join("\n")).toContain("사진 1개");
+    expect(draft.mediaSummary.join("\n")).toContain("판독하지 않았습니다");
+    expect(draft.copyText).toContain("[첨부 자료]");
+    expect(draft.keyObservations.join("\n")).toContain("판독 전");
+  });
 });

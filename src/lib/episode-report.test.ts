@@ -131,4 +131,42 @@ describe("buildEpisodeReport", () => {
     expect(report.shareText).toContain("30일: 비슷함");
     expect(report.shareText).toContain("수의사가 확인한 경과가 아닙니다");
   });
+
+  it("summarizes owner-uploaded media without interpreting it", () => {
+    const item = record("2026-06-10T00:00:00.000Z");
+    item.media = [
+      {
+        id: "90000000-0000-4000-8000-000000000001",
+        reportId: item.result.id,
+        petId: "40000000-0000-4000-8000-000000000001",
+        episodeId: "50000000-0000-4000-8000-000000000001",
+        kind: "image",
+        fileName: "stool.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: 1200,
+        storagePath: "user/pet/report/stool.jpg",
+        createdAt: "2026-06-10T00:00:00.000Z",
+      },
+      {
+        id: "90000000-0000-4000-8000-000000000002",
+        reportId: item.result.id,
+        petId: "40000000-0000-4000-8000-000000000001",
+        episodeId: "50000000-0000-4000-8000-000000000001",
+        kind: "video",
+        fileName: "walk.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 2400,
+        storagePath: "user/pet/report/walk.mp4",
+        createdAt: "2026-06-10T00:00:00.000Z",
+      },
+    ];
+    const report = buildEpisodeReport([item], "보리");
+
+    expect(report.mediaCount).toBe(2);
+    expect(report.timeline[0].imageCount).toBe(1);
+    expect(report.timeline[0].videoCount).toBe(1);
+    expect(report.shareText).toContain("[첨부 자료 · 보호자 저장]");
+    expect(report.shareText).toContain("사진 1개, 영상 1개");
+    expect(report.shareText).toContain("내용을 판독하지 않았습니다");
+  });
 });
