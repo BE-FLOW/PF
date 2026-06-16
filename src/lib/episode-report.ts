@@ -4,6 +4,7 @@ import {
   levelLabels,
   symptomLabels,
 } from "./analysis";
+import { countReportMedia, formatReportMediaCount } from "./report-media";
 import type {
   EpisodePlan,
   EpisodeProgress,
@@ -47,22 +48,6 @@ const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
   hour: "2-digit",
   minute: "2-digit",
 });
-
-function mediaCounts(record: HistoryRecord) {
-  const media = record.media ?? [];
-  const imageCount = media.filter((item) => item.kind === "image").length;
-  const videoCount = media.filter((item) => item.kind === "video").length;
-  return { imageCount, videoCount, mediaCount: media.length };
-}
-
-function mediaCountLabel(imageCount: number, videoCount: number) {
-  return [
-    imageCount ? `사진 ${imageCount}개` : "",
-    videoCount ? `영상 ${videoCount}개` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
-}
 
 export interface EpisodeReportTimelineItem {
   id: string;
@@ -157,7 +142,7 @@ export function buildEpisodeReport(
     (record) => record.input.energy !== "normal",
   ).length;
   const timeline = ordered.map<EpisodeReportTimelineItem>((record) => {
-    const counts = mediaCounts(record);
+    const counts = countReportMedia(record.media ?? []);
     return {
       id: record.result.id,
       recordedAt: record.result.createdAt,
@@ -179,7 +164,7 @@ export function buildEpisodeReport(
     .filter((item) => item.mediaCount > 0)
     .map(
       (item) =>
-        `${item.dateLabel}: ${mediaCountLabel(item.imageCount, item.videoCount)}`,
+        `${item.dateLabel}: ${formatReportMediaCount(item.imageCount, item.videoCount)}`,
     );
   const mediaCount = timeline.reduce((total, item) => total + item.mediaCount, 0);
   const disclaimer =
@@ -188,7 +173,7 @@ export function buildEpisodeReport(
     ? timeline
         .map(
           (item, index) =>
-            `${index + 1}. ${item.dateLabel}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration} / 앱 안내: ${item.riskLabel}${item.redFlagCount ? ` / 위험 신호 ${item.redFlagCount}개 입력` : ""}${item.mediaCount ? `\n첨부: ${mediaCountLabel(item.imageCount, item.videoCount)}` : ""}`,
+            `${index + 1}. ${item.dateLabel}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration} / 앱 안내: ${item.riskLabel}${item.redFlagCount ? ` / 위험 신호 ${item.redFlagCount}개 입력` : ""}${item.mediaCount ? `\n첨부: ${formatReportMediaCount(item.imageCount, item.videoCount)}` : ""}`,
         )
         .join("\n\n")
     : "기록 없음";

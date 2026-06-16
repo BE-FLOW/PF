@@ -12,6 +12,16 @@ import {
   storedReportToHistoryRecord,
   type DisplayHealthReport,
 } from "@/lib/report-storage";
+import {
+  formatReportMediaCount,
+  formatReportMediaSummary,
+  maxReportMediaFiles,
+  maxReportMediaSizeBytes,
+  reportMediaAccept,
+  reportMediaBucket,
+  reportMediaExtensionFromMimeType,
+  reportMediaKindFromMimeType,
+} from "@/lib/report-media";
 import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -81,20 +91,6 @@ const initialProfile: PetProfile = {
 };
 
 const initialInput = profileToHealthInput(initialProfile);
-
-const reportMediaBucket = "petflow-report-media";
-const maxReportMediaFiles = 4;
-const maxReportMediaSizeBytes = 50 * 1024 * 1024;
-const allowedMediaMimeTypes = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-  "video/mp4",
-  "video/quicktime",
-  "video/webm",
-]);
 
 const breedOptions = {
   dog: [
@@ -216,13 +212,6 @@ function formatFileSize(bytes: number) {
   return `${Math.max(1, Math.round(bytes / 1024))}KB`;
 }
 
-function mediaKindFromType(mimeType: string): ReportMediaKind | null {
-  if (!allowedMediaMimeTypes.has(mimeType)) return null;
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("video/")) return "video";
-  return null;
-}
-
 function mediaExtension(file: File) {
   const extensionFromName = file.name
     .split(".")
@@ -231,25 +220,7 @@ function mediaExtension(file: File) {
     .replace(/[^a-z0-9]/g, "")
     .slice(0, 8);
   if (extensionFromName) return extensionFromName;
-  if (file.type === "image/jpeg") return "jpg";
-  if (file.type === "video/quicktime") return "mov";
-  return file.type.split("/")[1]?.replace(/[^a-z0-9]/g, "") || "bin";
-}
-
-function mediaSummaryLabel(media: Array<{ kind: ReportMediaKind }>) {
-  return mediaCountLabelFromCounts(
-    media.filter((item) => item.kind === "image").length,
-    media.filter((item) => item.kind === "video").length,
-  );
-}
-
-function mediaCountLabelFromCounts(imageCount: number, videoCount: number) {
-  return [
-    imageCount ? `사진 ${imageCount}개` : "",
-    videoCount ? `영상 ${videoCount}개` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
+  return reportMediaExtensionFromMimeType(file.type);
 }
 
 function getOrCreateClientId() {
@@ -964,7 +935,7 @@ function CheckView({
         nextError = `사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`;
         break;
       }
-      const kind = mediaKindFromType(file.type);
+      const kind = reportMediaKindFromMimeType(file.type);
       if (!kind) {
         nextError = "JPG, PNG, WEBP, HEIC 이미지 또는 MP4, MOV, WEBM 영상만 저장할 수 있어요.";
         continue;
@@ -1166,7 +1137,7 @@ function CheckView({
                 <label className={`media-dropzone ${mediaEnabled ? "" : "disabled"}`}>
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/webm"
+                    accept={reportMediaAccept}
                     multiple
                     disabled={!mediaEnabled || mediaFiles.length >= maxReportMediaFiles}
                     onChange={(event) => {
@@ -1193,7 +1164,7 @@ function CheckView({
                       <div className="media-preview-card" key={item.id}>
                         <div className="media-preview-thumb">
                           {item.kind === "image" ? (
-                            // eslint-disable-next-line @next/next/no-img-element -- Blob previews cannot be optimized by next/image.
+                            // eslint-disable-next-line @next/next/no-img-element -- User file preview.
                             <img src={item.previewUrl} alt="" />
                           ) : (
                             <video src={item.previewUrl} muted playsInline />
@@ -1268,7 +1239,7 @@ function ResultView({
 }) {
   const { result } = record;
   const media = record.media ?? [];
-  const mediaSummary = mediaSummaryLabel(media);
+  const mediaSummary = formatReportMediaSummary(media);
   const [copied, setCopied] = useState(false);
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
@@ -1392,7 +1363,7 @@ function ResultView({
                     <div className="result-media-thumb">
                       {item.signedUrl ? (
                         item.kind === "image" ? (
-                          // eslint-disable-next-line @next/next/no-img-element -- Private signed URLs should not pass through next/image optimization.
+                          // eslint-disable-next-line @next/next/no-img-element -- Private signed media.
                           <img src={item.signedUrl} alt={item.fileName} />
                         ) : (
                           <video src={item.signedUrl} controls preload="metadata" />
@@ -2221,7 +2192,7 @@ function EpisodeReportView({
                     </small>
                     {item.mediaCount > 0 && (
                       <small>
-                        첨부 {mediaCountLabelFromCounts(item.imageCount, item.videoCount)}
+                        첨부 {formatReportMediaCount(item.imageCount, item.videoCount)}
                       </small>
                     )}
                   </span>
@@ -2656,7 +2627,7 @@ export function PetFlowApp() {
           localStorage.setItem("petflow-profile", JSON.stringify(migrated));
         }
       } catch {
-        /* Local storage is optional. */
+        /* Ignore local persistence failures. */
       }
     });
     return () => window.cancelAnimationFrame(frame);
@@ -2762,7 +2733,7 @@ export function PetFlowApp() {
     try {
       localStorage.setItem("petflow-history", JSON.stringify(records));
     } catch {
-      /* Continue without persistence. */
+      /* Ignore local persistence failures. */
     }
   }
   async function uploadPendingMediaFiles({
@@ -2907,7 +2878,7 @@ export function PetFlowApp() {
       try {
         localStorage.setItem("petflow-profile", JSON.stringify(savedProfile));
       } catch {
-        /* Continue without persistence. */
+        /* Ignore local persistence failures. */
       }
     }
     const nextInput = profileToHealthInput(savedProfile);
@@ -3032,7 +3003,7 @@ export function PetFlowApp() {
     try {
       localStorage.removeItem("petflow-profile");
     } catch {
-      /* Local storage is optional. */
+      /* Ignore local persistence failures. */
     }
     setView("home");
   }
@@ -3098,7 +3069,7 @@ export function PetFlowApp() {
             });
           } catch {
             setMediaUploadWarning(
-              "기록은 저장됐지만 사진·영상 첨부는 저장하지 못했어요. 잠시 후 같은 기록에 다시 남겨 주세요.",
+              "기록은 저장됐지만 사진·영상 첨부는 저장하지 못했어요. 필요하면 새 기록에서 다시 첨부해 주세요.",
             );
           }
         } else {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
 import {
   listPetEpisodes,
   listPetEpisodePlans,
@@ -12,11 +13,8 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ petId: string }> },
 ) {
-  const authorization = request.headers.get("authorization");
-  const accessToken = authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
   const { petId } = await context.params;
+  const accessToken = accessTokenFromRequest(request);
   const [reports, episodes, plans, progress] = await Promise.all([
     listPetHealthReports(accessToken, petId),
     listPetEpisodes(accessToken, petId),

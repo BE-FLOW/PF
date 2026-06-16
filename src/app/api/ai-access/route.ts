@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
 import {
   getAiAccessStatus,
   redeemAiAccessCode,
@@ -6,15 +7,8 @@ import {
 
 export const runtime = "nodejs";
 
-function accessTokenFrom(request: Request) {
-  const authorization = request.headers.get("authorization");
-  return authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
-}
-
 export async function GET(request: Request) {
-  const status = await getAiAccessStatus(accessTokenFrom(request));
+  const status = await getAiAccessStatus(accessTokenFromRequest(request));
   if (!status) {
     return NextResponse.json(
       { error: "로그인 상태를 다시 확인해 주세요." },
@@ -41,7 +35,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const status = await redeemAiAccessCode(accessTokenFrom(request), body.code);
+  const status = await redeemAiAccessCode(
+    accessTokenFromRequest(request),
+    body.code,
+  );
   if (!status) {
     return NextResponse.json(
       { error: "참여코드가 올바르지 않거나 사용할 수 없어요." },

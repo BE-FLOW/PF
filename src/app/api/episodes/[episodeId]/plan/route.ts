@@ -1,17 +1,11 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
 import {
   saveEpisodePlan,
   setEpisodePlanTaskCompletion,
 } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
-
-function accessTokenFrom(request: Request) {
-  const authorization = request.headers.get("authorization");
-  return authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
-}
 
 export async function PUT(
   request: Request,
@@ -38,7 +32,7 @@ export async function PUT(
 
   const { episodeId } = await context.params;
   const plan = await saveEpisodePlan(
-    accessTokenFrom(request),
+    accessTokenFromRequest(request),
     episodeId,
     body.tasks as string[],
   );
@@ -76,7 +70,7 @@ export async function PATCH(
 
   const { episodeId } = await context.params;
   const saved = await setEpisodePlanTaskCompletion(
-    accessTokenFrom(request),
+    accessTokenFromRequest(request),
     episodeId,
     body.taskId,
     body.completed,

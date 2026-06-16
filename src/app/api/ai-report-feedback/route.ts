@@ -1,15 +1,9 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
 import { saveAiReportFeedback } from "@/lib/supabase-admin";
 import type { AiReportFeedbackInput } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-function accessTokenFrom(request: Request) {
-  const authorization = request.headers.get("authorization");
-  return authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
-}
 
 export async function POST(request: Request) {
   let body: Partial<AiReportFeedbackInput>;
@@ -33,7 +27,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const saved = await saveAiReportFeedback(accessTokenFrom(request), {
+  const saved = await saveAiReportFeedback(accessTokenFromRequest(request), {
     usageId: body.usageId,
     episodeId: body.episodeId,
     usefulnessScore: body.usefulnessScore,

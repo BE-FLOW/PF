@@ -16,21 +16,14 @@ import {
   toStoredHealthReport,
   type DisplayHealthReport,
 } from "./report-storage";
+import {
+  isAllowedReportMediaMimeType,
+  maxReportMediaFiles,
+  maxReportMediaSizeBytes,
+  reportMediaBucket,
+} from "./report-media";
 
 const requestTimeoutMs = 3500;
-const reportMediaBucket = "petflow-report-media";
-const maxReportMediaFiles = 4;
-const maxReportMediaSizeBytes = 50 * 1024 * 1024;
-const allowedMediaTypes = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-  "video/mp4",
-  "video/quicktime",
-  "video/webm",
-]);
 
 let adminClient: SupabaseClient | null | undefined;
 
@@ -287,9 +280,9 @@ function isValidMediaInput(
   input: ReportMediaRegistrationInput,
 ): input is ReportMediaRegistrationInput {
   return Boolean(
-    input &&
+      input &&
       ["image", "video"].includes(input.kind) &&
-      allowedMediaTypes.has(input.mimeType) &&
+      isAllowedReportMediaMimeType(input.mimeType) &&
       Number.isInteger(input.sizeBytes) &&
       input.sizeBytes > 0 &&
       input.sizeBytes <= maxReportMediaSizeBytes &&

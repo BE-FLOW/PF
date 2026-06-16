@@ -1,17 +1,11 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
 import {
   registerHealthReportMedia,
   type ReportMediaRegistrationInput,
 } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
-
-function accessTokenFrom(request: Request) {
-  const authorization = request.headers.get("authorization");
-  return authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
-}
 
 function isMediaRegistrationInput(value: unknown): value is {
   clientId: string;
@@ -62,7 +56,7 @@ export async function POST(
   }
 
   const media = await registerHealthReportMedia(
-    accessTokenFrom(request),
+    accessTokenFromRequest(request),
     reportId,
     body.clientId,
     body.files,

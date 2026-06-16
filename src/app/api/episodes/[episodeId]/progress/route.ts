@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
 import { saveEpisodeProgress } from "@/lib/supabase-admin";
 import type {
   ConditionChange,
@@ -41,17 +42,17 @@ export async function PUT(
     );
   }
 
-  const authorization = request.headers.get("authorization");
-  const accessToken = authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
   const { episodeId } = await context.params;
-  const progress = await saveEpisodeProgress(accessToken, episodeId, {
-    followUpDay: body.followUpDay as FollowUpDay,
-    conditionChange: body.conditionChange as ConditionChange,
-    appetite: body.appetite as Level,
-    energy: body.energy as Level,
-  });
+  const progress = await saveEpisodeProgress(
+    accessTokenFromRequest(request),
+    episodeId,
+    {
+      followUpDay: body.followUpDay as FollowUpDay,
+      conditionChange: body.conditionChange as ConditionChange,
+      appetite: body.appetite as Level,
+      energy: body.energy as Level,
+    },
+  );
   if (!progress) {
     return NextResponse.json(
       { error: "경과 기록을 저장하지 못했어요." },

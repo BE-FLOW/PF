@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
+import { extractResponseOutputText } from "@/lib/openai-response";
 import { storedReportToHistoryRecord } from "@/lib/report-storage";
 import {
   getAiReportAccess,
@@ -12,28 +14,6 @@ import {
 import type { VetReviewDraft } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-function accessTokenFrom(request: Request) {
-  const authorization = request.headers.get("authorization");
-  return authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
-}
-
-function extractOutputText(data: unknown): string | null {
-  if (!data || typeof data !== "object") return null;
-  const response = data as {
-    output_text?: string;
-    output?: Array<{ content?: Array<{ text?: string }> }>;
-  };
-  if (response.output_text) return response.output_text;
-  return (
-    response.output
-      ?.flatMap((item) => item.content ?? [])
-      .map((item) => item.text ?? "")
-      .join("") || null
-  );
-}
 
 function cleanStringArray(value: unknown, minItems: number, maxItems: number) {
   if (!Array.isArray(value)) return null;
@@ -165,7 +145,7 @@ async function enrichWithOpenAI(
 
     if (!response.ok) return { errorCode: "openai_response_error" };
     const data = (await response.json()) as { usage?: OpenAiUsage };
-    const outputText = extractOutputText(data);
+    const outputText = extractResponseOutputText(data);
     if (!outputText) return { errorCode: "openai_empty_response" };
     const generated = JSON.parse(outputText) as Record<string, unknown>;
     const overview =
@@ -220,7 +200,8 @@ export async function POST(
   context: { params: Promise<{ episodeId: string }> },
 ) {
   const { episodeId } = await context.params;
-  const access = await getAiReportAccess(accessTokenFrom(request));
+  const accessToken = accessTokenFromRequest(request);
+  const access = await getAiReportAccess(accessToken);
   if (!access) {
     return NextResponse.json(
       { error: "로그인 상태를 다시 확인해 주세요." },
@@ -237,10 +218,7 @@ export async function POST(
     );
   }
 
-  const bundle = await getEpisodeVetReviewBundle(
-    accessTokenFrom(request),
-    episodeId,
-  );
+  const bundle = await getEpisodeVetReviewBundle(accessToken, episodeId);
   if (!bundle) {
     return NextResponse.json(
       { error: "수의사 검토용 초안을 만들 권한이나 기록을 확인하지 못했어요." },

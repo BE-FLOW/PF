@@ -4,6 +4,7 @@ import {
   symptomLabels,
 } from "./analysis";
 import { buildEpisodeReport } from "./episode-report";
+import { formatReportMediaSummary } from "./report-media";
 import type {
   EpisodePlan,
   EpisodeProgress,
@@ -41,18 +42,6 @@ function sortRecords(records: HistoryRecord[]) {
       new Date(a.result.createdAt).getTime() -
       new Date(b.result.createdAt).getTime(),
   );
-}
-
-function mediaCountLabel(record: HistoryRecord) {
-  const media = record.media ?? [];
-  const imageCount = media.filter((item) => item.kind === "image").length;
-  const videoCount = media.filter((item) => item.kind === "video").length;
-  return [
-    imageCount ? `사진 ${imageCount}개` : "",
-    videoCount ? `영상 ${videoCount}개` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
 }
 
 export function formatVetReviewDraft(
@@ -120,7 +109,7 @@ export function buildVetReviewDraft(
               .map((symptom) => symptomLabels[symptom])
               .join(", ")
           : "선택한 주요 증상 없음";
-        const mediaLabel = mediaCountLabel(record);
+        const mediaLabel = formatReportMediaSummary(record.media ?? []);
         return [
           dateTimeFormatter.format(new Date(record.result.createdAt)),
           `증상 ${symptoms}`,

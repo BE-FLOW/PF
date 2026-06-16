@@ -1,24 +1,11 @@
 import { NextResponse } from "next/server";
+import { accessTokenFromRequest } from "@/lib/api-auth";
 import { analyzeLocally, isHealthCheckInput } from "@/lib/analysis";
+import { extractResponseOutputText } from "@/lib/openai-response";
 import { getReportOwner, saveHealthReport } from "@/lib/supabase-admin";
 import type { AnalysisResult, HealthCheckInput } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-function extractOutputText(data: unknown): string | null {
-  if (!data || typeof data !== "object") return null;
-  const response = data as {
-    output_text?: string;
-    output?: Array<{ content?: Array<{ text?: string }> }>;
-  };
-  if (response.output_text) return response.output_text;
-  return (
-    response.output
-      ?.flatMap((item) => item.content ?? [])
-      .map((item) => item.text ?? "")
-      .join("") || null
-  );
-}
 
 async function enrichWithOpenAI(
   input: HealthCheckInput,
@@ -108,7 +95,7 @@ async function enrichWithOpenAI(
 
     if (!response.ok) return localResult;
     const data: unknown = await response.json();
-    const outputText = extractOutputText(data);
+    const outputText = extractResponseOutputText(data);
     if (!outputText) return localResult;
     const generated = JSON.parse(outputText) as Pick<
       AnalysisResult,
@@ -142,9 +129,8 @@ export async function POST(request: Request) {
   const result = await enrichWithOpenAI(body, localResult);
   const clientId = request.headers.get("x-petflow-client-id");
   const isTest = request.headers.get("x-petflow-test") === "true";
-  const authorization = request.headers.get("authorization");
   const owner = await getReportOwner(
-    authorization?.startsWith("Bearer ") ? authorization.slice(7) : null,
+    accessTokenFromRequest(request),
     request.headers.get("x-petflow-pet-id"),
   );
   const saved = await saveHealthReport(body, result, clientId, isTest, owner ?? {});
