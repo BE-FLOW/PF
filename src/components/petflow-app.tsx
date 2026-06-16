@@ -29,6 +29,7 @@ import type {
   RedFlagId,
   SymptomId,
   TesterProfile,
+  VetReviewDraft,
 } from "@/lib/types";
 
 type View =
@@ -337,6 +338,7 @@ function HomeView({
   onHistory,
   onProfile,
   onAccount,
+  onSelectLatest,
   flow,
   flowLoading,
   activeEpisode,
@@ -347,6 +349,7 @@ function HomeView({
   onHistory: () => void;
   onProfile: () => void;
   onAccount: () => void;
+  onSelectLatest: (record: HistoryRecord) => void;
   flow: HealthFlowSummary;
   flowLoading: boolean;
   activeEpisode?: PetEpisode;
@@ -449,6 +452,38 @@ function HomeView({
             </span>
             병원 준비 완료
           </div>
+        </div>
+      </section>
+      <section className={`home-score-card ${recent?.result.riskLevel ?? "empty"}`}>
+        <div className="home-score-copy">
+          <p className="eyebrow">TODAY CHECK SCORE</p>
+          <h2>
+            {recent
+              ? `${profile.name || "반려동물"}의 최신 체크스코어`
+              : "첫 기록을 남기면 체크스코어가 보여요"}
+          </h2>
+          <p>
+            {recent
+              ? `${formatDate(recent.result.createdAt)} 기록 기준 · ${riskLabel[recent.result.riskLevel]}`
+              : "복잡한 수치보다 오늘 상태를 한눈에 볼 수 있게 정리해 드릴게요."}
+          </p>
+          {recent ? (
+            <button className="secondary-button compact" onClick={() => onSelectLatest(recent)}>
+              최근 기록 자세히 보기
+            </button>
+          ) : (
+            <button className="primary-button compact" onClick={onStart}>
+              <Icon name="plus" size={14} /> 첫 체크 시작
+            </button>
+          )}
+        </div>
+        <div
+          className="home-score-ring"
+          style={{ "--score": recent?.result.riskScore ?? 0 } as React.CSSProperties}
+          aria-label={`CHECK SCORE ${recent?.result.riskScore ?? 0}`}
+        >
+          <strong>{recent?.result.riskScore ?? "--"}</strong>
+          <span>CHECK SCORE</span>
         </div>
       </section>
       {hasProfile && (
@@ -1393,6 +1428,7 @@ function EpisodeReportView({
   onSavePlan,
   onTogglePlanTask,
   onSaveProgress,
+  onCreateVetDraft,
 }: {
   selection: EpisodeReportSelection;
   petName: string;
@@ -1413,6 +1449,9 @@ function EpisodeReportView({
       "followUpDay" | "conditionChange" | "appetite" | "energy"
     >,
   ) => Promise<string>;
+  onCreateVetDraft: (
+    episodeId: string,
+  ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
 }) {
   const report = useMemo(
     () => buildEpisodeReport(selection.records, petName, plan, progress),
@@ -1435,6 +1474,11 @@ function EpisodeReportView({
   } | null>(null);
   const [progressBusy, setProgressBusy] = useState(false);
   const [progressError, setProgressError] = useState("");
+  const [vetDraft, setVetDraft] = useState<VetReviewDraft | null>(null);
+  const [vetDraftState, setVetDraftState] = useState<
+    "idle" | "loading" | "ready" | "copied" | "failed"
+  >("idle");
+  const [vetDraftError, setVetDraftError] = useState("");
 
   async function copyReport() {
     try {
@@ -1514,6 +1558,34 @@ function EpisodeReportView({
     setProgressDraft(null);
   }
 
+  async function createVetDraft() {
+    if (!selection.episode) {
+      setVetDraftError("계정에 연결된 Episode 기록에서만 초안을 만들 수 있어요.");
+      return;
+    }
+    setVetDraftState("loading");
+    setVetDraftError("");
+    const result = await onCreateVetDraft(selection.episode.id);
+    if (!result.draft) {
+      setVetDraftState("failed");
+      setVetDraftError(result.error ?? "수의사 검토용 초안을 만들지 못했어요.");
+      return;
+    }
+    setVetDraft(result.draft);
+    setVetDraftState("ready");
+  }
+
+  async function copyVetDraft() {
+    if (!vetDraft) return;
+    try {
+      await copyText(vetDraft.copyText);
+      setVetDraftState("copied");
+    } catch {
+      setVetDraftState("failed");
+      setVetDraftError("초안을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
+    }
+  }
+
   return (
     <div className="content-wrap">
       <div className="page-heading">
@@ -1563,6 +1635,82 @@ function EpisodeReportView({
           공유하거나 복사하지 못했어요. 브라우저 권한을 확인해 주세요.
         </p>
       )}
+
+      <section className="result-card vet-draft-card">
+        <div className="episode-plan-head">
+          <div>
+            <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
+            <h3>
+              <Icon name="spark" size={18} /> 수의사 검토용 AI 초안
+            </h3>
+            <p>
+              여러 날의 관찰과 병원 계획, 3일·7일·14일 경과를 제출용으로 짧게 정리해요.
+            </p>
+          </div>
+          <span className="vet-draft-badge">AI 초안 · 확인 전</span>
+        </div>
+
+        {!selection.episode ? (
+          <p className="plan-empty">
+            계정에 연결된 Episode 기록부터 남기면 AI 초안을 만들 수 있어요.
+          </p>
+        ) : (
+          <>
+            <div className="vet-draft-actions">
+              <button
+                type="button"
+                className="primary-button compact"
+                onClick={createVetDraft}
+                disabled={vetDraftState === "loading"}
+              >
+                <Icon name={vetDraft ? "check" : "spark"} size={14} />
+                {vetDraftState === "loading"
+                  ? "초안 만드는 중..."
+                  : vetDraft
+                    ? "초안 다시 만들기"
+                    : "AI 초안 만들기"}
+              </button>
+              {vetDraft && (
+                <button
+                  type="button"
+                  className="secondary-button compact"
+                  onClick={copyVetDraft}
+                >
+                  <Icon name={vetDraftState === "copied" ? "check" : "copy"} size={14} />
+                  {vetDraftState === "copied" ? "초안 복사 완료" : "초안 전체 복사"}
+                </button>
+              )}
+            </div>
+
+            {vetDraft && (
+              <div className="vet-draft-preview">
+                <div>
+                  <span>{vetDraft.source === "openai" ? "AI 정리" : "규칙 기반 정리"}</span>
+                  <strong>{vetDraft.overview}</strong>
+                </div>
+                <ul>
+                  {vetDraft.keyObservations.slice(0, 3).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+                <div className="vet-draft-questions">
+                  <span>확인 질문</span>
+                  {vetDraft.questionsForVet.slice(0, 2).map((item) => (
+                    <p key={item}>{item}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        {vetDraftError && (
+          <p className="share-error" role="alert">{vetDraftError}</p>
+        )}
+        <p className="plan-safety-note">
+          AI 초안은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
+          수의사 확인 전 정보로 표시합니다.
+        </p>
+      </section>
 
       <div className="episode-report-layout">
         <section className="result-card episode-report-summary">
@@ -2486,6 +2634,29 @@ export function PetFlowApp() {
       return "경과 기록을 저장하지 못했어요.";
     }
   }
+  async function createVetDraft(episodeId: string) {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return { error: "로그인 상태를 다시 확인해 주세요." };
+      const response = await fetch(`/api/episodes/${episodeId}/vet-draft`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const payload = (await response.json()) as {
+        draft?: VetReviewDraft;
+        error?: string;
+      };
+      if (!response.ok || !payload.draft) {
+        return { error: payload.error ?? "수의사 검토용 초안을 만들지 못했어요." };
+      }
+      return { draft: payload.draft };
+    } catch {
+      return { error: "수의사 검토용 초안을 만들지 못했어요." };
+    }
+  }
   async function updateFeedback(value: HistoryRecord["feedback"]) {
     if (!selected) return;
     const updated = { ...selected, feedback: value };
@@ -2527,6 +2698,10 @@ export function PetFlowApp() {
             onHistory={() => setView("history")}
             onProfile={() => openProfile("home")}
             onAccount={() => setView("account")}
+            onSelectLatest={(record) => {
+              setSelected(record);
+              setView("result");
+            }}
             flow={healthFlow}
             flowLoading={flowLoading}
             activeEpisode={activeEpisode}
@@ -2601,6 +2776,10 @@ export function PetFlowApp() {
         )}
         {currentView === "episode-report" && selectedEpisodeReport && (
           <EpisodeReportView
+            key={
+              selectedEpisodeReport.episode?.id ??
+              selectedEpisodeReport.records.map((record) => record.result.id).join(":")
+            }
             selection={selectedEpisodeReport}
             petName={profile.name}
             plan={
@@ -2623,6 +2802,7 @@ export function PetFlowApp() {
             onSavePlan={savePlan}
             onTogglePlanTask={togglePlanTask}
             onSaveProgress={saveProgress}
+            onCreateVetDraft={createVetDraft}
             onSelectRecord={(record) => {
               setSelected(record);
               setView("result");

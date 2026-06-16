@@ -4,6 +4,7 @@ import type {
   EpisodeProgress,
   HealthCheckInput,
   PetEpisode,
+  PetProfile,
 } from "./types";
 import {
   isUuid,
@@ -18,6 +19,14 @@ export type DatabaseStatus = "connected" | "unconfigured" | "error";
 export interface HealthReportSaveResult {
   saved: boolean;
   episodeId: string | null;
+}
+
+export interface EpisodeVetReviewBundle {
+  episode: PetEpisode;
+  pet: PetProfile;
+  reports: DisplayHealthReport[];
+  plan?: EpisodePlan;
+  progress: EpisodeProgress[];
 }
 
 function getConfig() {
@@ -132,6 +141,26 @@ function toEpisodeProgress(row: {
     sourceType: row.source_type,
     reviewStatus: row.review_status,
     recordedAt: row.recorded_at,
+  };
+}
+
+function toPetProfile(row: {
+  id: string;
+  name: string;
+  species: PetProfile["species"];
+  breed: string | null;
+  birth_date: string | null;
+  sex: PetProfile["sex"];
+  weight: string | null;
+}): PetProfile {
+  return {
+    id: row.id,
+    name: row.name,
+    species: row.species,
+    breed: row.breed ?? "",
+    birthDate: row.birth_date ?? "",
+    sex: row.sex,
+    weight: row.weight ?? "",
   };
 }
 
@@ -321,6 +350,86 @@ export async function listPetEpisodeProgress(
     if (!response?.ok) return null;
     const rows = (await response.json()) as Parameters<typeof toEpisodeProgress>[0][];
     return rows.map(toEpisodeProgress);
+  } catch {
+    return null;
+  }
+}
+
+export async function getEpisodeVetReviewBundle(
+  accessToken: string | null,
+  episodeId: string | null,
+): Promise<EpisodeVetReviewBundle | null> {
+  if (!isUuid(episodeId)) return null;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return null;
+
+  try {
+    const episodeResponse = await supabaseRequest(
+      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&limit=1`,
+      { method: "GET" },
+    );
+    if (!episodeResponse?.ok) return null;
+    const episodeRows = (await episodeResponse.json()) as Array<{
+      id: string;
+      pet_id: string;
+      status: PetEpisode["status"];
+      started_at: string;
+      last_activity_at: string;
+      closed_at: string | null;
+    }>;
+    const episodeRow = episodeRows[0];
+    if (!episodeRow) return null;
+    const episode = toPetEpisode(episodeRow);
+
+    const [petResponse, reportsResponse, plansResponse, progressResponse] =
+      await Promise.all([
+        supabaseRequest(
+          `pets?id=eq.${episode.petId}&user_id=eq.${userId}&select=id,name,species,breed,birth_date,sex,weight&limit=1`,
+          { method: "GET" },
+        ),
+        supabaseRequest(
+          `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc&limit=60`,
+          { method: "GET" },
+        ),
+        supabaseRequest(
+          `episode_plans?user_id=eq.${userId}&episode_id=eq.${episode.id}&select=id,episode_id,pet_id,source_type,review_status,reported_at,plan_tasks(id,task_text,position,completed_at)&order=reported_at.desc&limit=1`,
+          { method: "GET" },
+        ),
+        supabaseRequest(
+          `episode_progress_logs?user_id=eq.${userId}&episode_id=eq.${episode.id}&select=id,episode_id,pet_id,follow_up_day,condition_change,appetite,energy,source_type,review_status,recorded_at&order=follow_up_day.asc`,
+          { method: "GET" },
+        ),
+      ]);
+
+    if (
+      !petResponse?.ok ||
+      !reportsResponse?.ok ||
+      !plansResponse?.ok ||
+      !progressResponse?.ok
+    ) {
+      return null;
+    }
+
+    const petRows = (await petResponse.json()) as Parameters<
+      typeof toPetProfile
+    >[0][];
+    const reports = (await reportsResponse.json()) as DisplayHealthReport[];
+    const planRows = (await plansResponse.json()) as Parameters<
+      typeof toEpisodePlan
+    >[0][];
+    const progressRows = (await progressResponse.json()) as Parameters<
+      typeof toEpisodeProgress
+    >[0][];
+    const pet = petRows[0] ? toPetProfile(petRows[0]) : null;
+    if (!pet) return null;
+
+    return {
+      episode,
+      pet,
+      reports,
+      plan: planRows[0] ? toEpisodePlan(planRows[0]) : undefined,
+      progress: progressRows.map(toEpisodeProgress),
+    };
   } catch {
     return null;
   }

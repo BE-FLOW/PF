@@ -136,3 +136,18 @@ export interface HealthFlowSummary {
   latestRecordedAt: string | null;
   vetBrief: string;
 }
+
+export interface VetReviewDraft {
+  title: string;
+  generatedAt: string;
+  source: "local" | "openai";
+  reviewStatus: "unreviewed";
+  overview: string;
+  keyObservations: string[];
+  timeline: string[];
+  planAndProgress: string[];
+  questionsForVet: string[];
+  submissionNote: string;
+  disclaimer: string;
+  copyText: string;
+}
