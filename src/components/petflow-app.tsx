@@ -497,7 +497,7 @@ function HomeView({
           <p>
             오늘의 식욕과 활력, 증상을 남기면
             <br />
-            기록이 쌓이면 건강 흐름과 병원용 요약으로 정리해 드려요.
+            기록이 쌓여 건강 흐름과 병원용 요약으로 정리해 드려요.
           </p>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
@@ -510,13 +510,15 @@ function HomeView({
         </div>
         <div className="hero-visual" aria-hidden="true">
           <div className="pet-orb" />
-          <div className="pet-face">
+          <div className="pet-character">
             <div className="pet-ear left" />
             <div className="pet-ear right" />
-            <span className="pet-eye left" />
-            <span className="pet-eye right" />
-            <div className="pet-muzzle">
-              <div className="pet-nose" />
+            <div className="pet-face">
+              <span className="pet-eye left" />
+              <span className="pet-eye right" />
+              <div className="pet-muzzle">
+                <div className="pet-nose" />
+              </div>
             </div>
           </div>
           <div className="float-badge top">
