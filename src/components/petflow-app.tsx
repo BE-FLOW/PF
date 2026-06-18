@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
 import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
@@ -686,8 +694,67 @@ function ProfileView({
   const [draft, setDraft] = useState(profile);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [breedPickerOpen, setBreedPickerOpen] = useState(false);
+  const [highlightedBreedIndex, setHighlightedBreedIndex] = useState(0);
   const maxDate = new Date().toISOString().slice(0, 10);
   const options = breedOptions[draft.species];
+  const breedQuery = draft.breed.trim().toLowerCase();
+  const visibleBreedOptions = breedQuery
+    ? options.filter((breed) => breed.toLowerCase().includes(breedQuery))
+    : options;
+  const activeBreedIndex = Math.min(
+    highlightedBreedIndex,
+    Math.max(visibleBreedOptions.length - 1, 0),
+  );
+  const selectedBreed = draft.breed.trim();
+
+  function chooseBreed(breed: string) {
+    setDraft((current) => ({ ...current, breed }));
+    setBreedPickerOpen(false);
+    setHighlightedBreedIndex(0);
+  }
+
+  function closeBreedPickerOnBlur(event: FocusEvent<HTMLDivElement>) {
+    const nextFocus = event.relatedTarget;
+    if (
+      !(nextFocus instanceof Node) ||
+      !event.currentTarget.contains(nextFocus)
+    ) {
+      setBreedPickerOpen(false);
+    }
+  }
+
+  function handleBreedKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (!options.length) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setBreedPickerOpen(true);
+      setHighlightedBreedIndex((current) =>
+        visibleBreedOptions.length
+          ? (current + 1) % visibleBreedOptions.length
+          : 0,
+      );
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setBreedPickerOpen(true);
+      setHighlightedBreedIndex((current) =>
+        visibleBreedOptions.length
+          ? (current - 1 + visibleBreedOptions.length) % visibleBreedOptions.length
+          : 0,
+      );
+      return;
+    }
+    if (event.key === "Enter" && breedPickerOpen && visibleBreedOptions.length) {
+      event.preventDefault();
+      chooseBreed(visibleBreedOptions[activeBreedIndex]);
+      return;
+    }
+    if (event.key === "Escape") {
+      setBreedPickerOpen(false);
+    }
+  }
 
   async function save() {
     if (!draft.name.trim()) {
@@ -758,11 +825,14 @@ function ProfileView({
                   ] as const
                 ).map((item) => (
                   <button
+                    type="button"
                     key={item.id}
                     className={`choice-card ${draft.species === item.id ? "selected" : ""}`}
-                    onClick={() =>
-                      setDraft({ ...draft, species: item.id, breed: "" })
-                    }
+                    onClick={() => {
+                      setDraft({ ...draft, species: item.id, breed: "" });
+                      setBreedPickerOpen(false);
+                      setHighlightedBreedIndex(0);
+                    }}
                   >
                     {item.label}
                   </button>
@@ -783,26 +853,98 @@ function ProfileView({
             </div>
           </div>
           <div className="form-grid">
-            <div className="field">
+            <div className="field breed-field">
               <label htmlFor="breed">품종 (선택)</label>
-              <input
-                id="breed"
-                list="breed-options"
-                value={draft.breed}
-                onChange={(event) =>
-                  setDraft({ ...draft, breed: event.target.value })
-                }
-                placeholder={
-                  draft.species === "other"
-                    ? "직접 입력"
-                    : "선택하거나 직접 입력"
-                }
-              />
-              <datalist id="breed-options">
-                {options.map((breed) => (
-                  <option key={breed} value={breed} />
-                ))}
-              </datalist>
+              <div
+                className={`breed-combobox ${breedPickerOpen ? "open" : ""}`}
+                onBlur={closeBreedPickerOnBlur}
+              >
+                <div className="breed-input-row">
+                  <input
+                    id="breed"
+                    value={draft.breed}
+                    autoComplete="off"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={breedPickerOpen}
+                    aria-controls="breed-options"
+                    aria-activedescendant={
+                      breedPickerOpen && visibleBreedOptions[activeBreedIndex]
+                        ? `breed-option-${activeBreedIndex}`
+                        : undefined
+                    }
+                    onFocus={() => {
+                      if (options.length) setBreedPickerOpen(true);
+                    }}
+                    onChange={(event) => {
+                      setDraft({ ...draft, breed: event.target.value });
+                      setHighlightedBreedIndex(0);
+                      if (options.length) setBreedPickerOpen(true);
+                    }}
+                    onKeyDown={handleBreedKeyDown}
+                    placeholder={
+                      draft.species === "other"
+                        ? "직접 입력"
+                        : "선택하거나 직접 입력"
+                    }
+                  />
+                  {options.length > 0 && (
+                    <button
+                      type="button"
+                      className="breed-toggle"
+                      aria-label={
+                        breedPickerOpen ? "품종 목록 닫기" : "품종 목록 열기"
+                      }
+                      aria-expanded={breedPickerOpen}
+                      onClick={() => setBreedPickerOpen((open) => !open)}
+                    />
+                  )}
+                </div>
+                {breedPickerOpen && options.length > 0 && (
+                  <div
+                    className="breed-options"
+                    id="breed-options"
+                    role="listbox"
+                  >
+                    {visibleBreedOptions.length ? (
+                      visibleBreedOptions.map((breed, index) => (
+                        <button
+                          type="button"
+                          id={`breed-option-${index}`}
+                          key={breed}
+                          role="option"
+                          aria-selected={selectedBreed === breed}
+                          className={`breed-option ${
+                            index === activeBreedIndex ? "active" : ""
+                          } ${selectedBreed === breed ? "selected" : ""}`}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onMouseEnter={() => setHighlightedBreedIndex(index)}
+                          onClick={() => chooseBreed(breed)}
+                        >
+                          <span>{breed}</span>
+                          {selectedBreed === breed && (
+                            <Icon name="check" size={14} />
+                          )}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="breed-empty">
+                        목록에 없으면 그대로 입력해도 돼요.
+                      </div>
+                    )}
+                    {selectedBreed &&
+                      !options.some((breed) => breed === selectedBreed) && (
+                        <div className="breed-direct">
+                          <strong>{selectedBreed}</strong>
+                          <span>직접 입력값으로 저장돼요.</span>
+                        </div>
+                      )}
+                  </div>
+                )}
+              </div>
+              <small className="field-help">
+                목록에서 고르거나 직접 입력할 수 있어요.
+              </small>
             </div>
             <div className="field">
               <label htmlFor="birthDate">생일 (선택)</label>
@@ -995,17 +1137,23 @@ function CheckView({
           <em>정보 수정</em>
         </button>
         <button
+          type="button"
           className={`normal-shortcut ${allNormal ? "selected" : ""}`}
           onClick={setNormal}
           aria-pressed={allNormal}
         >
-          <span className="normal-check">
-            <Icon name="check" size={18} />
+          <span className="normal-check" aria-hidden="true">
+            {allNormal && <Icon name="check" size={18} />}
           </span>
-          <span>
+          <span className="normal-copy">
             <strong>오늘은 평소와 같아요</strong>
-            <small>특별한 변화가 없다면 이것만 누르고 바로 완료하세요.</small>
+            <small>
+              {allNormal
+                ? "특별한 변화가 없다면 이것만 누르고 바로 완료하세요."
+                : "누르면 입력한 변화가 지워지고 평소 상태로 돌아가요."}
+            </small>
           </span>
+          <em className="normal-state">{allNormal ? "선택됨" : "눌러서 선택"}</em>
         </button>
         <section className="form-section compact-section">
           <div className="section-title">
@@ -2532,16 +2680,14 @@ export function PetFlowApp() {
   const [episodeError, setEpisodeError] = useState("");
   const [error, setError] = useState("");
   const setView = useCallback((nextView: View) => {
-    setViewState((current) => {
-      if (current === nextView) return current;
-      if (
-        typeof window !== "undefined" &&
-        !applyingPopState.current
-      ) {
-        window.history.pushState({ petflowView: nextView }, "", window.location.href);
-      }
-      return nextView;
-    });
+    if (
+      typeof window !== "undefined" &&
+      !applyingPopState.current &&
+      window.history.state?.petflowView !== nextView
+    ) {
+      window.history.pushState({ petflowView: nextView }, "", window.location.href);
+    }
+    setViewState((current) => (current === nextView ? current : nextView));
   }, []);
   const currentView = useMemo(
     () =>
