@@ -31,10 +31,15 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 
 `OPENAI_API_KEY`와 `SUPABASE_SERVICE_ROLE_KEY`는 모바일 앱에 넣지 않습니다.
 
+## 현재 구현
+
+- Supabase Auth 로그인/회원가입
+- AsyncStorage 기반 세션 유지
+- 테스터 필수 정보 저장: 닉네임, 국내 휴대전화번호, 개인정보 동의
+
 ## 다음 구현 순서
 
-1. Supabase Auth 세션 연결
-2. 반려동물 목록과 등록
-3. 오늘 건강 기록 입력
-4. 사진과 동영상 첨부
-5. 병원 공유용 요약과 3일, 7일, 14일 경과 기록
+1. 반려동물 목록과 등록
+2. 오늘 건강 기록 입력
+3. 사진과 동영상 첨부
+4. 병원 공유용 요약과 3일, 7일, 14일 경과 기록
