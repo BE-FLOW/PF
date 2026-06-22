@@ -231,6 +231,41 @@ function mediaExtension(file: File) {
   return reportMediaExtensionFromMimeType(file.type);
 }
 
+function MediaThumbnail({
+  kind,
+  label,
+  src,
+  videoControls = false,
+}: {
+  kind: ReportMediaKind;
+  label: string;
+  src?: string;
+  videoControls?: boolean;
+}) {
+  if (!src) return <span>{kind === "image" ? "사진" : "영상"}</span>;
+
+  if (kind === "image") {
+    return (
+      <span
+        className="media-image-thumb"
+        role="img"
+        aria-label={label}
+        style={{ backgroundImage: `url(${JSON.stringify(src)})` }}
+      />
+    );
+  }
+
+  return (
+    <video
+      src={src}
+      controls={videoControls}
+      muted={!videoControls}
+      playsInline
+      preload="metadata"
+    />
+  );
+}
+
 function getOrCreateClientId() {
   const storageKey = "petflow-client-id";
   try {
@@ -1313,12 +1348,11 @@ function CheckView({
                     {mediaFiles.map((item) => (
                       <div className="media-preview-card" key={item.id}>
                         <div className="media-preview-thumb">
-                          {item.kind === "image" ? (
-                            // eslint-disable-next-line @next/next/no-img-element -- User file preview.
-                            <img src={item.previewUrl} alt="" />
-                          ) : (
-                            <video src={item.previewUrl} muted playsInline />
-                          )}
+                          <MediaThumbnail
+                            kind={item.kind}
+                            label={`${item.file.name} 미리보기`}
+                            src={item.previewUrl}
+                          />
                         </div>
                         <span>
                           <strong>{item.file.name}</strong>
@@ -1511,16 +1545,12 @@ function ResultView({
                     key={item.id}
                   >
                     <div className="result-media-thumb">
-                      {item.signedUrl ? (
-                        item.kind === "image" ? (
-                          // eslint-disable-next-line @next/next/no-img-element -- Private signed media.
-                          <img src={item.signedUrl} alt={item.fileName} />
-                        ) : (
-                          <video src={item.signedUrl} controls preload="metadata" />
-                        )
-                      ) : (
-                        <span>{item.kind === "image" ? "사진" : "영상"}</span>
-                      )}
+                      <MediaThumbnail
+                        kind={item.kind}
+                        label={item.fileName}
+                        src={item.signedUrl}
+                        videoControls
+                      />
                     </div>
                     <span>
                       <strong>{item.fileName}</strong>
@@ -2713,7 +2743,7 @@ export function PetFlowApp() {
   );
 
   useEffect(() => {
-    window.history.replaceState({ petflowView: view }, "", window.location.href);
+    window.history.replaceState({ petflowView: "home" }, "", window.location.href);
     function handlePopState(event: PopStateEvent) {
       applyingPopState.current = true;
       setViewState(isView(event.state?.petflowView) ? event.state.petflowView : "home");
@@ -2723,8 +2753,6 @@ export function PetFlowApp() {
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-    // The initial replace must run once; later view changes are pushed by setView.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const visibleHistory = useMemo(() => {
     if (!user) return history.filter((record) => !record.petId);

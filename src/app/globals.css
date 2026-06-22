@@ -1094,6 +1094,7 @@ p {
 }
 .media-preview-thumb,
 .result-media-thumb {
+  position: relative;
   overflow: hidden;
   border-radius: 12px;
   background: #edf4f0;
@@ -1111,17 +1112,20 @@ p {
   font-size: 10px;
   font-weight: 900;
 }
-.media-preview-thumb img,
+.media-image-thumb,
 .media-preview-thumb video,
-.result-media-thumb img,
 .result-media-thumb video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.media-preview-card span,
-.result-media-card span {
+.media-image-thumb {
+  background-position: center;
+  background-size: cover;
+}
+.media-preview-card > span,
+.result-media-card > span {
   min-width: 0;
   display: grid;
   gap: 3px;
