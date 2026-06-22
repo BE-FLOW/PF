@@ -17,10 +17,25 @@ import {
 import { testerConsentVersion, testerPrivacySummary } from "./src/lib/privacy";
 import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
 import { getSupabaseClient, isSupabaseConfigured } from "./src/lib/supabase";
+import {
+  analyzeLocally,
+  createUuid,
+  durationOptions,
+  levelOptions,
+  profileToHealthInput,
+  redFlagOptions,
+  resetToNormal,
+  riskLabels,
+  symptomOptions,
+  toggleItem,
+  type AnalysisResult,
+  type HealthCheckInput,
+  type PetProfile,
+  type PetSex,
+  type Species,
+} from "./src/lib/health";
 
 type AuthMode = "login" | "signup";
-type Species = "dog" | "cat" | "other";
-type PetSex = "unknown" | "male" | "female" | "neutered-male" | "spayed-female";
 
 interface TesterProfile {
   nickname: string;
@@ -34,16 +49,6 @@ interface TesterDraft {
   nickname: string;
   phone: string;
   consented: boolean;
-}
-
-interface PetProfile {
-  id?: string;
-  name: string;
-  species: Species;
-  breed: string;
-  birthDate: string;
-  sex: PetSex;
-  weight: string;
 }
 
 type PetDraft = Omit<PetProfile, "id">;
@@ -77,6 +82,9 @@ const sexOptions: Array<{ id: PetSex; label: string }> = [
   { id: "spayed-female", label: "중성화 여아" },
 ];
 
+const apiBaseUrl =
+  process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://pf-two-eta.vercel.app";
+
 export default function App() {
   const configured = isSupabaseConfigured();
   const [authReady, setAuthReady] = useState(false);
@@ -94,6 +102,15 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [petLoading, setPetLoading] = useState(false);
   const [petMessage, setPetMessage] = useState("");
+  const [healthInput, setHealthInput] = useState<HealthCheckInput | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthMessage, setHealthMessage] = useState("");
+  const [latestResult, setLatestResult] = useState<AnalysisResult | null>(null);
+  const [latestEpisodeId, setLatestEpisodeId] = useState<string | null>(null);
+  const selectedPet = useMemo(
+    () => pets.find((pet) => pet.id === selectedPetId),
+    [pets, selectedPetId],
+  );
 
   const needsTesterProfile = Boolean(
     user &&
@@ -122,6 +139,9 @@ export default function App() {
       setSelectedPetId(undefined);
       setPetDraft(emptyPetDraft);
       setEditingPetId(null);
+      setHealthInput(null);
+      setLatestResult(null);
+      setLatestEpisodeId(null);
       setAuthReady(true);
       return;
     }
@@ -183,6 +203,9 @@ export default function App() {
     if (!loadedPets.length) {
       setPetDraft(emptyPetDraft);
       setEditingPetId(null);
+      setHealthInput(null);
+      setLatestResult(null);
+      setLatestEpisodeId(null);
     }
     setDraft(
       profile
@@ -209,6 +232,14 @@ export default function App() {
     });
     return () => listener.subscription.unsubscribe();
   }, [loadAccount]);
+
+  useEffect(() => {
+    if (!selectedPet) return;
+    setHealthInput(profileToHealthInput(selectedPet));
+    setHealthMessage("");
+    setLatestResult(null);
+    setLatestEpisodeId(null);
+  }, [selectedPet]);
 
   async function saveTesterProfile(nextUser = user) {
     const supabase = getSupabaseClient();
@@ -375,6 +406,66 @@ export default function App() {
     setPetMessage("반려동물 정보가 저장됐어요.");
   }
 
+  async function submitHealthCheck() {
+    if (!selectedPet?.id || !healthInput) {
+      setHealthMessage("오늘 기록할 반려동물을 먼저 선택해 주세요.");
+      return;
+    }
+
+    const input: HealthCheckInput = {
+      ...healthInput,
+      petName: selectedPet.name,
+      species: selectedPet.species,
+      breed: selectedPet.breed || undefined,
+      birthDate: selectedPet.birthDate || undefined,
+      sex: selectedPet.sex,
+      weight: selectedPet.weight || undefined,
+    };
+    const localResult = analyzeLocally(input);
+    setHealthLoading(true);
+    setHealthMessage("");
+    setLatestEpisodeId(null);
+
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/analyze`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "x-petflow-client-id": createUuid(),
+          "x-petflow-pet-id": selectedPet.id,
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) throw new Error("analysis failed");
+      const payload = (await response.json()) as AnalysisResult & {
+        episodeId?: string | null;
+      };
+      const { episodeId, ...result } = payload;
+      setLatestResult(result);
+      setLatestEpisodeId(episodeId ?? null);
+      setHealthMessage(
+        result.storage === "remote"
+          ? "오늘 기록이 저장됐어요."
+          : "결과는 만들었지만 서버 저장은 확인하지 못했어요.",
+      );
+    } catch {
+      setLatestResult({ ...localResult, storage: "local" });
+      setHealthMessage(
+        "서버 저장은 실패했지만, 기기에서 기본 안전 분류를 만들었어요. 네트워크를 확인한 뒤 다시 저장해 주세요.",
+      );
+    } finally {
+      setHealthLoading(false);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="dark-content" />
@@ -428,7 +519,18 @@ export default function App() {
                     onSave={savePetProfile}
                     onSelect={setSelectedPetId}
                   />
-                  {selectedPetId ? <NextStepCard /> : null}
+                  {selectedPet && healthInput ? (
+                    <HealthRecorder
+                      input={healthInput}
+                      loading={healthLoading}
+                      message={healthMessage}
+                      result={latestResult}
+                      episodeId={latestEpisodeId}
+                      pet={selectedPet}
+                      setInput={setHealthInput}
+                      onSubmit={submitHealthCheck}
+                    />
+                  ) : null}
                 </>
               )}
             </>
@@ -911,21 +1013,191 @@ function ChipGroup<T extends string>({
   );
 }
 
-function NextStepCard() {
-  const steps = ["오늘 건강 기록 입력", "사진·동영상 첨부", "병원 공유 요약"];
+function HealthRecorder({
+  input,
+  loading,
+  message,
+  result,
+  episodeId,
+  pet,
+  setInput,
+  onSubmit,
+}: {
+  input: HealthCheckInput;
+  loading: boolean;
+  message: string;
+  result: AnalysisResult | null;
+  episodeId: string | null;
+  pet: PetProfile;
+  setInput: (input: HealthCheckInput) => void;
+  onSubmit: () => Promise<void>;
+}) {
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>다음 작업</Text>
+      <Text style={styles.cardEyebrow}>TODAY CHECK</Text>
+      <Text style={styles.cardTitle}>{pet.name} 오늘 건강 기록</Text>
       <Text style={styles.cardText}>
-        이제 같은 세션으로 반려동물 등록과 오늘 기록 화면을 연결하면 돼요.
+        특별한 변화가 없으면 평소 상태 버튼만 눌러도 충분해요. 달라진 점이 있을 때만
+        증상과 메모를 더해 주세요.
       </Text>
-      {steps.map((step, index) => (
-        <View key={step} style={styles.stepRow}>
-          <View style={styles.stepNumber}>
-            <Text style={styles.stepNumberText}>{index + 1}</Text>
-          </View>
-          <Text style={styles.stepText}>{step}</Text>
+
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => setInput(resetToNormal(input))}
+        style={styles.normalButton}
+      >
+        <Text style={styles.normalButtonTitle}>오늘은 평소와 같아요</Text>
+        <Text style={styles.normalButtonText}>
+          증상 없음, 식욕·활력 평소 상태로 빠르게 채워요.
+        </Text>
+      </TouchableOpacity>
+
+      <FieldLabel label="보이는 증상 (선택)" />
+      <MultiChipGroup
+        options={symptomOptions}
+        selected={input.symptoms}
+        onToggle={(symptom) =>
+          setInput({ ...input, symptoms: toggleItem(input.symptoms, symptom) })
+        }
+      />
+
+      <FieldLabel label="식욕" />
+      <ChipGroup
+        options={levelOptions}
+        selected={input.appetite}
+        onSelect={(appetite) => setInput({ ...input, appetite })}
+      />
+
+      <FieldLabel label="활력" />
+      <ChipGroup
+        options={levelOptions}
+        selected={input.energy}
+        onSelect={(energy) => setInput({ ...input, energy })}
+      />
+
+      <FieldLabel label="언제부터 이어졌나요?" />
+      <ChipGroup
+        options={durationOptions}
+        selected={input.duration}
+        onSelect={(duration) => setInput({ ...input, duration })}
+      />
+
+      <FieldLabel label="바로 확인이 필요한 신호 (해당 시 선택)" />
+      <MultiChipGroup
+        danger
+        options={redFlagOptions}
+        selected={input.redFlags}
+        onToggle={(flag) =>
+          setInput({ ...input, redFlags: toggleItem(input.redFlags, flag) })
+        }
+      />
+
+      <FieldLabel label="추가 메모 (선택)" />
+      <TextInput
+        maxLength={1000}
+        multiline
+        onChangeText={(note) => setInput({ ...input, note })}
+        placeholder="언제, 어떤 상황에서 달라졌는지만 짧게 적어도 충분해요."
+        placeholderTextColor={colors.placeholder}
+        style={[styles.input, styles.textarea]}
+        textAlignVertical="top"
+        value={input.note}
+      />
+
+      <PrimaryButton
+        disabled={loading}
+        label={loading ? "기록 중..." : "오늘 건강 기록 저장"}
+        onPress={onSubmit}
+      />
+      <Message text={message} />
+
+      {result ? <HealthResultCard episodeId={episodeId} result={result} /> : null}
+    </View>
+  );
+}
+
+function MultiChipGroup<T extends string>({
+  danger = false,
+  options,
+  selected,
+  onToggle,
+}: {
+  danger?: boolean;
+  options: Array<{ id: T; label: string }>;
+  selected: T[];
+  onToggle: (value: T) => void;
+}) {
+  return (
+    <View style={styles.chipGroup}>
+      {options.map((option) => {
+        const isSelected = selected.includes(option.id);
+        return (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            key={option.id}
+            onPress={() => onToggle(option.id)}
+            style={[
+              styles.chip,
+              isSelected && (danger ? styles.chipDangerSelected : styles.chipSelected),
+            ]}
+          >
+            <Text
+              style={[
+                styles.chipText,
+                isSelected && styles.chipTextSelected,
+              ]}
+            >
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function HealthResultCard({
+  episodeId,
+  result,
+}: {
+  episodeId: string | null;
+  result: AnalysisResult;
+}) {
+  return (
+    <View style={[styles.resultCard, styles[`resultCard_${result.riskLevel}`]]}>
+      <View style={styles.resultHeader}>
+        <View>
+          <Text style={styles.resultEyebrow}>CHECK SCORE</Text>
+          <Text style={styles.resultScore}>{result.riskScore}</Text>
         </View>
+        <Text style={styles.resultRisk}>{riskLabels[result.riskLevel]}</Text>
+      </View>
+      <Text style={styles.resultTitle}>{result.headline}</Text>
+      <Text style={styles.resultSummary}>{result.summary}</Text>
+      <Text style={styles.resultMeta}>
+        {result.storage === "remote" ? "서버 저장 완료" : "기기 내 결과"} ·{" "}
+        {result.source === "openai" ? "AI 정리 포함" : "기본 안전 규칙"}
+        {episodeId ? ` · 사건 연결됨` : ""}
+      </Text>
+
+      <ResultList title="지금 할 수 있는 일" items={result.actions} />
+      <View style={styles.vetBriefBox}>
+        <Text style={styles.vetBriefTitle}>병원에 보여줄 요약</Text>
+        <Text style={styles.vetBriefText}>{result.vetBrief}</Text>
+      </View>
+      <Text style={styles.disclaimer}>{result.disclaimer}</Text>
+    </View>
+  );
+}
+
+function ResultList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <View style={styles.resultList}>
+      <Text style={styles.resultListTitle}>{title}</Text>
+      {items.map((item) => (
+        <Text key={item} style={styles.resultListItem}>
+          · {item}
+        </Text>
       ))}
     </View>
   );
@@ -1322,6 +1594,10 @@ const styles = StyleSheet.create({
     borderColor: colors.green,
     backgroundColor: colors.green,
   },
+  chipDangerSelected: {
+    borderColor: colors.danger,
+    backgroundColor: colors.danger,
+  },
   chipText: {
     color: colors.muted,
     fontSize: 13,
@@ -1329,6 +1605,136 @@ const styles = StyleSheet.create({
   },
   chipTextSelected: {
     color: "#ffffff",
+  },
+  normalButton: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: colors.green,
+    borderRadius: 20,
+    backgroundColor: "#eefaf4",
+    padding: 16,
+  },
+  normalButtonTitle: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  normalButtonText: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
+  textarea: {
+    minHeight: 94,
+  },
+  resultCard: {
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 24,
+    padding: 18,
+  },
+  resultCard_watch: {
+    backgroundColor: "#f3fbf6",
+    borderColor: "#bfe5d1",
+  },
+  resultCard_soon: {
+    backgroundColor: "#fff8eb",
+    borderColor: "#f1d08b",
+  },
+  resultCard_urgent: {
+    backgroundColor: "#fff0ec",
+    borderColor: "#e9a99a",
+  },
+  resultHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  resultEyebrow: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  resultScore: {
+    color: colors.ink,
+    fontSize: 44,
+    fontWeight: "900",
+    lineHeight: 50,
+  },
+  resultRisk: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: colors.ink,
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  resultTitle: {
+    marginTop: 10,
+    color: colors.ink,
+    fontSize: 20,
+    fontWeight: "900",
+    lineHeight: 26,
+  },
+  resultSummary: {
+    marginTop: 8,
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 21,
+  },
+  resultMeta: {
+    marginTop: 10,
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  resultList: {
+    gap: 7,
+    marginTop: 16,
+  },
+  resultListTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  resultListItem: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
+  vetBriefBox: {
+    marginTop: 16,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 14,
+  },
+  vetBriefTitle: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  vetBriefText: {
+    marginTop: 8,
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  disclaimer: {
+    marginTop: 12,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "600",
+    lineHeight: 17,
   },
   stepRow: {
     flexDirection: "row",
