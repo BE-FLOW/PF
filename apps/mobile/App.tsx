@@ -43,6 +43,7 @@ import {
   summarizeHealthFlow,
   toggleItem,
   type AiAccessStatus,
+  type AiReportFeedbackInput,
   type AnalysisResult,
   type ConditionChange,
   type DisplayHealthReport,
@@ -116,7 +117,15 @@ interface ProgressDraft {
   energy: Level;
 }
 
+interface AiFeedbackDraft {
+  usefulnessScore: AiReportFeedbackInput["usefulnessScore"];
+  wouldPay: AiReportFeedbackInput["wouldPay"];
+  price: string;
+  comment: string;
+}
+
 type VetDraftMap = Record<string, VetReviewDraft>;
+type AiFeedbackDraftMap = Record<string, AiFeedbackDraft>;
 
 const emptyDraft: TesterDraft = {
   nickname: "",
@@ -131,6 +140,13 @@ const emptyPetDraft: PetDraft = {
   birthDate: "",
   sex: "unknown",
   weight: "",
+};
+
+const defaultAiFeedbackDraft: AiFeedbackDraft = {
+  usefulnessScore: 5,
+  wouldPay: "maybe",
+  price: "",
+  comment: "",
 };
 
 const speciesOptions: Array<{ id: Species; label: string }> = [
@@ -158,6 +174,26 @@ const conditionChangeOptions: Array<{
 ];
 
 const initialFollowUpDays: FollowUpDay[] = [3, 7, 14];
+
+const aiFeedbackScoreOptions: Array<{
+  id: AiReportFeedbackInput["usefulnessScore"];
+  label: string;
+}> = [
+  { id: 5, label: "5점" },
+  { id: 4, label: "4점" },
+  { id: 3, label: "3점" },
+  { id: 2, label: "2점" },
+  { id: 1, label: "1점" },
+];
+
+const aiWouldPayOptions: Array<{
+  id: AiReportFeedbackInput["wouldPay"];
+  label: string;
+}> = [
+  { id: "maybe", label: "상황에 따라" },
+  { id: "yes", label: "낼 의향 있음" },
+  { id: "no", label: "아직 없음" },
+];
 
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://pf-two-eta.vercel.app";
@@ -284,6 +320,23 @@ export default function App() {
     text: "",
     tone: "success",
   });
+  const [aiFeedbackDrafts, setAiFeedbackDrafts] = useState<AiFeedbackDraftMap>({});
+  const [aiFeedbackSavingUsageId, setAiFeedbackSavingUsageId] =
+    useState<string | null>(null);
+  const [aiFeedbackNotice, setAiFeedbackNotice] = useState<EpisodeNotice>({
+    episodeId: null,
+    text: "",
+    tone: "success",
+  });
+  const [savedAiFeedbackUsageIds, setSavedAiFeedbackUsageIds] = useState<string[]>([]);
+
+  const resetAiFeedbackState = useCallback(() => {
+    setAiFeedbackDrafts({});
+    setAiFeedbackSavingUsageId(null);
+    setAiFeedbackNotice({ episodeId: null, text: "", tone: "success" });
+    setSavedAiFeedbackUsageIds([]);
+  }, []);
+
   const [pendingMedia, setPendingMedia] = useState<PendingMediaAsset[]>([]);
   const [mediaMessage, setMediaMessage] = useState("");
   const [mediaUploadMessage, setMediaUploadMessage] = useState("");
@@ -414,6 +467,7 @@ export default function App() {
       setVetDrafts({});
       setVetDraftLoadingEpisodeId(null);
       setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
+      resetAiFeedbackState();
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -498,6 +552,7 @@ export default function App() {
       setVetDrafts({});
       setVetDraftLoadingEpisodeId(null);
       setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
+      resetAiFeedbackState();
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -522,7 +577,7 @@ export default function App() {
       setAiAccess(null);
     }
     setAuthReady(true);
-  }, []);
+  }, [resetAiFeedbackState]);
 
   const loadPetHistory = useCallback(async (pet: PetProfile) => {
     const petId = pet.id;
@@ -674,11 +729,12 @@ export default function App() {
     setVetDrafts({});
     setVetDraftLoadingEpisodeId(null);
     setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
+    resetAiFeedbackState();
     setPendingMedia([]);
     setMediaMessage("");
     setMediaUploadMessage("");
     void loadPetHistory(selectedPet);
-  }, [loadPetHistory, selectedPet]);
+  }, [loadPetHistory, resetAiFeedbackState, selectedPet]);
 
   async function saveTesterProfile(nextUser = user) {
     const supabase = getSupabaseClient();
@@ -1391,6 +1447,76 @@ export default function App() {
     }
   }
 
+  function updateAiFeedbackDraft(
+    usageId: string,
+    patch: Partial<AiFeedbackDraft>,
+  ) {
+    setAiFeedbackDrafts((current) => ({
+      ...current,
+      [usageId]: {
+        ...(current[usageId] ?? defaultAiFeedbackDraft),
+        ...patch,
+      },
+    }));
+    setAiFeedbackNotice({ episodeId: null, text: "", tone: "success" });
+  }
+
+  async function saveAiFeedback(episodeId: string, draft: VetReviewDraft) {
+    const usageId = draft.usageId;
+    if (!usageId) return;
+
+    const feedback = aiFeedbackDrafts[usageId] ?? defaultAiFeedbackDraft;
+    const price = feedback.price.trim()
+      ? Number(feedback.price.replace(/[^0-9]/g, ""))
+      : null;
+
+    setAiFeedbackSavingUsageId(usageId);
+    setAiFeedbackNotice({ episodeId, text: "", tone: "success" });
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/ai-report-feedback`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          usageId,
+          episodeId,
+          usefulnessScore: feedback.usefulnessScore,
+          wouldPay: feedback.wouldPay,
+          willingnessToPayKrw:
+            price !== null && Number.isFinite(price) ? price : null,
+          comment: feedback.comment.trim() || undefined,
+        } satisfies AiReportFeedbackInput),
+      });
+      if (!response.ok) throw new Error("save feedback failed");
+
+      setSavedAiFeedbackUsageIds((current) =>
+        current.includes(usageId) ? current : [...current, usageId],
+      );
+      setAiFeedbackNotice({
+        episodeId,
+        text: "GPT 초안 피드백을 저장했어요.",
+        tone: "success",
+      });
+    } catch {
+      setAiFeedbackNotice({
+        episodeId,
+        text: "피드백을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        tone: "error",
+      });
+    } finally {
+      setAiFeedbackSavingUsageId(null);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="dark-content" />
@@ -1470,6 +1596,9 @@ export default function App() {
                   {selectedPet ? (
                     <HealthHistoryCard
                       aiAccess={aiAccess}
+                      aiFeedbackDrafts={aiFeedbackDrafts}
+                      aiFeedbackNotice={aiFeedbackNotice}
+                      aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
                       episodeGroups={episodeReportGroups}
                       flow={healthFlow}
                       history={selectedPetHistory}
@@ -1486,9 +1615,11 @@ export default function App() {
                       vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
                       vetDraftNotice={vetDraftNotice}
                       vetDrafts={vetDrafts}
+                      savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
                       onRefresh={() => loadPetHistory(selectedPet)}
                       onShareReport={shareEpisodeReport}
                       onCreateVetDraft={createVetDraft}
+                      onSaveAiFeedback={saveAiFeedback}
                       onShareVetDraft={shareVetDraft}
                       onStartPlanEdit={startPlanEdit}
                       onCancelPlanEdit={cancelPlanEdit}
@@ -1498,6 +1629,7 @@ export default function App() {
                       onStartProgressEdit={startProgressEdit}
                       onCancelProgressEdit={cancelProgressEdit}
                       onChangeProgressDraft={setProgressDraft}
+                      onChangeAiFeedbackDraft={updateAiFeedbackDraft}
                       onSaveProgress={saveEpisodeProgress}
                       shareMessage={shareMessage}
                     />
@@ -2328,6 +2460,9 @@ function HealthResultCard({
 
 function HealthHistoryCard({
   aiAccess,
+  aiFeedbackDrafts,
+  aiFeedbackNotice,
+  aiFeedbackSavingUsageId,
   editingPlanEpisodeId,
   episodeGroups,
   flow,
@@ -2344,14 +2479,17 @@ function HealthHistoryCard({
   vetDraftLoadingEpisodeId,
   vetDraftNotice,
   vetDrafts,
+  savedAiFeedbackUsageIds,
   onCancelPlanEdit,
   onCancelProgressEdit,
+  onChangeAiFeedbackDraft,
   onChangePlanDraft,
   onChangeProgressDraft,
   onCreateVetDraft,
   onRefresh,
   onSavePlan,
   onSaveProgress,
+  onSaveAiFeedback,
   onShareReport,
   onShareVetDraft,
   onStartPlanEdit,
@@ -2360,6 +2498,9 @@ function HealthHistoryCard({
   shareMessage,
 }: {
   aiAccess: AiAccessStatus | null;
+  aiFeedbackDrafts: AiFeedbackDraftMap;
+  aiFeedbackNotice: EpisodeNotice;
+  aiFeedbackSavingUsageId: string | null;
   editingPlanEpisodeId: string | null;
   episodeGroups: EpisodeReportGroup[];
   flow: HealthFlowSummary;
@@ -2376,14 +2517,20 @@ function HealthHistoryCard({
   vetDraftLoadingEpisodeId: string | null;
   vetDraftNotice: EpisodeNotice;
   vetDrafts: VetDraftMap;
+  savedAiFeedbackUsageIds: string[];
   onCancelPlanEdit: () => void;
   onCancelProgressEdit: () => void;
+  onChangeAiFeedbackDraft: (
+    usageId: string,
+    patch: Partial<AiFeedbackDraft>,
+  ) => void;
   onChangePlanDraft: (value: string) => void;
   onChangeProgressDraft: (draft: ProgressDraft | null) => void;
   onCreateVetDraft: (episodeId: string) => Promise<void>;
   onRefresh: () => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
+  onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
@@ -2397,6 +2544,10 @@ function HealthHistoryCard({
 }) {
   const recent = history.slice(0, 5);
   const shareGroups = episodeGroups.slice(0, 4);
+  const getAiFeedbackDraft = (draft?: VetReviewDraft) =>
+    draft?.usageId
+      ? aiFeedbackDrafts[draft.usageId] ?? defaultAiFeedbackDraft
+      : defaultAiFeedbackDraft;
   const flowTone =
     flow.trend === "worsening"
       ? styles.flowCard_worsening
@@ -2462,6 +2613,11 @@ function HealthHistoryCard({
           {shareGroups.map((group) => (
             <EpisodeReportItem
               aiAccess={aiAccess}
+              aiFeedbackDraft={getAiFeedbackDraft(
+                group.episode ? vetDrafts[group.episode.id] : undefined,
+              )}
+              aiFeedbackNotice={aiFeedbackNotice}
+              aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
               editingPlanEpisodeId={editingPlanEpisodeId}
               group={group}
               key={group.key}
@@ -2475,11 +2631,14 @@ function HealthHistoryCard({
               vetDraft={group.episode ? vetDrafts[group.episode.id] : undefined}
               vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
               vetDraftNotice={vetDraftNotice}
+              savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
               onCancelPlanEdit={onCancelPlanEdit}
               onCancelProgressEdit={onCancelProgressEdit}
+              onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
               onChangePlanDraft={onChangePlanDraft}
               onChangeProgressDraft={onChangeProgressDraft}
               onCreateVetDraft={onCreateVetDraft}
+              onSaveAiFeedback={onSaveAiFeedback}
               onSavePlan={onSavePlan}
               onSaveProgress={onSaveProgress}
               onShareReport={onShareReport}
@@ -2515,6 +2674,9 @@ function HealthHistoryCard({
 
 function EpisodeReportItem({
   aiAccess,
+  aiFeedbackDraft,
+  aiFeedbackNotice,
+  aiFeedbackSavingUsageId,
   editingPlanEpisodeId,
   group,
   planDraft,
@@ -2527,11 +2689,14 @@ function EpisodeReportItem({
   vetDraft,
   vetDraftLoadingEpisodeId,
   vetDraftNotice,
+  savedAiFeedbackUsageIds,
   onCancelPlanEdit,
   onCancelProgressEdit,
+  onChangeAiFeedbackDraft,
   onChangePlanDraft,
   onChangeProgressDraft,
   onCreateVetDraft,
+  onSaveAiFeedback,
   onSavePlan,
   onSaveProgress,
   onShareReport,
@@ -2541,6 +2706,9 @@ function EpisodeReportItem({
   onTogglePlanTask,
 }: {
   aiAccess: AiAccessStatus | null;
+  aiFeedbackDraft: AiFeedbackDraft;
+  aiFeedbackNotice: EpisodeNotice;
+  aiFeedbackSavingUsageId: string | null;
   editingPlanEpisodeId: string | null;
   group: EpisodeReportGroup;
   planDraft: string;
@@ -2553,11 +2721,17 @@ function EpisodeReportItem({
   vetDraft?: VetReviewDraft;
   vetDraftLoadingEpisodeId: string | null;
   vetDraftNotice: EpisodeNotice;
+  savedAiFeedbackUsageIds: string[];
   onCancelPlanEdit: () => void;
   onCancelProgressEdit: () => void;
+  onChangeAiFeedbackDraft: (
+    usageId: string,
+    patch: Partial<AiFeedbackDraft>,
+  ) => void;
   onChangePlanDraft: (value: string) => void;
   onChangeProgressDraft: (draft: ProgressDraft | null) => void;
   onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
@@ -2598,6 +2772,17 @@ function EpisodeReportItem({
   );
   const itemVetDraftNotice =
     episodeId && vetDraftNotice.episodeId === episodeId ? vetDraftNotice : null;
+  const itemAiFeedbackNotice =
+    episodeId && aiFeedbackNotice.episodeId === episodeId
+      ? aiFeedbackNotice
+      : null;
+  const feedbackUsageId = vetDraft?.usageId;
+  const isSavingAiFeedback = Boolean(
+    feedbackUsageId && aiFeedbackSavingUsageId === feedbackUsageId,
+  );
+  const isAiFeedbackSaved = Boolean(
+    feedbackUsageId && savedAiFeedbackUsageIds.includes(feedbackUsageId),
+  );
 
   return (
     <View style={styles.episodeItem}>
@@ -2968,6 +3153,125 @@ function EpisodeReportItem({
                       · {item}
                     </Text>
                   ))}
+                  {feedbackUsageId ? (
+                    <View style={styles.aiFeedbackBox}>
+                      <Text style={styles.aiFeedbackTitle}>테스터 피드백</Text>
+                      <Text style={styles.aiFeedbackHint}>
+                        수의사에게 보여주기 좋은 초안인지 짧게 알려주세요.
+                      </Text>
+
+                      <Text style={styles.aiFeedbackLabel}>유용성</Text>
+                      <View style={styles.aiFeedbackScoreRow}>
+                        {aiFeedbackScoreOptions.map((option) => {
+                          const selected =
+                            aiFeedbackDraft.usefulnessScore === option.id;
+                          return (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              key={option.id}
+                              onPress={() =>
+                                onChangeAiFeedbackDraft(feedbackUsageId, {
+                                  usefulnessScore: option.id,
+                                })
+                              }
+                              style={[
+                                styles.aiFeedbackScoreButton,
+                                selected && styles.aiFeedbackScoreButtonSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.aiFeedbackScoreText,
+                                  selected && styles.aiFeedbackScoreTextSelected,
+                                ]}
+                              >
+                                {option.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      <Text style={styles.aiFeedbackLabel}>비용을 낼 의향</Text>
+                      <View style={styles.aiFeedbackPayRow}>
+                        {aiWouldPayOptions.map((option) => {
+                          const selected = aiFeedbackDraft.wouldPay === option.id;
+                          return (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              key={option.id}
+                              onPress={() =>
+                                onChangeAiFeedbackDraft(feedbackUsageId, {
+                                  wouldPay: option.id,
+                                })
+                              }
+                              style={[
+                                styles.aiFeedbackPayButton,
+                                selected && styles.aiFeedbackPayButtonSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.aiFeedbackPayText,
+                                  selected && styles.aiFeedbackPayTextSelected,
+                                ]}
+                              >
+                                {option.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      <View style={styles.aiFeedbackInputRow}>
+                        <TextInput
+                          keyboardType="number-pad"
+                          onChangeText={(price) =>
+                            onChangeAiFeedbackDraft(feedbackUsageId, { price })
+                          }
+                          placeholder="적정 가격 (선택)"
+                          placeholderTextColor={colors.placeholder}
+                          style={[styles.input, styles.aiFeedbackInput]}
+                          value={aiFeedbackDraft.price}
+                        />
+                        <TextInput
+                          maxLength={200}
+                          onChangeText={(comment) =>
+                            onChangeAiFeedbackDraft(feedbackUsageId, { comment })
+                          }
+                          placeholder="빠진 정보나 아쉬운 점 (선택)"
+                          placeholderTextColor={colors.placeholder}
+                          style={[styles.input, styles.aiFeedbackInput]}
+                          value={aiFeedbackDraft.comment}
+                        />
+                      </View>
+
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        disabled={isSavingAiFeedback}
+                        onPress={() => void onSaveAiFeedback(episodeId, vetDraft)}
+                        style={[
+                          styles.aiFeedbackSaveButton,
+                          isSavingAiFeedback && styles.buttonDisabled,
+                        ]}
+                      >
+                        <Text style={styles.aiFeedbackSaveButtonText}>
+                          {isAiFeedbackSaved
+                            ? "피드백 다시 저장"
+                            : isSavingAiFeedback
+                              ? "저장 중"
+                              : "피드백 저장"}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {itemAiFeedbackNotice ? (
+                        <Message
+                          text={itemAiFeedbackNotice.text}
+                          tone={itemAiFeedbackNotice.tone}
+                        />
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               ) : null}
             </>
@@ -4365,6 +4669,98 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 18,
+  },
+  aiFeedbackBox: {
+    marginTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingTop: 12,
+  },
+  aiFeedbackTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  aiFeedbackHint: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  aiFeedbackLabel: {
+    marginBottom: 8,
+    marginTop: 11,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  aiFeedbackScoreRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  aiFeedbackScoreButton: {
+    flex: 1,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 13,
+    backgroundColor: "#fbfefd",
+    paddingVertical: 9,
+  },
+  aiFeedbackScoreButtonSelected: {
+    borderColor: colors.green,
+    backgroundColor: colors.green,
+  },
+  aiFeedbackScoreText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  aiFeedbackScoreTextSelected: {
+    color: "#ffffff",
+  },
+  aiFeedbackPayRow: {
+    gap: 7,
+  },
+  aiFeedbackPayButton: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: "#fbfefd",
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+  },
+  aiFeedbackPayButtonSelected: {
+    borderColor: colors.green,
+    backgroundColor: colors.greenSoft,
+  },
+  aiFeedbackPayText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  aiFeedbackPayTextSelected: {
+    color: colors.green,
+  },
+  aiFeedbackInputRow: {
+    gap: 8,
+    marginTop: 10,
+  },
+  aiFeedbackInput: {
+    fontSize: 13,
+  },
+  aiFeedbackSaveButton: {
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.green,
+    marginTop: 10,
+    paddingVertical: 12,
+  },
+  aiFeedbackSaveButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
   },
   episodePreviewBox: {
     marginTop: 13,

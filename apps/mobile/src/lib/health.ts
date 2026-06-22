@@ -207,6 +207,15 @@ export interface AiAccessStatus {
   grantedAt?: string;
 }
 
+export interface AiReportFeedbackInput {
+  usageId: string;
+  episodeId?: string;
+  usefulnessScore: 1 | 2 | 3 | 4 | 5;
+  wouldPay: "no" | "maybe" | "yes";
+  willingnessToPayKrw?: number | null;
+  comment?: string;
+}
+
 export interface VetReviewDraft {
   title: string;
   generatedAt: string;
