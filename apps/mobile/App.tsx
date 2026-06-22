@@ -95,6 +95,14 @@ interface EpisodeReportGroup {
   latestAt: string;
 }
 
+type NoticeTone = "error" | "success";
+
+interface PlanNotice {
+  episodeId: string | null;
+  text: string;
+  tone: NoticeTone;
+}
+
 const emptyDraft: TesterDraft = {
   nickname: "",
   phone: "",
@@ -212,6 +220,15 @@ export default function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMessage, setHistoryMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
+  const [editingPlanEpisodeId, setEditingPlanEpisodeId] = useState<string | null>(null);
+  const [planDraft, setPlanDraft] = useState("");
+  const [planSavingEpisodeId, setPlanSavingEpisodeId] = useState<string | null>(null);
+  const [planTogglingTaskId, setPlanTogglingTaskId] = useState<string | null>(null);
+  const [planNotice, setPlanNotice] = useState<PlanNotice>({
+    episodeId: null,
+    text: "",
+    tone: "success",
+  });
   const [pendingMedia, setPendingMedia] = useState<PendingMediaAsset[]>([]);
   const [mediaMessage, setMediaMessage] = useState("");
   const [mediaUploadMessage, setMediaUploadMessage] = useState("");
@@ -327,6 +344,11 @@ export default function App() {
       setProgress([]);
       setHistoryMessage("");
       setShareMessage("");
+      setEditingPlanEpisodeId(null);
+      setPlanDraft("");
+      setPlanSavingEpisodeId(null);
+      setPlanTogglingTaskId(null);
+      setPlanNotice({ episodeId: null, text: "", tone: "success" });
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -400,6 +422,11 @@ export default function App() {
       setProgress([]);
       setHistoryMessage("");
       setShareMessage("");
+      setEditingPlanEpisodeId(null);
+      setPlanDraft("");
+      setPlanSavingEpisodeId(null);
+      setPlanTogglingTaskId(null);
+      setPlanNotice({ episodeId: null, text: "", tone: "success" });
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -555,6 +582,11 @@ export default function App() {
     setPlans([]);
     setProgress([]);
     setShareMessage("");
+    setEditingPlanEpisodeId(null);
+    setPlanDraft("");
+    setPlanSavingEpisodeId(null);
+    setPlanTogglingTaskId(null);
+    setPlanNotice({ episodeId: null, text: "", tone: "success" });
     setPendingMedia([]);
     setMediaMessage("");
     setMediaUploadMessage("");
@@ -934,6 +966,146 @@ export default function App() {
     }
   }
 
+  function startPlanEdit(group: EpisodeReportGroup) {
+    if (!group.episode) return;
+    setEditingPlanEpisodeId(group.episode.id);
+    setPlanDraft(group.plan?.tasks.map((task) => task.text).join("\n") ?? "");
+    setPlanNotice({ episodeId: group.episode.id, text: "", tone: "success" });
+  }
+
+  function cancelPlanEdit() {
+    setEditingPlanEpisodeId(null);
+    setPlanDraft("");
+  }
+
+  async function saveEpisodePlan(episodeId: string) {
+    const tasks = planDraft
+      .split(/\r?\n/)
+      .map((task) => task.trim())
+      .filter(Boolean);
+
+    if (!tasks.length) {
+      setPlanNotice({
+        episodeId,
+        text: "병원에서 받은 안내를 한 줄 이상 적어 주세요.",
+        tone: "error",
+      });
+      return;
+    }
+    if (tasks.length > 5) {
+      setPlanNotice({
+        episodeId,
+        text: "체크리스트는 최대 5개까지만 저장할 수 있어요.",
+        tone: "error",
+      });
+      return;
+    }
+    if (tasks.some((task) => task.length > 160)) {
+      setPlanNotice({
+        episodeId,
+        text: "각 항목은 160자 이내로 짧게 적어 주세요.",
+        tone: "error",
+      });
+      return;
+    }
+
+    setPlanSavingEpisodeId(episodeId);
+    setPlanNotice({ episodeId, text: "", tone: "success" });
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/episodes/${episodeId}/plan`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tasks }),
+      });
+      if (!response.ok) throw new Error("save plan failed");
+      const payload = (await response.json()) as { plan: EpisodePlan };
+
+      setPlans((current) => [
+        payload.plan,
+        ...current.filter((plan) => plan.episodeId !== payload.plan.episodeId),
+      ]);
+      setEditingPlanEpisodeId(null);
+      setPlanDraft("");
+      setPlanNotice({
+        episodeId,
+        text: "병원에서 받은 안내를 저장했어요.",
+        tone: "success",
+      });
+    } catch {
+      setPlanNotice({
+        episodeId,
+        text: "병원에서 받은 안내를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        tone: "error",
+      });
+    } finally {
+      setPlanSavingEpisodeId(null);
+    }
+  }
+
+  async function toggleEpisodePlanTask(
+    episodeId: string,
+    taskId: string,
+    completed: boolean,
+  ) {
+    setPlanTogglingTaskId(taskId);
+    setPlanNotice({ episodeId, text: "", tone: "success" });
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/episodes/${episodeId}/plan`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ taskId, completed }),
+      });
+      if (!response.ok) throw new Error("toggle plan task failed");
+
+      const completedAt = completed ? new Date().toISOString() : null;
+      setPlans((current) =>
+        current.map((plan) =>
+          plan.episodeId === episodeId
+            ? {
+                ...plan,
+                tasks: plan.tasks.map((task) =>
+                  task.id === taskId ? { ...task, completedAt } : task,
+                ),
+              }
+            : plan,
+        ),
+      );
+      setPlanNotice({
+        episodeId,
+        text: completed ? "체크 완료로 표시했어요." : "체크를 해제했어요.",
+        tone: "success",
+      });
+    } catch {
+      setPlanNotice({
+        episodeId,
+        text: "체크 상태를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        tone: "error",
+      });
+    } finally {
+      setPlanTogglingTaskId(null);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="dark-content" />
@@ -1011,8 +1183,18 @@ export default function App() {
                       history={selectedPetHistory}
                       loading={historyLoading}
                       message={historyMessage}
+                      editingPlanEpisodeId={editingPlanEpisodeId}
+                      planDraft={planDraft}
+                      planSavingEpisodeId={planSavingEpisodeId}
+                      planTogglingTaskId={planTogglingTaskId}
+                      planNotice={planNotice}
                       onRefresh={() => loadPetHistory(selectedPet)}
                       onShareReport={shareEpisodeReport}
+                      onStartPlanEdit={startPlanEdit}
+                      onCancelPlanEdit={cancelPlanEdit}
+                      onChangePlanDraft={setPlanDraft}
+                      onSavePlan={saveEpisodePlan}
+                      onTogglePlanTask={toggleEpisodePlanTask}
                       shareMessage={shareMessage}
                     />
                   ) : null}
@@ -1763,22 +1945,46 @@ function HealthResultCard({
 }
 
 function HealthHistoryCard({
+  editingPlanEpisodeId,
   episodeGroups,
   flow,
   history,
   loading,
   message,
+  planDraft,
+  planNotice,
+  planSavingEpisodeId,
+  planTogglingTaskId,
+  onCancelPlanEdit,
+  onChangePlanDraft,
   onRefresh,
+  onSavePlan,
   onShareReport,
+  onStartPlanEdit,
+  onTogglePlanTask,
   shareMessage,
 }: {
+  editingPlanEpisodeId: string | null;
   episodeGroups: EpisodeReportGroup[];
   flow: HealthFlowSummary;
   history: HistoryRecord[];
   loading: boolean;
   message: string;
+  planDraft: string;
+  planNotice: PlanNotice;
+  planSavingEpisodeId: string | null;
+  planTogglingTaskId: string | null;
+  onCancelPlanEdit: () => void;
+  onChangePlanDraft: (value: string) => void;
   onRefresh: () => Promise<void>;
+  onSavePlan: (episodeId: string) => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
+  onStartPlanEdit: (group: EpisodeReportGroup) => void;
+  onTogglePlanTask: (
+    episodeId: string,
+    taskId: string,
+    completed: boolean,
+  ) => Promise<void>;
   shareMessage: string;
 }) {
   const recent = history.slice(0, 5);
@@ -1847,9 +2053,19 @@ function HealthHistoryCard({
         <View style={styles.episodeList}>
           {shareGroups.map((group) => (
             <EpisodeReportItem
+              editingPlanEpisodeId={editingPlanEpisodeId}
               group={group}
               key={group.key}
+              planDraft={planDraft}
+              planNotice={planNotice}
+              planSavingEpisodeId={planSavingEpisodeId}
+              planTogglingTaskId={planTogglingTaskId}
+              onCancelPlanEdit={onCancelPlanEdit}
+              onChangePlanDraft={onChangePlanDraft}
+              onSavePlan={onSavePlan}
               onShareReport={onShareReport}
+              onStartPlanEdit={onStartPlanEdit}
+              onTogglePlanTask={onTogglePlanTask}
             />
           ))}
         </View>
@@ -1877,23 +2093,53 @@ function HealthHistoryCard({
 }
 
 function EpisodeReportItem({
+  editingPlanEpisodeId,
   group,
+  planDraft,
+  planNotice,
+  planSavingEpisodeId,
+  planTogglingTaskId,
+  onCancelPlanEdit,
+  onChangePlanDraft,
+  onSavePlan,
   onShareReport,
+  onStartPlanEdit,
+  onTogglePlanTask,
 }: {
+  editingPlanEpisodeId: string | null;
   group: EpisodeReportGroup;
+  planDraft: string;
+  planNotice: PlanNotice;
+  planSavingEpisodeId: string | null;
+  planTogglingTaskId: string | null;
+  onCancelPlanEdit: () => void;
+  onChangePlanDraft: (value: string) => void;
+  onSavePlan: (episodeId: string) => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
+  onStartPlanEdit: (group: EpisodeReportGroup) => void;
+  onTogglePlanTask: (
+    episodeId: string,
+    taskId: string,
+    completed: boolean,
+  ) => Promise<void>;
 }) {
+  const episodeId = group.episode?.id;
   const isOpen = group.episode?.status === "open";
   const mediaSummary = group.report.mediaCount
     ? `${group.report.mediaCount}개 첨부`
     : "첨부 없음";
+  const planTasks = group.plan?.tasks ?? [];
   const completedTasks =
-    group.plan?.tasks.filter((task) => task.completedAt).length ?? 0;
+    planTasks.filter((task) => task.completedAt).length;
   const planSummary = group.plan
-    ? `계획 ${completedTasks}/${group.plan.tasks.length}`
+    ? `계획 ${completedTasks}/${planTasks.length}`
     : group.episode
       ? "계획 미등록"
       : "개별 기록";
+  const isEditingPlan = Boolean(episodeId && editingPlanEpisodeId === episodeId);
+  const isSavingPlan = Boolean(episodeId && planSavingEpisodeId === episodeId);
+  const itemPlanNotice =
+    episodeId && planNotice.episodeId === episodeId ? planNotice : null;
 
   return (
     <View style={styles.episodeItem}>
@@ -1922,6 +2168,114 @@ function EpisodeReportItem({
         <Text style={styles.episodeMeta}>경과 {group.progress.length}개</Text>
         <Text style={styles.episodeMeta}>{mediaSummary}</Text>
       </View>
+
+      {episodeId ? (
+        <View style={styles.planBox}>
+          <View style={styles.planHeader}>
+            <View style={styles.cardHeaderText}>
+              <Text style={styles.planTitle}>병원에서 받은 안내</Text>
+              <Text style={styles.planSubtitle}>
+                보호자가 병원 안내를 옮겨 적은 기록이에요. PetFlow가 만든 치료
+                계획은 아니에요.
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={isSavingPlan}
+              onPress={() =>
+                isEditingPlan ? onCancelPlanEdit() : onStartPlanEdit(group)
+              }
+              style={[styles.planEditButton, isSavingPlan && styles.buttonDisabled]}
+            >
+              <Text style={styles.planEditButtonText}>
+                {isEditingPlan ? "닫기" : planTasks.length ? "수정" : "추가"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {planTasks.length ? (
+            <View style={styles.planTaskList}>
+              {planTasks.map((task) => {
+                const completed = Boolean(task.completedAt);
+                const toggling = planTogglingTaskId === task.id;
+                return (
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    disabled={toggling || isSavingPlan}
+                    key={task.id}
+                    onPress={() =>
+                      void onTogglePlanTask(episodeId, task.id, !completed)
+                    }
+                    style={[
+                      styles.planTaskRow,
+                      completed && styles.planTaskRowDone,
+                      toggling && styles.buttonDisabled,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.planTaskCheck,
+                        completed && styles.planTaskCheckDone,
+                      ]}
+                    >
+                      <Text style={styles.planTaskCheckText}>
+                        {completed ? "✓" : ""}
+                      </Text>
+                    </View>
+                    <Text
+                      style={[
+                        styles.planTaskText,
+                        completed && styles.planTaskTextDone,
+                      ]}
+                    >
+                      {task.text}
+                    </Text>
+                    <Text style={styles.planTaskState}>
+                      {completed ? "완료" : "진행 전"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : (
+            <Text style={styles.planEmptyText}>
+              병원에서 들은 안내를 줄마다 하나씩 적어두면 다음 방문 때 바로
+              보여줄 수 있어요.
+            </Text>
+          )}
+
+          {isEditingPlan ? (
+            <View style={styles.planEditor}>
+              <TextInput
+                multiline
+                numberOfLines={5}
+                onChangeText={onChangePlanDraft}
+                placeholder={"예: 3일 뒤 상태 확인\n예: 물 마시는 양 관찰"}
+                placeholderTextColor={colors.placeholder}
+                style={[styles.input, styles.textarea, styles.planTextarea]}
+                textAlignVertical="top"
+                value={planDraft}
+              />
+              <Text style={styles.planLimitText}>
+                최대 5개, 항목당 160자까지 저장할 수 있어요.
+              </Text>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={isSavingPlan}
+                onPress={() => void onSavePlan(episodeId)}
+                style={[styles.planSaveButton, isSavingPlan && styles.buttonDisabled]}
+              >
+                <Text style={styles.planSaveButtonText}>
+                  {isSavingPlan ? "저장 중" : "안내 저장"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {itemPlanNotice ? (
+            <Message text={itemPlanNotice.text} tone={itemPlanNotice.tone} />
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.episodePreviewBox}>
         <Text style={styles.episodePreviewTitle}>제출용 미리보기</Text>
@@ -2802,6 +3156,128 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     paddingHorizontal: 9,
     paddingVertical: 6,
+  },
+  planBox: {
+    marginTop: 13,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+    padding: 13,
+  },
+  planHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  planTitle: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  planSubtitle: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  planEditButton: {
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  planEditButtonText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  planTaskList: {
+    gap: 8,
+    marginTop: 11,
+  },
+  planTaskRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: "#fbfefd",
+    padding: 10,
+  },
+  planTaskRowDone: {
+    borderColor: "#b8decf",
+    backgroundColor: "#eefaf4",
+  },
+  planTaskCheck: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#b8cfc4",
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+  },
+  planTaskCheckDone: {
+    borderColor: colors.green,
+    backgroundColor: colors.green,
+  },
+  planTaskCheckText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  planTaskText: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 18,
+  },
+  planTaskTextDone: {
+    color: colors.muted,
+    textDecorationLine: "line-through",
+  },
+  planTaskState: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  planEmptyText: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  planEditor: {
+    marginTop: 12,
+  },
+  planTextarea: {
+    minHeight: 112,
+  },
+  planLimitText: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  planSaveButton: {
+    marginTop: 10,
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.green,
+    paddingVertical: 13,
+  },
+  planSaveButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
   },
   episodePreviewBox: {
     marginTop: 13,
