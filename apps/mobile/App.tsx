@@ -43,13 +43,16 @@ import {
   summarizeHealthFlow,
   toggleItem,
   type AnalysisResult,
+  type ConditionChange,
   type DisplayHealthReport,
   type EpisodePlan,
   type EpisodeProgress,
   type EpisodeReport,
+  type FollowUpDay,
   type HealthFlowSummary,
   type HealthCheckInput,
   type HistoryRecord,
+  type Level,
   type PetEpisode,
   type PetProfile,
   type PetSex,
@@ -97,10 +100,18 @@ interface EpisodeReportGroup {
 
 type NoticeTone = "error" | "success";
 
-interface PlanNotice {
+interface EpisodeNotice {
   episodeId: string | null;
   text: string;
   tone: NoticeTone;
+}
+
+interface ProgressDraft {
+  episodeId: string;
+  followUpDay: FollowUpDay;
+  conditionChange: ConditionChange;
+  appetite: Level;
+  energy: Level;
 }
 
 const emptyDraft: TesterDraft = {
@@ -131,6 +142,18 @@ const sexOptions: Array<{ id: PetSex; label: string }> = [
   { id: "neutered-male", label: "중성화 남아" },
   { id: "spayed-female", label: "중성화 여아" },
 ];
+
+const conditionChangeOptions: Array<{
+  id: ConditionChange;
+  label: string;
+  description: string;
+}> = [
+  { id: "better", label: "좋아졌어요", description: "전보다 편안해 보여요" },
+  { id: "same", label: "비슷해요", description: "큰 변화가 없어요" },
+  { id: "worse", label: "나빠졌어요", description: "불편함이 더 보여요" },
+];
+
+const initialFollowUpDays: FollowUpDay[] = [3, 7, 14];
 
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://pf-two-eta.vercel.app";
@@ -224,7 +247,14 @@ export default function App() {
   const [planDraft, setPlanDraft] = useState("");
   const [planSavingEpisodeId, setPlanSavingEpisodeId] = useState<string | null>(null);
   const [planTogglingTaskId, setPlanTogglingTaskId] = useState<string | null>(null);
-  const [planNotice, setPlanNotice] = useState<PlanNotice>({
+  const [planNotice, setPlanNotice] = useState<EpisodeNotice>({
+    episodeId: null,
+    text: "",
+    tone: "success",
+  });
+  const [progressDraft, setProgressDraft] = useState<ProgressDraft | null>(null);
+  const [progressSavingKey, setProgressSavingKey] = useState<string | null>(null);
+  const [progressNotice, setProgressNotice] = useState<EpisodeNotice>({
     episodeId: null,
     text: "",
     tone: "success",
@@ -349,6 +379,9 @@ export default function App() {
       setPlanSavingEpisodeId(null);
       setPlanTogglingTaskId(null);
       setPlanNotice({ episodeId: null, text: "", tone: "success" });
+      setProgressDraft(null);
+      setProgressSavingKey(null);
+      setProgressNotice({ episodeId: null, text: "", tone: "success" });
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -427,6 +460,9 @@ export default function App() {
       setPlanSavingEpisodeId(null);
       setPlanTogglingTaskId(null);
       setPlanNotice({ episodeId: null, text: "", tone: "success" });
+      setProgressDraft(null);
+      setProgressSavingKey(null);
+      setProgressNotice({ episodeId: null, text: "", tone: "success" });
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -587,6 +623,9 @@ export default function App() {
     setPlanSavingEpisodeId(null);
     setPlanTogglingTaskId(null);
     setPlanNotice({ episodeId: null, text: "", tone: "success" });
+    setProgressDraft(null);
+    setProgressSavingKey(null);
+    setProgressNotice({ episodeId: null, text: "", tone: "success" });
     setPendingMedia([]);
     setMediaMessage("");
     setMediaUploadMessage("");
@@ -1106,6 +1145,87 @@ export default function App() {
     }
   }
 
+  function startProgressEdit(group: EpisodeReportGroup, day: FollowUpDay) {
+    if (!group.episode) return;
+    const saved = group.progress.find((item) => item.followUpDay === day);
+    setProgressDraft({
+      episodeId: group.episode.id,
+      followUpDay: day,
+      conditionChange: saved?.conditionChange ?? "same",
+      appetite: saved?.appetite ?? "normal",
+      energy: saved?.energy ?? "normal",
+    });
+    setProgressNotice({ episodeId: group.episode.id, text: "", tone: "success" });
+  }
+
+  function cancelProgressEdit() {
+    setProgressDraft(null);
+  }
+
+  async function saveEpisodeProgress() {
+    if (!progressDraft) return;
+    const { episodeId, ...input } = progressDraft;
+    const savingKey = `${episodeId}:${input.followUpDay}`;
+
+    setProgressSavingKey(savingKey);
+    setProgressNotice({ episodeId, text: "", tone: "success" });
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/episodes/${episodeId}/progress`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) throw new Error("save progress failed");
+      const payload = (await response.json()) as { progress: EpisodeProgress };
+
+      setProgress((current) => {
+        const next = [
+          ...current.filter(
+            (item) =>
+              item.id !== payload.progress.id &&
+              !(
+                item.episodeId === payload.progress.episodeId &&
+                item.followUpDay === payload.progress.followUpDay
+              ),
+          ),
+          payload.progress,
+        ];
+        return next.sort((a, b) => a.followUpDay - b.followUpDay);
+      });
+      setEpisodes((current) =>
+        current.map((episode) =>
+          episode.id === episodeId
+            ? { ...episode, lastActivityAt: payload.progress.recordedAt }
+            : episode,
+        ),
+      );
+      setProgressDraft(null);
+      setProgressNotice({
+        episodeId,
+        text: `${input.followUpDay}일 경과를 저장했어요.`,
+        tone: "success",
+      });
+    } catch {
+      setProgressNotice({
+        episodeId,
+        text: "경과 기록을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        tone: "error",
+      });
+    } finally {
+      setProgressSavingKey(null);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="dark-content" />
@@ -1188,6 +1308,9 @@ export default function App() {
                       planSavingEpisodeId={planSavingEpisodeId}
                       planTogglingTaskId={planTogglingTaskId}
                       planNotice={planNotice}
+                      progressDraft={progressDraft}
+                      progressNotice={progressNotice}
+                      progressSavingKey={progressSavingKey}
                       onRefresh={() => loadPetHistory(selectedPet)}
                       onShareReport={shareEpisodeReport}
                       onStartPlanEdit={startPlanEdit}
@@ -1195,6 +1318,10 @@ export default function App() {
                       onChangePlanDraft={setPlanDraft}
                       onSavePlan={saveEpisodePlan}
                       onTogglePlanTask={toggleEpisodePlanTask}
+                      onStartProgressEdit={startProgressEdit}
+                      onCancelProgressEdit={cancelProgressEdit}
+                      onChangeProgressDraft={setProgressDraft}
+                      onSaveProgress={saveEpisodeProgress}
                       shareMessage={shareMessage}
                     />
                   ) : null}
@@ -1955,12 +2082,19 @@ function HealthHistoryCard({
   planNotice,
   planSavingEpisodeId,
   planTogglingTaskId,
+  progressDraft,
+  progressNotice,
+  progressSavingKey,
   onCancelPlanEdit,
+  onCancelProgressEdit,
   onChangePlanDraft,
+  onChangeProgressDraft,
   onRefresh,
   onSavePlan,
+  onSaveProgress,
   onShareReport,
   onStartPlanEdit,
+  onStartProgressEdit,
   onTogglePlanTask,
   shareMessage,
 }: {
@@ -1971,15 +2105,22 @@ function HealthHistoryCard({
   loading: boolean;
   message: string;
   planDraft: string;
-  planNotice: PlanNotice;
+  planNotice: EpisodeNotice;
   planSavingEpisodeId: string | null;
   planTogglingTaskId: string | null;
+  progressDraft: ProgressDraft | null;
+  progressNotice: EpisodeNotice;
+  progressSavingKey: string | null;
   onCancelPlanEdit: () => void;
+  onCancelProgressEdit: () => void;
   onChangePlanDraft: (value: string) => void;
+  onChangeProgressDraft: (draft: ProgressDraft | null) => void;
   onRefresh: () => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
+  onSaveProgress: () => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
+  onStartProgressEdit: (group: EpisodeReportGroup, day: FollowUpDay) => void;
   onTogglePlanTask: (
     episodeId: string,
     taskId: string,
@@ -2060,11 +2201,18 @@ function HealthHistoryCard({
               planNotice={planNotice}
               planSavingEpisodeId={planSavingEpisodeId}
               planTogglingTaskId={planTogglingTaskId}
+              progressDraft={progressDraft}
+              progressNotice={progressNotice}
+              progressSavingKey={progressSavingKey}
               onCancelPlanEdit={onCancelPlanEdit}
+              onCancelProgressEdit={onCancelProgressEdit}
               onChangePlanDraft={onChangePlanDraft}
+              onChangeProgressDraft={onChangeProgressDraft}
               onSavePlan={onSavePlan}
+              onSaveProgress={onSaveProgress}
               onShareReport={onShareReport}
               onStartPlanEdit={onStartPlanEdit}
+              onStartProgressEdit={onStartProgressEdit}
               onTogglePlanTask={onTogglePlanTask}
             />
           ))}
@@ -2099,24 +2247,38 @@ function EpisodeReportItem({
   planNotice,
   planSavingEpisodeId,
   planTogglingTaskId,
+  progressDraft,
+  progressNotice,
+  progressSavingKey,
   onCancelPlanEdit,
+  onCancelProgressEdit,
   onChangePlanDraft,
+  onChangeProgressDraft,
   onSavePlan,
+  onSaveProgress,
   onShareReport,
   onStartPlanEdit,
+  onStartProgressEdit,
   onTogglePlanTask,
 }: {
   editingPlanEpisodeId: string | null;
   group: EpisodeReportGroup;
   planDraft: string;
-  planNotice: PlanNotice;
+  planNotice: EpisodeNotice;
   planSavingEpisodeId: string | null;
   planTogglingTaskId: string | null;
+  progressDraft: ProgressDraft | null;
+  progressNotice: EpisodeNotice;
+  progressSavingKey: string | null;
   onCancelPlanEdit: () => void;
+  onCancelProgressEdit: () => void;
   onChangePlanDraft: (value: string) => void;
+  onChangeProgressDraft: (draft: ProgressDraft | null) => void;
   onSavePlan: (episodeId: string) => Promise<void>;
+  onSaveProgress: () => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
+  onStartProgressEdit: (group: EpisodeReportGroup, day: FollowUpDay) => void;
   onTogglePlanTask: (
     episodeId: string,
     taskId: string,
@@ -2140,6 +2302,11 @@ function EpisodeReportItem({
   const isSavingPlan = Boolean(episodeId && planSavingEpisodeId === episodeId);
   const itemPlanNotice =
     episodeId && planNotice.episodeId === episodeId ? planNotice : null;
+  const initialProgressCount = group.progress.filter((item) =>
+    initialFollowUpDays.includes(item.followUpDay),
+  ).length;
+  const itemProgressNotice =
+    episodeId && progressNotice.episodeId === episodeId ? progressNotice : null;
 
   return (
     <View style={styles.episodeItem}>
@@ -2165,7 +2332,7 @@ function EpisodeReportItem({
 
       <View style={styles.episodeMetaRow}>
         <Text style={styles.episodeMeta}>{planSummary}</Text>
-        <Text style={styles.episodeMeta}>경과 {group.progress.length}개</Text>
+        <Text style={styles.episodeMeta}>초기 경과 {initialProgressCount}/3</Text>
         <Text style={styles.episodeMeta}>{mediaSummary}</Text>
       </View>
 
@@ -2277,6 +2444,161 @@ function EpisodeReportItem({
         </View>
       ) : null}
 
+      {episodeId ? (
+        <View style={styles.progressBox}>
+          <View style={styles.planHeader}>
+            <View style={styles.cardHeaderText}>
+              <Text style={styles.planTitle}>3·7·14일 경과</Text>
+              <Text style={styles.planSubtitle}>
+                같은 사건의 변화를 짧게 이어 적어요. 보호자 관찰 기록이며
+                수의사 확인 정보는 아니에요.
+              </Text>
+            </View>
+            <Text style={styles.progressBadge}>보호자 경과</Text>
+          </View>
+
+          <View style={styles.progressDayList}>
+            {initialFollowUpDays.map((day) => {
+              const saved = group.progress.find((item) => item.followUpDay === day);
+              const isEditing =
+                progressDraft?.episodeId === episodeId &&
+                progressDraft.followUpDay === day;
+              const saving = progressSavingKey === `${episodeId}:${day}`;
+              return (
+                <View
+                  key={day}
+                  style={[
+                    styles.progressDayCard,
+                    saved && styles.progressDayCardSaved,
+                  ]}
+                >
+                  <View style={styles.progressDayHead}>
+                    <View style={styles.progressDayPill}>
+                      <Text style={styles.progressDayPillText}>{day}일</Text>
+                    </View>
+                    <View style={styles.cardHeaderText}>
+                      <Text style={styles.progressDayTitle}>
+                        {followUpDate(group.plan?.reportedAt ?? group.episode?.startedAt, day)} 확인
+                      </Text>
+                      <Text style={styles.progressDaySummary}>
+                        {saved ? progressSummary(saved) : "아직 경과를 기록하지 않았어요."}
+                      </Text>
+                    </View>
+                    {!isEditing ? (
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        disabled={saving}
+                        onPress={() => onStartProgressEdit(group, day)}
+                        style={[
+                          styles.progressEditButton,
+                          saving && styles.buttonDisabled,
+                        ]}
+                      >
+                        <Text style={styles.progressEditButtonText}>
+                          {saved ? "수정" : "기록"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  {isEditing && progressDraft ? (
+                    <View style={styles.progressEditor}>
+                      <Text style={styles.progressEditorLabel}>전반적인 변화</Text>
+                      <View style={styles.progressChoiceGrid}>
+                        {conditionChangeOptions.map((option) => {
+                          const selected = progressDraft.conditionChange === option.id;
+                          return (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              key={option.id}
+                              onPress={() =>
+                                onChangeProgressDraft({
+                                  ...progressDraft,
+                                  conditionChange: option.id,
+                                })
+                              }
+                              style={[
+                                styles.progressChoice,
+                                selected && styles.progressChoiceSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.progressChoiceTitle,
+                                  selected && styles.progressChoiceTitleSelected,
+                                ]}
+                              >
+                                {option.label}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.progressChoiceText,
+                                  selected && styles.progressChoiceTextSelected,
+                                ]}
+                              >
+                                {option.description}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      <Text style={styles.progressEditorLabel}>식욕</Text>
+                      <ChipGroup
+                        options={levelOptions}
+                        selected={progressDraft.appetite}
+                        onSelect={(appetite) =>
+                          onChangeProgressDraft({ ...progressDraft, appetite })
+                        }
+                      />
+
+                      <Text style={styles.progressEditorLabel}>활력</Text>
+                      <ChipGroup
+                        options={levelOptions}
+                        selected={progressDraft.energy}
+                        onSelect={(energy) =>
+                          onChangeProgressDraft({ ...progressDraft, energy })
+                        }
+                      />
+
+                      <View style={styles.progressEditorActions}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          disabled={saving}
+                          onPress={onCancelProgressEdit}
+                          style={[
+                            styles.progressCancelButton,
+                            saving && styles.buttonDisabled,
+                          ]}
+                        >
+                          <Text style={styles.progressCancelButtonText}>취소</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          disabled={saving}
+                          onPress={() => void onSaveProgress()}
+                          style={[
+                            styles.progressSaveButton,
+                            saving && styles.buttonDisabled,
+                          ]}
+                        >
+                          <Text style={styles.progressSaveButtonText}>
+                            {saving ? "저장 중" : `${day}일 경과 저장`}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+          {itemProgressNotice ? (
+            <Message text={itemProgressNotice.text} tone={itemProgressNotice.tone} />
+          ) : null}
+        </View>
+      ) : null}
+
       <View style={styles.episodePreviewBox}>
         <Text style={styles.episodePreviewTitle}>제출용 미리보기</Text>
         <Text numberOfLines={5} style={styles.episodePreviewText}>
@@ -2329,6 +2651,31 @@ function ResultList({ title, items }: { title: string; items: string[] }) {
 
 function optionLabel<T extends string>(options: Array<{ id: T; label: string }>, id: T) {
   return options.find((option) => option.id === id)?.label ?? id;
+}
+
+function conditionChangeLabel(value: ConditionChange) {
+  return (
+    conditionChangeOptions.find((option) => option.id === value)?.label ??
+    "비슷해요"
+  );
+}
+
+function progressSummary(item: EpisodeProgress) {
+  return `${conditionChangeLabel(item.conditionChange)} · 식욕 ${optionLabel(
+    levelOptions,
+    item.appetite,
+  )} · 활력 ${optionLabel(levelOptions, item.energy)}`;
+}
+
+function followUpDate(startedAt: string | undefined, day: FollowUpDay) {
+  if (!startedAt) return `${day}일 경과`;
+  const date = new Date(startedAt);
+  if (Number.isNaN(date.getTime())) return `${day}일 경과`;
+  date.setDate(date.getDate() + day);
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+  }).format(date);
 }
 
 function recordSymptomText(record: HistoryRecord) {
@@ -3275,6 +3622,154 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
   },
   planSaveButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  progressBox: {
+    marginTop: 13,
+    borderWidth: 1,
+    borderColor: "#c8e1d6",
+    borderRadius: 18,
+    backgroundColor: "#f4fbf7",
+    padding: 13,
+  },
+  progressBadge: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  progressDayList: {
+    gap: 9,
+    marginTop: 11,
+  },
+  progressDayCard: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 11,
+  },
+  progressDayCardSaved: {
+    borderColor: "#b8decf",
+    backgroundColor: "#eefaf4",
+  },
+  progressDayHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  progressDayPill: {
+    width: 38,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 19,
+    backgroundColor: colors.green,
+  },
+  progressDayPillText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  progressDayTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  progressDaySummary: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  progressEditButton: {
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  progressEditButtonText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  progressEditor: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingTop: 12,
+  },
+  progressEditorLabel: {
+    marginBottom: 8,
+    marginTop: 8,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  progressChoiceGrid: {
+    gap: 8,
+  },
+  progressChoice: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: "#fbfefd",
+    padding: 11,
+  },
+  progressChoiceSelected: {
+    borderColor: colors.green,
+    backgroundColor: colors.green,
+  },
+  progressChoiceTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  progressChoiceTitleSelected: {
+    color: "#ffffff",
+  },
+  progressChoiceText: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  progressChoiceTextSelected: {
+    color: "#eafff5",
+  },
+  progressEditorActions: {
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 14,
+  },
+  progressCancelButton: {
+    flex: 1,
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.greenSoft,
+    paddingVertical: 12,
+  },
+  progressCancelButtonText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  progressSaveButton: {
+    flex: 1.4,
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.green,
+    paddingVertical: 12,
+  },
+  progressSaveButtonText: {
     color: "#ffffff",
     fontSize: 13,
     fontWeight: "900",
