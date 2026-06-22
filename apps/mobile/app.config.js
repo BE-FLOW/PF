@@ -9,13 +9,26 @@ module.exports = {
     scheme: "petflow",
     version: "0.1.0",
     orientation: "portrait",
+    icon: "./assets/icon.png",
     userInterfaceStyle: "light",
+    splash: {
+      image: "./assets/splash-icon.png",
+      resizeMode: "contain",
+      backgroundColor: "#f2faeb",
+    },
     ios: {
       bundleIdentifier: "com.beflow.petflow",
+      buildNumber: "1",
       supportsTablet: false,
     },
     android: {
       package: "com.beflow.petflow",
+      versionCode: 1,
+      adaptiveIcon: {
+        foregroundImage: "./assets/adaptive-icon.png",
+        backgroundColor: "#f2faeb",
+      },
+      permissions: [],
     },
     extra: {
       apiBaseUrl,

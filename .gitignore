@@ -20,6 +20,9 @@ apps/mobile/node_modules
 apps/mobile/.expo/
 apps/mobile/dist/
 apps/mobile/web-build/
+apps/mobile/*.aab
+apps/mobile/*.apk
+apps/mobile/*.ipa
 
 # production
 /build
@@ -27,6 +30,12 @@ apps/mobile/web-build/
 # misc
 .DS_Store
 *.pem
+*.p8
+*.mobileprovision
+*.jks
+*.keystore
+apps/mobile/google-service-account*.json
+apps/mobile/credentials.json
 
 # debug
 npm-debug.log*
