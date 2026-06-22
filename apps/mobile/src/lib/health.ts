@@ -189,6 +189,42 @@ export interface EpisodeReport {
   disclaimer: string;
 }
 
+export interface AiAccessStatus {
+  enabled: boolean;
+  reason:
+    | "active"
+    | "no_code"
+    | "revoked"
+    | "monthly_limit"
+    | "total_limit";
+  grantId?: string;
+  codeLabel?: string;
+  monthlyReportLimit: number;
+  totalReportLimit: number | null;
+  usedThisMonth: number;
+  usedTotal: number;
+  remainingThisMonth: number;
+  grantedAt?: string;
+}
+
+export interface VetReviewDraft {
+  title: string;
+  generatedAt: string;
+  source: "local" | "openai";
+  reviewStatus: "unreviewed";
+  usageId?: string;
+  overview: string;
+  handoffNote: string;
+  keyObservations: string[];
+  timeline: string[];
+  mediaSummary: string[];
+  planAndProgress: string[];
+  questionsForVet: string[];
+  submissionNote: string;
+  disclaimer: string;
+  copyText: string;
+}
+
 export const symptomOptions: Array<{ id: SymptomId; label: string }> = [
   { id: "vomiting", label: "구토" },
   { id: "diarrhea", label: "설사" },

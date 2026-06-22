@@ -42,6 +42,17 @@ PetFlow 안에서 수의사가 확인한 정보로 표시하지 않는다.
 수의사 검토용 GPT 리포트는 로그인만으로 열지 않는다. 관리자가 Supabase SQL
 Editor에서 `create_ai_access_code(...)`를 실행해 참여코드를 만들고, 승인된
 테스터가 계정 화면에 코드를 입력하면 `ai_access_grants`에 권한을 저장한다.
+참여코드는 테스터 키처럼 운영한다. 원문 코드는 생성 직후 한 번만 공유하고,
+DB에는 해시와 앞 6자리 prefix만 남긴다.
+
+키마다 다음 값을 다르게 줄 수 있다.
+
+- `target_label`: 파일럿 그룹, 병원, 내부 리뷰어 등 운영용 이름
+- `target_max_redemptions`: 몇 명까지 같은 키를 사용할 수 있는지
+- `target_monthly_report_limit`: 사용자별 월간 GPT 초안 생성 횟수
+- `target_total_report_limit`: 사용자별 전체 생성 횟수
+- `target_expires_at`: 만료일
+- `disabled_at`: 회수 또는 일시 중지
 
 권한이 있는 테스터만 사건별 GPT 리포트 API를 호출할 수 있다. 생성 시
 `ai_report_usage`에 성공·실패, 모델, 토큰 사용량과 선택적 비용 추정값을 남긴다.

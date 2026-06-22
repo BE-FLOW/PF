@@ -42,6 +42,7 @@ import {
   symptomOptions,
   summarizeHealthFlow,
   toggleItem,
+  type AiAccessStatus,
   type AnalysisResult,
   type ConditionChange,
   type DisplayHealthReport,
@@ -59,6 +60,7 @@ import {
   type ReportMediaAttachment,
   type ReportMediaKind,
   type Species,
+  type VetReviewDraft,
 } from "./src/lib/health";
 
 type AuthMode = "login" | "signup";
@@ -114,6 +116,8 @@ interface ProgressDraft {
   energy: Level;
 }
 
+type VetDraftMap = Record<string, VetReviewDraft>;
+
 const emptyDraft: TesterDraft = {
   nickname: "",
   phone: "",
@@ -157,6 +161,15 @@ const initialFollowUpDays: FollowUpDay[] = [3, 7, 14];
 
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://pf-two-eta.vercel.app";
+
+async function fetchAiAccessStatus(accessToken: string) {
+  const response = await fetch(`${apiBaseUrl}/api/ai-access`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as { access?: AiAccessStatus };
+  return payload.access ?? null;
+}
 
 function sortHistory(records: HistoryRecord[]) {
   return [...records].sort(
@@ -255,6 +268,18 @@ export default function App() {
   const [progressDraft, setProgressDraft] = useState<ProgressDraft | null>(null);
   const [progressSavingKey, setProgressSavingKey] = useState<string | null>(null);
   const [progressNotice, setProgressNotice] = useState<EpisodeNotice>({
+    episodeId: null,
+    text: "",
+    tone: "success",
+  });
+  const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
+  const [aiCodeDraft, setAiCodeDraft] = useState("");
+  const [aiCodeLoading, setAiCodeLoading] = useState(false);
+  const [aiCodeMessage, setAiCodeMessage] = useState("");
+  const [vetDrafts, setVetDrafts] = useState<VetDraftMap>({});
+  const [vetDraftLoadingEpisodeId, setVetDraftLoadingEpisodeId] =
+    useState<string | null>(null);
+  const [vetDraftNotice, setVetDraftNotice] = useState<EpisodeNotice>({
     episodeId: null,
     text: "",
     tone: "success",
@@ -382,6 +407,13 @@ export default function App() {
       setProgressDraft(null);
       setProgressSavingKey(null);
       setProgressNotice({ episodeId: null, text: "", tone: "success" });
+      setAiAccess(null);
+      setAiCodeDraft("");
+      setAiCodeLoading(false);
+      setAiCodeMessage("");
+      setVetDrafts({});
+      setVetDraftLoadingEpisodeId(null);
+      setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -463,6 +495,9 @@ export default function App() {
       setProgressDraft(null);
       setProgressSavingKey(null);
       setProgressNotice({ episodeId: null, text: "", tone: "success" });
+      setVetDrafts({});
+      setVetDraftLoadingEpisodeId(null);
+      setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -476,6 +511,16 @@ export default function App() {
           }
         : emptyDraft,
     );
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      setAiAccess(
+        sessionData.session?.access_token
+          ? await fetchAiAccessStatus(sessionData.session.access_token)
+          : null,
+      );
+    } catch {
+      setAiAccess(null);
+    }
     setAuthReady(true);
   }, []);
 
@@ -626,6 +671,9 @@ export default function App() {
     setProgressDraft(null);
     setProgressSavingKey(null);
     setProgressNotice({ episodeId: null, text: "", tone: "success" });
+    setVetDrafts({});
+    setVetDraftLoadingEpisodeId(null);
+    setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
     setPendingMedia([]);
     setMediaMessage("");
     setMediaUploadMessage("");
@@ -1226,6 +1274,123 @@ export default function App() {
     }
   }
 
+  async function redeemAiCode() {
+    const code = aiCodeDraft.trim();
+    if (!code) {
+      setAiCodeMessage("관리자에게 받은 테스터 키를 입력해 주세요.");
+      return;
+    }
+
+    setAiCodeLoading(true);
+    setAiCodeMessage("");
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/ai-access`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code }),
+      });
+      const payload = (await response.json()) as {
+        access?: AiAccessStatus;
+        error?: string;
+      };
+      if (!response.ok || !payload.access) {
+        throw new Error(payload.error ?? "invalid code");
+      }
+
+      setAiAccess(payload.access);
+      setAiCodeDraft("");
+      setAiCodeMessage("테스터 키가 등록됐어요.");
+    } catch {
+      setAiCodeMessage("테스터 키를 등록하지 못했어요. 코드와 사용 가능 여부를 확인해 주세요.");
+    } finally {
+      setAiCodeLoading(false);
+    }
+  }
+
+  async function createVetDraft(episodeId: string) {
+    if (!aiAccess?.enabled) {
+      setVetDraftNotice({
+        episodeId,
+        text: "테스터 키를 등록한 계정만 GPT 초안을 만들 수 있어요.",
+        tone: "error",
+      });
+      return;
+    }
+
+    setVetDraftLoadingEpisodeId(episodeId);
+    setVetDraftNotice({ episodeId, text: "", tone: "success" });
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(
+        `${apiBaseUrl}/api/episodes/${episodeId}/vet-draft`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
+      const payload = (await response.json()) as {
+        draft?: VetReviewDraft;
+        access?: AiAccessStatus;
+        error?: string;
+      };
+      if (payload.access) setAiAccess(payload.access);
+      if (!response.ok || !payload.draft) {
+        throw new Error(payload.error ?? "draft failed");
+      }
+      const nextDraft = payload.draft;
+
+      setVetDrafts((current) => ({ ...current, [episodeId]: nextDraft }));
+      setVetDraftNotice({
+        episodeId,
+        text: "수의사 검토용 GPT 초안을 만들었어요.",
+        tone: "success",
+      });
+      const nextAccess = await fetchAiAccessStatus(accessToken);
+      if (nextAccess) setAiAccess(nextAccess);
+    } catch {
+      setVetDraftNotice({
+        episodeId,
+        text: "GPT 초안을 만들지 못했어요. 테스터 키 사용량과 관리자 설정을 확인해 주세요.",
+        tone: "error",
+      });
+    } finally {
+      setVetDraftLoadingEpisodeId(null);
+    }
+  }
+
+  async function shareVetDraft(episodeId: string, draft: VetReviewDraft) {
+    try {
+      await Share.share({ title: draft.title, message: draft.copyText });
+      setVetDraftNotice({
+        episodeId,
+        text: "GPT 초안을 공유했어요.",
+        tone: "success",
+      });
+    } catch {
+      setVetDraftNotice({
+        episodeId,
+        text: "GPT 초안 공유 창을 열지 못했어요.",
+        tone: "error",
+      });
+    }
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="dark-content" />
@@ -1251,9 +1416,15 @@ export default function App() {
           ) : user ? (
             <>
               <AccountCard
+                aiAccess={aiAccess}
+                aiCodeDraft={aiCodeDraft}
+                aiCodeLoading={aiCodeLoading}
+                aiCodeMessage={aiCodeMessage}
                 user={user}
                 testerProfile={testerProfile}
                 onSignOut={signOut}
+                onChangeAiCode={setAiCodeDraft}
+                onRedeemAiCode={redeemAiCode}
                 disabled={loading}
               />
               {needsTesterProfile ? (
@@ -1298,6 +1469,7 @@ export default function App() {
                   ) : null}
                   {selectedPet ? (
                     <HealthHistoryCard
+                      aiAccess={aiAccess}
                       episodeGroups={episodeReportGroups}
                       flow={healthFlow}
                       history={selectedPetHistory}
@@ -1311,8 +1483,13 @@ export default function App() {
                       progressDraft={progressDraft}
                       progressNotice={progressNotice}
                       progressSavingKey={progressSavingKey}
+                      vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
+                      vetDraftNotice={vetDraftNotice}
+                      vetDrafts={vetDrafts}
                       onRefresh={() => loadPetHistory(selectedPet)}
                       onShareReport={shareEpisodeReport}
+                      onCreateVetDraft={createVetDraft}
+                      onShareVetDraft={shareVetDraft}
                       onStartPlanEdit={startPlanEdit}
                       onCancelPlanEdit={cancelPlanEdit}
                       onChangePlanDraft={setPlanDraft}
@@ -1562,14 +1739,26 @@ function TesterFields({
 }
 
 function AccountCard({
+  aiAccess,
+  aiCodeDraft,
+  aiCodeLoading,
+  aiCodeMessage,
   user,
   testerProfile,
   disabled,
+  onChangeAiCode,
+  onRedeemAiCode,
   onSignOut,
 }: {
+  aiAccess: AiAccessStatus | null;
+  aiCodeDraft: string;
+  aiCodeLoading: boolean;
+  aiCodeMessage: string;
   user: User;
   testerProfile: TesterProfile | null;
   disabled: boolean;
+  onChangeAiCode: (value: string) => void;
+  onRedeemAiCode: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }) {
   return (
@@ -1582,6 +1771,72 @@ function AccountCard({
       {testerProfile?.phone ? (
         <Text style={styles.cardText}>{formatKoreanMobile(testerProfile.phone)}</Text>
       ) : null}
+
+      <View style={[styles.aiAccessBox, aiAccess?.enabled && styles.aiAccessBoxEnabled]}>
+        <View style={styles.aiAccessHeader}>
+          <View style={styles.cardHeaderText}>
+            <Text style={styles.aiAccessTitle}>GPT 테스터 키</Text>
+            <Text style={styles.aiAccessText}>{aiAccessCopy(aiAccess)}</Text>
+          </View>
+          <Text
+            style={[
+              styles.aiAccessBadge,
+              aiAccess?.enabled && styles.aiAccessBadgeEnabled,
+            ]}
+          >
+            {aiAccess?.enabled ? "사용 가능" : "키 필요"}
+          </Text>
+        </View>
+
+        {aiAccess?.enabled ? (
+          <View style={styles.aiUsageRow}>
+            <View style={styles.aiUsageItem}>
+              <Text style={styles.aiUsageLabel}>이번 달</Text>
+              <Text style={styles.aiUsageValue}>
+                {aiAccess.usedThisMonth}/{aiAccess.monthlyReportLimit}회
+              </Text>
+            </View>
+            <View style={styles.aiUsageItem}>
+              <Text style={styles.aiUsageLabel}>전체</Text>
+              <Text style={styles.aiUsageValue}>
+                {aiAccess.usedTotal}
+                {aiAccess.totalReportLimit ? `/${aiAccess.totalReportLimit}` : ""}회
+              </Text>
+            </View>
+            <View style={styles.aiUsageItem}>
+              <Text style={styles.aiUsageLabel}>그룹</Text>
+              <Text style={styles.aiUsageValue}>{aiAccess.codeLabel ?? "테스터"}</Text>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.aiCodeForm}>
+            <TextInput
+              autoCapitalize="characters"
+              autoCorrect={false}
+              onChangeText={(value) => onChangeAiCode(value.toUpperCase())}
+              placeholder="PF-ABCD-1234-EFGH"
+              placeholderTextColor={colors.placeholder}
+              style={[styles.input, styles.aiCodeInput]}
+              value={aiCodeDraft}
+            />
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={aiCodeLoading}
+              onPress={() => void onRedeemAiCode()}
+              style={[styles.aiCodeButton, aiCodeLoading && styles.buttonDisabled]}
+            >
+              <Text style={styles.aiCodeButtonText}>
+                {aiCodeLoading ? "확인 중" : "키 등록"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <Message
+          text={aiCodeMessage}
+          tone={aiCodeMessage === "테스터 키가 등록됐어요." ? "success" : "error"}
+        />
+      </View>
+
       <TouchableOpacity
         activeOpacity={0.85}
         disabled={disabled}
@@ -2072,6 +2327,7 @@ function HealthResultCard({
 }
 
 function HealthHistoryCard({
+  aiAccess,
   editingPlanEpisodeId,
   episodeGroups,
   flow,
@@ -2085,19 +2341,25 @@ function HealthHistoryCard({
   progressDraft,
   progressNotice,
   progressSavingKey,
+  vetDraftLoadingEpisodeId,
+  vetDraftNotice,
+  vetDrafts,
   onCancelPlanEdit,
   onCancelProgressEdit,
   onChangePlanDraft,
   onChangeProgressDraft,
+  onCreateVetDraft,
   onRefresh,
   onSavePlan,
   onSaveProgress,
   onShareReport,
+  onShareVetDraft,
   onStartPlanEdit,
   onStartProgressEdit,
   onTogglePlanTask,
   shareMessage,
 }: {
+  aiAccess: AiAccessStatus | null;
   editingPlanEpisodeId: string | null;
   episodeGroups: EpisodeReportGroup[];
   flow: HealthFlowSummary;
@@ -2111,14 +2373,19 @@ function HealthHistoryCard({
   progressDraft: ProgressDraft | null;
   progressNotice: EpisodeNotice;
   progressSavingKey: string | null;
+  vetDraftLoadingEpisodeId: string | null;
+  vetDraftNotice: EpisodeNotice;
+  vetDrafts: VetDraftMap;
   onCancelPlanEdit: () => void;
   onCancelProgressEdit: () => void;
   onChangePlanDraft: (value: string) => void;
   onChangeProgressDraft: (draft: ProgressDraft | null) => void;
+  onCreateVetDraft: (episodeId: string) => Promise<void>;
   onRefresh: () => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
+  onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
   onStartProgressEdit: (group: EpisodeReportGroup, day: FollowUpDay) => void;
   onTogglePlanTask: (
@@ -2194,6 +2461,7 @@ function HealthHistoryCard({
         <View style={styles.episodeList}>
           {shareGroups.map((group) => (
             <EpisodeReportItem
+              aiAccess={aiAccess}
               editingPlanEpisodeId={editingPlanEpisodeId}
               group={group}
               key={group.key}
@@ -2204,13 +2472,18 @@ function HealthHistoryCard({
               progressDraft={progressDraft}
               progressNotice={progressNotice}
               progressSavingKey={progressSavingKey}
+              vetDraft={group.episode ? vetDrafts[group.episode.id] : undefined}
+              vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
+              vetDraftNotice={vetDraftNotice}
               onCancelPlanEdit={onCancelPlanEdit}
               onCancelProgressEdit={onCancelProgressEdit}
               onChangePlanDraft={onChangePlanDraft}
               onChangeProgressDraft={onChangeProgressDraft}
+              onCreateVetDraft={onCreateVetDraft}
               onSavePlan={onSavePlan}
               onSaveProgress={onSaveProgress}
               onShareReport={onShareReport}
+              onShareVetDraft={onShareVetDraft}
               onStartPlanEdit={onStartPlanEdit}
               onStartProgressEdit={onStartProgressEdit}
               onTogglePlanTask={onTogglePlanTask}
@@ -2241,6 +2514,7 @@ function HealthHistoryCard({
 }
 
 function EpisodeReportItem({
+  aiAccess,
   editingPlanEpisodeId,
   group,
   planDraft,
@@ -2250,17 +2524,23 @@ function EpisodeReportItem({
   progressDraft,
   progressNotice,
   progressSavingKey,
+  vetDraft,
+  vetDraftLoadingEpisodeId,
+  vetDraftNotice,
   onCancelPlanEdit,
   onCancelProgressEdit,
   onChangePlanDraft,
   onChangeProgressDraft,
+  onCreateVetDraft,
   onSavePlan,
   onSaveProgress,
   onShareReport,
+  onShareVetDraft,
   onStartPlanEdit,
   onStartProgressEdit,
   onTogglePlanTask,
 }: {
+  aiAccess: AiAccessStatus | null;
   editingPlanEpisodeId: string | null;
   group: EpisodeReportGroup;
   planDraft: string;
@@ -2270,13 +2550,18 @@ function EpisodeReportItem({
   progressDraft: ProgressDraft | null;
   progressNotice: EpisodeNotice;
   progressSavingKey: string | null;
+  vetDraft?: VetReviewDraft;
+  vetDraftLoadingEpisodeId: string | null;
+  vetDraftNotice: EpisodeNotice;
   onCancelPlanEdit: () => void;
   onCancelProgressEdit: () => void;
   onChangePlanDraft: (value: string) => void;
   onChangeProgressDraft: (draft: ProgressDraft | null) => void;
+  onCreateVetDraft: (episodeId: string) => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
+  onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
   onStartProgressEdit: (group: EpisodeReportGroup, day: FollowUpDay) => void;
   onTogglePlanTask: (
@@ -2307,6 +2592,12 @@ function EpisodeReportItem({
   ).length;
   const itemProgressNotice =
     episodeId && progressNotice.episodeId === episodeId ? progressNotice : null;
+  const canUseAiDraft = Boolean(aiAccess?.enabled);
+  const isCreatingVetDraft = Boolean(
+    episodeId && vetDraftLoadingEpisodeId === episodeId,
+  );
+  const itemVetDraftNotice =
+    episodeId && vetDraftNotice.episodeId === episodeId ? vetDraftNotice : null;
 
   return (
     <View style={styles.episodeItem}>
@@ -2599,6 +2890,99 @@ function EpisodeReportItem({
         </View>
       ) : null}
 
+      {episodeId ? (
+        <View style={styles.vetDraftBox}>
+          <View style={styles.planHeader}>
+            <View style={styles.cardHeaderText}>
+              <Text style={styles.vetDraftEyebrow}>AI DRAFT · VET REVIEW</Text>
+              <Text style={styles.planTitle}>수의사 검토용 GPT 초안</Text>
+              <Text style={styles.planSubtitle}>
+                여러 기록, 병원 안내, 경과를 수의사가 빠르게 볼 수 있는 초안으로
+                정리해요.
+              </Text>
+            </View>
+            <Text
+              style={[
+                styles.vetDraftBadge,
+                canUseAiDraft && styles.vetDraftBadgeEnabled,
+              ]}
+            >
+              {canUseAiDraft ? "키 확인됨" : "키 필요"}
+            </Text>
+          </View>
+
+          <View style={styles.vetDraftIncludes}>
+            <Text style={styles.vetDraftInclude}>관찰 {group.report.recordCount}회</Text>
+            <Text style={styles.vetDraftInclude}>계획 {completedTasks}/{planTasks.length}</Text>
+            <Text style={styles.vetDraftInclude}>초기 경과 {initialProgressCount}/3</Text>
+            <Text style={styles.vetDraftInclude}>첨부 {group.report.mediaCount}개</Text>
+          </View>
+
+          {!canUseAiDraft ? (
+            <Text style={styles.planEmptyText}>
+              로그인 카드에서 관리자에게 받은 테스터 키를 등록하면 GPT 초안을 만들 수
+              있어요. 키별 월간·전체 사용량은 서버에서 관리됩니다.
+            </Text>
+          ) : (
+            <>
+              <View style={styles.vetDraftActions}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  disabled={isCreatingVetDraft}
+                  onPress={() => void onCreateVetDraft(episodeId)}
+                  style={[
+                    styles.vetDraftPrimaryButton,
+                    isCreatingVetDraft && styles.buttonDisabled,
+                  ]}
+                >
+                  <Text style={styles.vetDraftPrimaryButtonText}>
+                    {isCreatingVetDraft
+                      ? "초안 만드는 중"
+                      : vetDraft
+                        ? "GPT 초안 다시 만들기"
+                        : "GPT 초안 만들기"}
+                  </Text>
+                </TouchableOpacity>
+                {vetDraft ? (
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    disabled={isCreatingVetDraft}
+                    onPress={() => void onShareVetDraft(episodeId, vetDraft)}
+                    style={styles.vetDraftSecondaryButton}
+                  >
+                    <Text style={styles.vetDraftSecondaryButtonText}>초안 공유</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {vetDraft ? (
+                <View style={styles.vetDraftPreview}>
+                  <Text style={styles.vetDraftSource}>
+                    {vetDraft.source === "openai" ? "GPT 정리 · 확인 전" : "규칙 기반 정리"}
+                  </Text>
+                  <Text style={styles.vetDraftOverview}>{vetDraft.overview}</Text>
+                  <Text style={styles.vetDraftHandoffLabel}>다른 병원 첫 설명</Text>
+                  <Text style={styles.vetDraftHandoff}>{vetDraft.handoffNote}</Text>
+                  {vetDraft.questionsForVet.slice(0, 2).map((item) => (
+                    <Text key={item} style={styles.vetDraftQuestion}>
+                      · {item}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+            </>
+          )}
+
+          {itemVetDraftNotice ? (
+            <Message text={itemVetDraftNotice.text} tone={itemVetDraftNotice.tone} />
+          ) : null}
+          <Text style={styles.planLimitText}>
+            GPT 초안은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인
+            전 자료로 표시됩니다.
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.episodePreviewBox}>
         <Text style={styles.episodePreviewTitle}>제출용 미리보기</Text>
         <Text numberOfLines={5} style={styles.episodePreviewText}>
@@ -2676,6 +3060,22 @@ function followUpDate(startedAt: string | undefined, day: FollowUpDay) {
     month: "long",
     day: "numeric",
   }).format(date);
+}
+
+function aiAccessCopy(access: AiAccessStatus | null) {
+  if (!access || access.reason === "no_code") {
+    return "관리자가 발급한 테스터 키를 입력하면 GPT 초안을 만들 수 있어요.";
+  }
+  if (access.reason === "monthly_limit") {
+    return "이번 달 GPT 초안 사용량을 모두 사용했어요.";
+  }
+  if (access.reason === "total_limit") {
+    return "이 테스터 키의 전체 사용량을 모두 사용했어요.";
+  }
+  if (access.reason === "revoked") {
+    return "이 테스터 키는 현재 사용할 수 없어요.";
+  }
+  return "권한이 있는 테스터 계정이에요. 사용량은 서버에서 관리됩니다.";
 }
 
 function recordSymptomText(record: HistoryRecord) {
@@ -2935,6 +3335,89 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
     lineHeight: 19,
+  },
+  aiAccessBox: {
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: "#f8fcfa",
+    padding: 14,
+  },
+  aiAccessBoxEnabled: {
+    borderColor: "#b8decf",
+    backgroundColor: "#eefaf4",
+  },
+  aiAccessHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  aiAccessTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  aiAccessText: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  aiAccessBadge: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#edf5f0",
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  aiAccessBadgeEnabled: {
+    backgroundColor: colors.green,
+    color: "#ffffff",
+  },
+  aiUsageRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
+  },
+  aiUsageItem: {
+    flex: 1,
+    borderRadius: 15,
+    backgroundColor: "#ffffff",
+    padding: 10,
+  },
+  aiUsageLabel: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  aiUsageValue: {
+    marginTop: 4,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  aiCodeForm: {
+    gap: 9,
+    marginTop: 12,
+  },
+  aiCodeInput: {
+    fontSize: 14,
+  },
+  aiCodeButton: {
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.green,
+    paddingVertical: 13,
+  },
+  aiCodeButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
   },
   message: {
     marginTop: 16,
@@ -3773,6 +4256,115 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 13,
     fontWeight: "900",
+  },
+  vetDraftBox: {
+    marginTop: 13,
+    borderWidth: 1,
+    borderColor: "#c8d9e8",
+    borderRadius: 18,
+    backgroundColor: "#f7fbff",
+    padding: 13,
+  },
+  vetDraftEyebrow: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    marginBottom: 5,
+  },
+  vetDraftBadge: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#edf5f0",
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  vetDraftBadgeEnabled: {
+    backgroundColor: colors.green,
+    color: "#ffffff",
+  },
+  vetDraftIncludes: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 11,
+  },
+  vetDraftInclude: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    color: colors.ink,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  vetDraftActions: {
+    gap: 9,
+    marginTop: 12,
+  },
+  vetDraftPrimaryButton: {
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.green,
+    paddingVertical: 13,
+  },
+  vetDraftPrimaryButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  vetDraftSecondaryButton: {
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.greenSoft,
+    paddingVertical: 12,
+  },
+  vetDraftSecondaryButtonText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  vetDraftPreview: {
+    marginTop: 12,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 13,
+  },
+  vetDraftSource: {
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  vetDraftOverview: {
+    marginTop: 7,
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900",
+    lineHeight: 20,
+  },
+  vetDraftHandoffLabel: {
+    marginTop: 12,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  vetDraftHandoff: {
+    marginTop: 5,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  vetDraftQuestion: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
   },
   episodePreviewBox: {
     marginTop: 13,

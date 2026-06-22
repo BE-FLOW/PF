@@ -55,6 +55,23 @@ from public.create_ai_access_code(
   target_created_by => 'admin'
 );
 
+-- Small one-off tester key for a single reviewer.
+select *
+from public.create_ai_access_code(
+  target_label => 'single-reviewer-001',
+  target_max_redemptions => 1,
+  target_monthly_report_limit => 3,
+  target_total_report_limit => 5,
+  target_expires_at => now() + interval '14 days',
+  target_created_by => 'admin'
+);
+
+-- Revoke a tester key group. The raw code cannot be recovered later.
+update public.ai_access_codes
+set disabled_at = now()
+where label = 'pilot-vet-report-001'
+  and disabled_at is null;
+
 select *
 from public.ai_usage_management
 order by last_ai_report_at desc nulls last, granted_at desc;
