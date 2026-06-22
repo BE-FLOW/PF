@@ -26,10 +26,15 @@ import {
   redFlagOptions,
   resetToNormal,
   riskLabels,
+  storedReportToHistoryRecord,
   symptomOptions,
+  summarizeHealthFlow,
   toggleItem,
   type AnalysisResult,
+  type DisplayHealthReport,
+  type HealthFlowSummary,
   type HealthCheckInput,
+  type HistoryRecord,
   type PetProfile,
   type PetSex,
   type Species,
@@ -85,6 +90,33 @@ const sexOptions: Array<{ id: PetSex; label: string }> = [
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://pf-two-eta.vercel.app";
 
+function sortHistory(records: HistoryRecord[]) {
+  return [...records].sort(
+    (a, b) =>
+      new Date(b.result.createdAt).getTime() -
+      new Date(a.result.createdAt).getTime(),
+  );
+}
+
+function mergePetHistory(
+  current: HistoryRecord[],
+  remoteRecords: HistoryRecord[],
+  petId: string,
+) {
+  const otherPets = current.filter((record) => record.petId !== petId);
+  const localOnly = current.filter(
+    (record) => record.petId === petId && record.result.storage !== "remote",
+  );
+  return sortHistory([...otherPets, ...remoteRecords, ...localOnly]);
+}
+
+function upsertHistoryRecord(current: HistoryRecord[], next: HistoryRecord) {
+  return sortHistory([
+    next,
+    ...current.filter((record) => record.result.id !== next.result.id),
+  ]);
+}
+
 export default function App() {
   const configured = isSupabaseConfigured();
   const [authReady, setAuthReady] = useState(false);
@@ -107,9 +139,23 @@ export default function App() {
   const [healthMessage, setHealthMessage] = useState("");
   const [latestResult, setLatestResult] = useState<AnalysisResult | null>(null);
   const [latestEpisodeId, setLatestEpisodeId] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyMessage, setHistoryMessage] = useState("");
   const selectedPet = useMemo(
     () => pets.find((pet) => pet.id === selectedPetId),
     [pets, selectedPetId],
+  );
+  const selectedPetHistory = useMemo(
+    () =>
+      sortHistory(
+        history.filter((record) => record.petId && record.petId === selectedPetId),
+      ),
+    [history, selectedPetId],
+  );
+  const healthFlow = useMemo(
+    () => summarizeHealthFlow(selectedPetHistory, selectedPet?.name),
+    [selectedPet?.name, selectedPetHistory],
   );
 
   const needsTesterProfile = Boolean(
@@ -142,6 +188,8 @@ export default function App() {
       setHealthInput(null);
       setLatestResult(null);
       setLatestEpisodeId(null);
+      setHistory([]);
+      setHistoryMessage("");
       setAuthReady(true);
       return;
     }
@@ -206,6 +254,8 @@ export default function App() {
       setHealthInput(null);
       setLatestResult(null);
       setLatestEpisodeId(null);
+      setHistory([]);
+      setHistoryMessage("");
     }
     setDraft(
       profile
@@ -217,6 +267,38 @@ export default function App() {
         : emptyDraft,
     );
     setAuthReady(true);
+  }, []);
+
+  const loadPetHistory = useCallback(async (pet: PetProfile) => {
+    const petId = pet.id;
+    if (!petId) return;
+    setHistoryLoading(true);
+    setHistoryMessage("");
+
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/pets/${petId}/history`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error("history failed");
+      const payload = (await response.json()) as {
+        reports?: DisplayHealthReport[];
+      };
+      const remoteRecords = (payload.reports ?? []).map((report) =>
+        storedReportToHistoryRecord(report, pet),
+      );
+      setHistory((current) => mergePetHistory(current, remoteRecords, petId));
+    } catch {
+      setHistoryMessage("최근 기록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setHistoryLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -239,7 +321,8 @@ export default function App() {
     setHealthMessage("");
     setLatestResult(null);
     setLatestEpisodeId(null);
-  }, [selectedPet]);
+    void loadPetHistory(selectedPet);
+  }, [loadPetHistory, selectedPet]);
 
   async function saveTesterProfile(nextUser = user) {
     const supabase = getSupabaseClient();
@@ -451,13 +534,29 @@ export default function App() {
       const { episodeId, ...result } = payload;
       setLatestResult(result);
       setLatestEpisodeId(episodeId ?? null);
+      setHistory((current) =>
+        upsertHistoryRecord(current, {
+          petId: selectedPet.id,
+          episodeId: episodeId ?? undefined,
+          input,
+          result,
+        }),
+      );
       setHealthMessage(
         result.storage === "remote"
           ? "오늘 기록이 저장됐어요."
           : "결과는 만들었지만 서버 저장은 확인하지 못했어요.",
       );
     } catch {
-      setLatestResult({ ...localResult, storage: "local" });
+      const fallbackResult: AnalysisResult = { ...localResult, storage: "local" };
+      setLatestResult(fallbackResult);
+      setHistory((current) =>
+        upsertHistoryRecord(current, {
+          petId: selectedPet.id,
+          input,
+          result: fallbackResult,
+        }),
+      );
       setHealthMessage(
         "서버 저장은 실패했지만, 기기에서 기본 안전 분류를 만들었어요. 네트워크를 확인한 뒤 다시 저장해 주세요.",
       );
@@ -529,6 +628,15 @@ export default function App() {
                       pet={selectedPet}
                       setInput={setHealthInput}
                       onSubmit={submitHealthCheck}
+                    />
+                  ) : null}
+                  {selectedPet ? (
+                    <HealthHistoryCard
+                      flow={healthFlow}
+                      history={selectedPetHistory}
+                      loading={historyLoading}
+                      message={historyMessage}
+                      onRefresh={() => loadPetHistory(selectedPet)}
                     />
                   ) : null}
                 </>
@@ -1190,6 +1298,116 @@ function HealthResultCard({
   );
 }
 
+function HealthHistoryCard({
+  flow,
+  history,
+  loading,
+  message,
+  onRefresh,
+}: {
+  flow: HealthFlowSummary;
+  history: HistoryRecord[];
+  loading: boolean;
+  message: string;
+  onRefresh: () => Promise<void>;
+}) {
+  const recent = history.slice(0, 5);
+  const flowTone =
+    flow.trend === "worsening"
+      ? styles.flowCard_worsening
+      : flow.trend === "watch"
+        ? styles.flowCard_watch
+        : styles.flowCard_stable;
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.cardEyebrow}>HEALTH FLOW</Text>
+          <Text style={styles.cardTitle}>최근 14일 건강 흐름</Text>
+        </View>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          disabled={loading}
+          onPress={() => void onRefresh()}
+          style={[styles.smallButton, loading && styles.buttonDisabled]}
+        >
+          <Text style={styles.smallButtonText}>
+            {loading ? "확인 중" : "새로고침"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.flowCard, flowTone]}>
+        <View style={styles.flowHeader}>
+          <Text style={styles.flowCount}>{flow.recordCount}회</Text>
+          <Text style={styles.flowWindow}>최근 14일</Text>
+        </View>
+        <Text style={styles.flowTitle}>{flow.headline}</Text>
+        <Text style={styles.flowDescription}>{flow.description}</Text>
+        <View style={styles.flowMetaRow}>
+          <Text style={styles.flowMeta}>
+            최고 단계 {flow.highestRisk ? riskLabels[flow.highestRisk] : "없음"}
+          </Text>
+          <Text style={styles.flowMeta}>
+            최근 기록 {flow.latestRecordedAt ? formatRecordedAt(flow.latestRecordedAt) : "없음"}
+          </Text>
+        </View>
+        <View style={styles.flowTags}>
+          {flow.repeatedSymptoms.length ? (
+            flow.repeatedSymptoms.map((item) => (
+              <Text key={item} style={styles.flowTag}>
+                {item}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.flowTag}>반복 증상 없음</Text>
+          )}
+        </View>
+      </View>
+
+      <Message text={message} />
+
+      <Text style={styles.historyTitle}>최근 기록</Text>
+      {recent.length ? (
+        <View style={styles.historyList}>
+          {recent.map((record) => (
+            <HistoryRecordItem key={record.result.id} record={record} />
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.emptyText}>
+          아직 저장된 기록이 없어요. 오늘 기록을 남기면 여기에 쌓여요.
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function HistoryRecordItem({ record }: { record: HistoryRecord }) {
+  return (
+    <View style={styles.historyItem}>
+      <View style={styles.historyItemHeader}>
+        <Text style={styles.historyDate}>{formatRecordedAt(record.result.createdAt)}</Text>
+        <Text style={styles.historyRisk}>{riskLabels[record.result.riskLevel]}</Text>
+      </View>
+      <Text style={styles.historySummary}>{record.result.summary}</Text>
+      <Text style={styles.historyMeta}>
+        CHECK {record.result.riskScore} · {recordSymptomText(record)}
+      </Text>
+      <Text style={styles.historyMeta}>
+        식욕 {optionLabel(levelOptions, record.input.appetite)} · 활력{" "}
+        {optionLabel(levelOptions, record.input.energy)} ·{" "}
+        {optionLabel(durationOptions, record.input.duration)}
+      </Text>
+      <Text style={styles.historyStorage}>
+        {record.result.storage === "remote" ? "서버 저장" : "기기 내 결과"}
+        {record.episodeId ? " · 사건 연결" : ""}
+      </Text>
+    </View>
+  );
+}
+
 function ResultList({ title, items }: { title: string; items: string[] }) {
   return (
     <View style={styles.resultList}>
@@ -1201,6 +1419,28 @@ function ResultList({ title, items }: { title: string; items: string[] }) {
       ))}
     </View>
   );
+}
+
+function optionLabel<T extends string>(options: Array<{ id: T; label: string }>, id: T) {
+  return options.find((option) => option.id === id)?.label ?? id;
+}
+
+function recordSymptomText(record: HistoryRecord) {
+  if (!record.input.symptoms.length) return "주요 증상 없음";
+  return record.input.symptoms
+    .map((symptom) => optionLabel(symptomOptions, symptom))
+    .join(", ");
+}
+
+function formatRecordedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "날짜 확인 필요";
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function speciesLabel(species: Species) {
@@ -1318,6 +1558,10 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
+  },
+  cardHeaderText: {
+    flex: 1,
+    minWidth: 0,
   },
   cardEyebrow: {
     color: colors.green,
@@ -1735,6 +1979,151 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     lineHeight: 17,
+  },
+  flowCard: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 16,
+  },
+  flowCard_stable: {
+    borderColor: "#bfe5d1",
+    backgroundColor: "#f3fbf6",
+  },
+  flowCard_watch: {
+    borderColor: "#f1d08b",
+    backgroundColor: "#fff8eb",
+  },
+  flowCard_worsening: {
+    borderColor: "#e9a99a",
+    backgroundColor: "#fff0ec",
+  },
+  flowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  flowCount: {
+    color: colors.ink,
+    fontSize: 34,
+    fontWeight: "900",
+    lineHeight: 40,
+  },
+  flowWindow: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: colors.ink,
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  flowTitle: {
+    marginTop: 10,
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 24,
+  },
+  flowDescription: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
+  flowMetaRow: {
+    gap: 5,
+    marginTop: 12,
+  },
+  flowMeta: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  flowTags: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 13,
+  },
+  flowTag: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  historyTitle: {
+    marginTop: 20,
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  historyList: {
+    gap: 10,
+    marginTop: 12,
+  },
+  historyItem: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: "#fbfefd",
+    padding: 14,
+  },
+  historyItemHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  historyDate: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  historyRisk: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  historySummary: {
+    marginTop: 9,
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+  historyMeta: {
+    marginTop: 6,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  historyStorage: {
+    marginTop: 8,
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  emptyText: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
   },
   stepRow: {
     flexDirection: "row",
