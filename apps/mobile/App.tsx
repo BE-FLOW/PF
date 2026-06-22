@@ -174,6 +174,24 @@ const conditionChangeOptions: Array<{
 ];
 
 const initialFollowUpDays: FollowUpDay[] = [3, 7, 14];
+const longTermFollowUpDays: FollowUpDay[] = [30, 60, 90];
+
+const followUpGroups: Array<{
+  title: string;
+  description: string;
+  days: FollowUpDay[];
+}> = [
+  {
+    title: "초기 경과",
+    description: "진료 직후 다시 설명해야 하는 변화를 3·7·14일에 남겨요.",
+    days: initialFollowUpDays,
+  },
+  {
+    title: "장기 경과",
+    description: "다른 병원이나 재진 때 필요한 큰 흐름을 30·60·90일에 남겨요.",
+    days: longTermFollowUpDays,
+  },
+];
 
 const aiFeedbackScoreOptions: Array<{
   id: AiReportFeedbackInput["usefulnessScore"];
@@ -2764,6 +2782,9 @@ function EpisodeReportItem({
   const initialProgressCount = group.progress.filter((item) =>
     initialFollowUpDays.includes(item.followUpDay),
   ).length;
+  const longTermProgressCount = group.progress.filter((item) =>
+    longTermFollowUpDays.includes(item.followUpDay),
+  ).length;
   const itemProgressNotice =
     episodeId && progressNotice.episodeId === episodeId ? progressNotice : null;
   const canUseAiDraft = Boolean(aiAccess?.enabled);
@@ -2809,6 +2830,7 @@ function EpisodeReportItem({
       <View style={styles.episodeMetaRow}>
         <Text style={styles.episodeMeta}>{planSummary}</Text>
         <Text style={styles.episodeMeta}>초기 경과 {initialProgressCount}/3</Text>
+        <Text style={styles.episodeMeta}>장기 경과 {longTermProgressCount}/3</Text>
         <Text style={styles.episodeMeta}>{mediaSummary}</Text>
       </View>
 
@@ -2924,150 +2946,173 @@ function EpisodeReportItem({
         <View style={styles.progressBox}>
           <View style={styles.planHeader}>
             <View style={styles.cardHeaderText}>
-              <Text style={styles.planTitle}>3·7·14일 경과</Text>
+              <Text style={styles.planTitle}>경과 기록</Text>
               <Text style={styles.planSubtitle}>
-                같은 사건의 변화를 짧게 이어 적어요. 보호자 관찰 기록이며
-                수의사 확인 정보는 아니에요.
+                초기 3·7·14일과 장기 30·60·90일 흐름을 같은 사건에 이어
+                남겨요.
               </Text>
             </View>
             <Text style={styles.progressBadge}>보호자 경과</Text>
           </View>
 
           <View style={styles.progressDayList}>
-            {initialFollowUpDays.map((day) => {
-              const saved = group.progress.find((item) => item.followUpDay === day);
-              const isEditing =
-                progressDraft?.episodeId === episodeId &&
-                progressDraft.followUpDay === day;
-              const saving = progressSavingKey === `${episodeId}:${day}`;
-              return (
-                <View
-                  key={day}
-                  style={[
-                    styles.progressDayCard,
-                    saved && styles.progressDayCardSaved,
-                  ]}
-                >
-                  <View style={styles.progressDayHead}>
-                    <View style={styles.progressDayPill}>
-                      <Text style={styles.progressDayPillText}>{day}일</Text>
-                    </View>
-                    <View style={styles.cardHeaderText}>
-                      <Text style={styles.progressDayTitle}>
-                        {followUpDate(group.plan?.reportedAt ?? group.episode?.startedAt, day)} 확인
-                      </Text>
-                      <Text style={styles.progressDaySummary}>
-                        {saved ? progressSummary(saved) : "아직 경과를 기록하지 않았어요."}
-                      </Text>
-                    </View>
-                    {!isEditing ? (
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        disabled={saving}
-                        onPress={() => onStartProgressEdit(group, day)}
-                        style={[
-                          styles.progressEditButton,
-                          saving && styles.buttonDisabled,
-                        ]}
-                      >
-                        <Text style={styles.progressEditButtonText}>
-                          {saved ? "수정" : "기록"}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
+            {followUpGroups.map((followUpGroup) => (
+              <View key={followUpGroup.title} style={styles.progressGroup}>
+                <View style={styles.progressGroupHead}>
+                  <Text style={styles.progressGroupTitle}>{followUpGroup.title}</Text>
+                  <Text style={styles.progressGroupDescription}>
+                    {followUpGroup.description}
+                  </Text>
+                </View>
+                {followUpGroup.days.map((day) => {
+                  const saved = group.progress.find(
+                    (item) => item.followUpDay === day,
+                  );
+                  const isEditing =
+                    progressDraft?.episodeId === episodeId &&
+                    progressDraft.followUpDay === day;
+                  const saving = progressSavingKey === `${episodeId}:${day}`;
+                  return (
+                    <View
+                      key={day}
+                      style={[
+                        styles.progressDayCard,
+                        saved && styles.progressDayCardSaved,
+                      ]}
+                    >
+                      <View style={styles.progressDayHead}>
+                        <View style={styles.progressDayPill}>
+                          <Text style={styles.progressDayPillText}>{day}일</Text>
+                        </View>
+                        <View style={styles.cardHeaderText}>
+                          <Text style={styles.progressDayTitle}>
+                            {followUpDate(
+                              group.plan?.reportedAt ?? group.episode?.startedAt,
+                              day,
+                            )}{" "}
+                            확인
+                          </Text>
+                          <Text style={styles.progressDaySummary}>
+                            {saved
+                              ? progressSummary(saved)
+                              : "아직 경과를 기록하지 않았어요."}
+                          </Text>
+                        </View>
+                        {!isEditing ? (
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            disabled={saving}
+                            onPress={() => onStartProgressEdit(group, day)}
+                            style={[
+                              styles.progressEditButton,
+                              saving && styles.buttonDisabled,
+                            ]}
+                          >
+                            <Text style={styles.progressEditButtonText}>
+                              {saved ? "수정" : "기록"}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
 
-                  {isEditing && progressDraft ? (
-                    <View style={styles.progressEditor}>
-                      <Text style={styles.progressEditorLabel}>전반적인 변화</Text>
-                      <View style={styles.progressChoiceGrid}>
-                        {conditionChangeOptions.map((option) => {
-                          const selected = progressDraft.conditionChange === option.id;
-                          return (
+                      {isEditing && progressDraft ? (
+                        <View style={styles.progressEditor}>
+                          <Text style={styles.progressEditorLabel}>
+                            전반적인 변화
+                          </Text>
+                          <View style={styles.progressChoiceGrid}>
+                            {conditionChangeOptions.map((option) => {
+                              const selected =
+                                progressDraft.conditionChange === option.id;
+                              return (
+                                <TouchableOpacity
+                                  activeOpacity={0.85}
+                                  key={option.id}
+                                  onPress={() =>
+                                    onChangeProgressDraft({
+                                      ...progressDraft,
+                                      conditionChange: option.id,
+                                    })
+                                  }
+                                  style={[
+                                    styles.progressChoice,
+                                    selected && styles.progressChoiceSelected,
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.progressChoiceTitle,
+                                      selected &&
+                                        styles.progressChoiceTitleSelected,
+                                    ]}
+                                  >
+                                    {option.label}
+                                  </Text>
+                                  <Text
+                                    style={[
+                                      styles.progressChoiceText,
+                                      selected &&
+                                        styles.progressChoiceTextSelected,
+                                    ]}
+                                  >
+                                    {option.description}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+
+                          <Text style={styles.progressEditorLabel}>식욕</Text>
+                          <ChipGroup
+                            options={levelOptions}
+                            selected={progressDraft.appetite}
+                            onSelect={(appetite) =>
+                              onChangeProgressDraft({ ...progressDraft, appetite })
+                            }
+                          />
+
+                          <Text style={styles.progressEditorLabel}>활력</Text>
+                          <ChipGroup
+                            options={levelOptions}
+                            selected={progressDraft.energy}
+                            onSelect={(energy) =>
+                              onChangeProgressDraft({ ...progressDraft, energy })
+                            }
+                          />
+
+                          <View style={styles.progressEditorActions}>
                             <TouchableOpacity
                               activeOpacity={0.85}
-                              key={option.id}
-                              onPress={() =>
-                                onChangeProgressDraft({
-                                  ...progressDraft,
-                                  conditionChange: option.id,
-                                })
-                              }
+                              disabled={saving}
+                              onPress={onCancelProgressEdit}
                               style={[
-                                styles.progressChoice,
-                                selected && styles.progressChoiceSelected,
+                                styles.progressCancelButton,
+                                saving && styles.buttonDisabled,
                               ]}
                             >
-                              <Text
-                                style={[
-                                  styles.progressChoiceTitle,
-                                  selected && styles.progressChoiceTitleSelected,
-                                ]}
-                              >
-                                {option.label}
-                              </Text>
-                              <Text
-                                style={[
-                                  styles.progressChoiceText,
-                                  selected && styles.progressChoiceTextSelected,
-                                ]}
-                              >
-                                {option.description}
+                              <Text style={styles.progressCancelButtonText}>취소</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              disabled={saving}
+                              onPress={() => void onSaveProgress()}
+                              style={[
+                                styles.progressSaveButton,
+                                saving && styles.buttonDisabled,
+                              ]}
+                            >
+                              <Text style={styles.progressSaveButtonText}>
+                                {saving ? "저장 중" : `${day}일 경과 저장`}
                               </Text>
                             </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-
-                      <Text style={styles.progressEditorLabel}>식욕</Text>
-                      <ChipGroup
-                        options={levelOptions}
-                        selected={progressDraft.appetite}
-                        onSelect={(appetite) =>
-                          onChangeProgressDraft({ ...progressDraft, appetite })
-                        }
-                      />
-
-                      <Text style={styles.progressEditorLabel}>활력</Text>
-                      <ChipGroup
-                        options={levelOptions}
-                        selected={progressDraft.energy}
-                        onSelect={(energy) =>
-                          onChangeProgressDraft({ ...progressDraft, energy })
-                        }
-                      />
-
-                      <View style={styles.progressEditorActions}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          disabled={saving}
-                          onPress={onCancelProgressEdit}
-                          style={[
-                            styles.progressCancelButton,
-                            saving && styles.buttonDisabled,
-                          ]}
-                        >
-                          <Text style={styles.progressCancelButtonText}>취소</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          disabled={saving}
-                          onPress={() => void onSaveProgress()}
-                          style={[
-                            styles.progressSaveButton,
-                            saving && styles.buttonDisabled,
-                          ]}
-                        >
-                          <Text style={styles.progressSaveButtonText}>
-                            {saving ? "저장 중" : `${day}일 경과 저장`}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
+                          </View>
+                        </View>
+                      ) : null}
                     </View>
-                  ) : null}
-                </View>
-              );
-            })}
+                  );
+                })}
+              </View>
+            ))}
           </View>
           {itemProgressNotice ? (
             <Message text={itemProgressNotice.text} tone={itemProgressNotice.tone} />
@@ -3100,6 +3145,7 @@ function EpisodeReportItem({
             <Text style={styles.vetDraftInclude}>관찰 {group.report.recordCount}회</Text>
             <Text style={styles.vetDraftInclude}>계획 {completedTasks}/{planTasks.length}</Text>
             <Text style={styles.vetDraftInclude}>초기 경과 {initialProgressCount}/3</Text>
+            <Text style={styles.vetDraftInclude}>장기 경과 {longTermProgressCount}/3</Text>
             <Text style={styles.vetDraftInclude}>첨부 {group.report.mediaCount}개</Text>
           </View>
 
@@ -4434,6 +4480,27 @@ const styles = StyleSheet.create({
   progressDayList: {
     gap: 9,
     marginTop: 11,
+  },
+  progressGroup: {
+    gap: 9,
+  },
+  progressGroupHead: {
+    borderRadius: 14,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+  },
+  progressGroupTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  progressGroupDescription: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
   },
   progressDayCard: {
     borderWidth: 1,
