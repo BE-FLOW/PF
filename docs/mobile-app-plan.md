@@ -1,0 +1,82 @@
+# PetFlow 모바일 앱 준비 순서
+
+이 문서는 웹 MVP를 흔들지 않고 Android와 iOS 앱을 준비하기 위한 작업 순서를
+고정한다. 모바일 앱도 PetFlow의 핵심 루프인 `관찰 -> 정리 -> 병원 공유 ->
+경과 기록`을 따른다.
+
+## 0. 기준
+
+- 웹 앱은 현재처럼 루트 Next.js 앱으로 유지한다.
+- 모바일 앱은 `apps/mobile`에 독립 Expo 앱으로 둔다.
+- 공통 로직은 검증된 뒤에만 `packages/shared`로 옮긴다.
+- 서버 비밀값과 OpenAI 호출은 계속 Next.js Route Handler에 둔다.
+- 모바일에는 공개 가능한 Supabase URL과 publishable key만 둔다.
+- 개인정보는 v0.2 테스터 기준인 이메일, 닉네임, 국내 휴대전화번호 범위를
+  넘기지 않는다.
+
+## 1. 앱 v0.1 범위
+
+가장 먼저 만들 기능:
+
+1. 로그인과 세션 유지
+2. 반려동물 목록과 등록
+3. 오늘 건강 기록 입력
+4. 사진과 동영상 첨부
+5. 같은 사건에 이어 쓰는 3일, 7일, 14일 경과 기록
+6. 병원 공유용 요약 보기와 기기 공유
+
+파일럿 직전까지 미루는 기능:
+
+- 결제
+- 병원 대시보드
+- EMR 연동
+- 위치 기반 병원 찾기
+- 진단, 처방, 용량, 치료 계획 생성
+
+## 2. 기술 순서
+
+1. Expo 골격을 만들고 iOS/Android 패키지 식별자를 고정한다.
+2. 앱에서 사용할 공개 환경변수를 정리한다.
+3. Supabase Auth 세션을 모바일에 연결한다.
+4. 웹의 건강 기록 입력 흐름을 모바일 화면으로 얇게 옮긴다.
+5. 사진과 동영상은 Supabase Storage 업로드 API를 통해 저장한다.
+6. AI 리포트는 모바일에서 직접 OpenAI를 호출하지 않고 기존 서버 API를 호출한다.
+7. 3일, 7일, 14일 리마인드는 푸시 알림 권한을 받은 사용자에게만 제공한다.
+8. TestFlight와 Google Play 내부 테스트로 배포한다.
+
+## 3. 환경변수
+
+모바일 앱에서 사용할 값:
+
+```text
+EXPO_PUBLIC_API_BASE_URL=https://pf-two-eta.vercel.app
+EXPO_PUBLIC_SUPABASE_URL=https://your-test-project.supabase.co
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+```
+
+넣지 않는 값:
+
+```text
+SUPABASE_SERVICE_ROLE_KEY
+OPENAI_API_KEY
+```
+
+## 4. 스토어 준비
+
+- Apple Developer Program과 Google Play Console 계정
+- iOS bundle identifier: `com.beflow.petflow`
+- Android package name: `com.beflow.petflow`
+- 개인정보 처리방침 공개 URL
+- 계정 삭제 요청 경로
+- 카메라, 사진, 동영상, 알림 권한 안내 문구
+- 앱 소개 이미지와 짧은 설명
+
+## 5. UX 기준
+
+- 웹을 그대로 감싼 WebView 앱으로 시작하지 않는다.
+- 첫 화면은 오늘 할 일을 바로 보여준다.
+- 입력은 한 화면에 하나의 결정만 둔다.
+- 정상 상태는 한 번에 기록할 수 있어야 한다.
+- 기록을 못 끝내도 초안으로 남기고 나중에 이어 쓸 수 있게 한다.
+- AI 리포트는 수의사 검토용 초안임을 명확히 표시한다.
+
