@@ -99,6 +99,50 @@ export interface HistoryRecord {
   media?: ReportMediaAttachment[];
 }
 
+export type EpisodeStatus = "open" | "closed";
+
+export interface PetEpisode {
+  id: string;
+  petId: string;
+  status: EpisodeStatus;
+  startedAt: string;
+  lastActivityAt: string;
+  closedAt: string | null;
+}
+
+export interface PlanTask {
+  id: string;
+  text: string;
+  position: number;
+  completedAt: string | null;
+}
+
+export interface EpisodePlan {
+  id: string;
+  episodeId: string;
+  petId: string;
+  sourceType: "owner";
+  reviewStatus: "user_reported";
+  reportedAt: string;
+  tasks: PlanTask[];
+}
+
+export type FollowUpDay = 3 | 7 | 14 | 30 | 60 | 90;
+export type ConditionChange = "better" | "same" | "worse";
+
+export interface EpisodeProgress {
+  id: string;
+  episodeId: string;
+  petId: string;
+  followUpDay: FollowUpDay;
+  conditionChange: ConditionChange;
+  appetite: Level;
+  energy: Level;
+  sourceType: "owner";
+  reviewStatus: "unreviewed";
+  recordedAt: string;
+}
+
 export type HealthTrend = "stable" | "watch" | "worsening";
 
 export interface HealthFlowSummary {
@@ -110,6 +154,39 @@ export interface HealthFlowSummary {
   highestRisk: RiskLevel | null;
   latestRecordedAt: string | null;
   vetBrief: string;
+}
+
+export interface EpisodeReportTimelineItem {
+  id: string;
+  recordedAt: string;
+  dateLabel: string;
+  symptoms: string;
+  appetite: string;
+  energy: string;
+  duration: string;
+  riskLabel: string;
+  redFlagCount: number;
+  imageCount: number;
+  videoCount: number;
+  mediaCount: number;
+}
+
+export interface EpisodeReport {
+  title: string;
+  petProfile: string;
+  periodLabel: string;
+  recordCount: number;
+  highestRiskLabel: string;
+  repeatedSymptoms: string[];
+  appetiteChangeCount: number;
+  energyChangeCount: number;
+  mediaCount: number;
+  mediaSummary: string[];
+  timeline: EpisodeReportTimelineItem[];
+  planTasks: PlanTask[];
+  progress: EpisodeProgress[];
+  shareText: string;
+  disclaimer: string;
 }
 
 export const symptomOptions: Array<{ id: SymptomId; label: string }> = [
@@ -191,8 +268,17 @@ export function formatFileSize(bytes: number) {
 }
 
 export function formatReportMediaSummary(media: Array<{ kind: ReportMediaKind }>) {
+  const { imageCount, videoCount } = countReportMedia(media);
+  return formatReportMediaCount(imageCount, videoCount);
+}
+
+function countReportMedia(media: Array<{ kind: ReportMediaKind }>) {
   const imageCount = media.filter((item) => item.kind === "image").length;
   const videoCount = media.filter((item) => item.kind === "video").length;
+  return { imageCount, videoCount, mediaCount: media.length };
+}
+
+function formatReportMediaCount(imageCount: number, videoCount: number) {
   return [
     imageCount ? `사진 ${imageCount}개` : "",
     videoCount ? `영상 ${videoCount}개` : "",
@@ -242,6 +328,27 @@ const riskWeight: Record<RiskLevel, number> = {
   soon: 2,
   urgent: 3,
 };
+
+const conditionChangeLabels: Record<ConditionChange, string> = {
+  better: "좋아짐",
+  same: "비슷함",
+  worse: "나빠짐",
+};
+
+const dayFormatter = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
+const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  month: "long",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 const disclaimer =
   "이 결과는 보호자의 기록 정리를 돕는 참고 정보이며 수의사의 진단을 대신하지 않습니다. 상태가 빠르게 악화되거나 호흡 곤란, 의식 저하, 경련, 지속 출혈이 있으면 즉시 가까운 동물병원에 연락하세요.";
@@ -547,6 +654,173 @@ export function summarizeHealthFlow(
     highestRisk,
     latestRecordedAt: recent[0].result.createdAt,
     vetBrief,
+  };
+}
+
+export function buildEpisodeReport(
+  records: HistoryRecord[],
+  fallbackPetName = "반려동물",
+  plan?: EpisodePlan,
+  progress: EpisodeProgress[] = [],
+): EpisodeReport {
+  const ordered = [...records].sort(
+    (a, b) =>
+      new Date(a.result.createdAt).getTime() -
+      new Date(b.result.createdAt).getTime(),
+  );
+  const first = ordered[0];
+  const latest = ordered.at(-1);
+  const petName = latest?.input.petName || fallbackPetName;
+  const petProfile = latest
+    ? [
+        latest.input.species === "dog"
+          ? "강아지"
+          : latest.input.species === "cat"
+            ? "고양이"
+            : "기타",
+        latest.input.breed,
+        ageGroupLabels[latest.input.ageGroup],
+        latest.input.weight,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "프로필 정보 없음";
+  const periodLabel =
+    first && latest
+      ? dayFormatter.format(new Date(first.result.createdAt)) ===
+        dayFormatter.format(new Date(latest.result.createdAt))
+        ? dayFormatter.format(new Date(first.result.createdAt))
+        : `${dayFormatter.format(new Date(first.result.createdAt))} ~ ${dayFormatter.format(new Date(latest.result.createdAt))}`
+      : "기록 없음";
+
+  const symptomCounts = new Map<SymptomId, number>();
+  for (const record of ordered) {
+    for (const symptom of record.input.symptoms) {
+      symptomCounts.set(symptom, (symptomCounts.get(symptom) ?? 0) + 1);
+    }
+  }
+  const repeatedSymptoms = [...symptomCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .map(([symptom, count]) => `${symptomLabels[symptom]} ${count}회`)
+    .slice(0, 3);
+  const highestRisk = ordered.reduce<RiskLevel>(
+    (highest, record) =>
+      riskWeight[record.result.riskLevel] > riskWeight[highest]
+        ? record.result.riskLevel
+        : highest,
+    "watch",
+  );
+  const appetiteChangeCount = ordered.filter(
+    (record) => record.input.appetite !== "normal",
+  ).length;
+  const energyChangeCount = ordered.filter(
+    (record) => record.input.energy !== "normal",
+  ).length;
+  const timeline = ordered.map<EpisodeReportTimelineItem>((record) => {
+    const counts = countReportMedia(record.media ?? []);
+    return {
+      id: record.result.id,
+      recordedAt: record.result.createdAt,
+      dateLabel: dateTimeFormatter.format(new Date(record.result.createdAt)),
+      symptoms: record.input.symptoms.length
+        ? record.input.symptoms
+            .map((symptom) => symptomLabels[symptom])
+            .join(", ")
+        : "선택한 주요 증상 없음",
+      appetite: levelLabels[record.input.appetite],
+      energy: levelLabels[record.input.energy],
+      duration: durationLabels[record.input.duration],
+      riskLabel: riskLabels[record.result.riskLevel],
+      redFlagCount: record.input.redFlags.length,
+      ...counts,
+    };
+  });
+  const mediaSummary = timeline
+    .filter((item) => item.mediaCount > 0)
+    .map(
+      (item) =>
+        `${item.dateLabel}: ${formatReportMediaCount(item.imageCount, item.videoCount)}`,
+    );
+  const mediaCount = timeline.reduce((total, item) => total + item.mediaCount, 0);
+  const disclaimer =
+    "이 요약은 보호자가 입력한 관찰과 앱의 안전 분류를 정리한 자료이며, 수의사의 진단이나 확인된 진료기록이 아닙니다.";
+  const timelineText = timeline.length
+    ? timeline
+        .map(
+          (item, index) =>
+            `${index + 1}. ${item.dateLabel}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration} / 앱 안내: ${item.riskLabel}${item.redFlagCount ? ` / 위험 신호 ${item.redFlagCount}개 입력` : ""}${item.mediaCount ? `\n첨부: ${formatReportMediaCount(item.imageCount, item.videoCount)}` : ""}`,
+        )
+        .join("\n\n")
+    : "기록 없음";
+  const planText = plan?.tasks.length
+    ? plan.tasks
+        .map(
+          (task) =>
+            `- [${task.completedAt ? "완료" : "진행 전"}] ${task.text}`,
+        )
+        .join("\n")
+    : "아직 입력한 계획이 없습니다.";
+  const orderedProgress = [...progress].sort(
+    (a, b) => a.followUpDay - b.followUpDay,
+  );
+  const progressText = orderedProgress.length
+    ? orderedProgress
+        .map(
+          (item) =>
+            `${item.followUpDay}일: ${conditionChangeLabels[item.conditionChange]} / 식욕 ${levelLabels[item.appetite]} / 활력 ${levelLabels[item.energy]}`,
+        )
+        .join("\n")
+    : "아직 입력한 경과 기록이 없습니다.";
+  const mediaText = mediaSummary.length
+    ? [
+        ...mediaSummary,
+        "사진·영상은 보호자가 저장한 참고 자료이며 PetFlow가 내용을 판독하지 않았습니다.",
+      ].join("\n")
+    : "첨부 자료 없음";
+  const shareText = [
+    "[PetFlow 병원 전달 요약]",
+    `반려동물: ${petName} / ${petProfile}`,
+    `기록 기간: ${periodLabel}`,
+    `기록 횟수: ${timeline.length}회`,
+    `가장 높은 앱 안내 단계: ${riskLabels[highestRisk]}`,
+    `반복 관찰: ${repeatedSymptoms.length ? repeatedSymptoms.join(", ") : "없음"}`,
+    `식욕 변화 ${appetiteChangeCount}회 / 활력 변화 ${energyChangeCount}회`,
+    "",
+    "[보호자 관찰 기록]",
+    timelineText,
+    "",
+    "[첨부 자료 · 보호자 저장]",
+    mediaText,
+    "",
+    "[병원에서 받은 계획 · 보호자 기록]",
+    planText,
+    "PetFlow에서 수의사가 직접 확인한 내용이 아닙니다.",
+    "",
+    "[초기·장기 경과 · 보호자 기록]",
+    progressText,
+    "PetFlow에서 수의사가 확인한 경과가 아닙니다.",
+    "",
+    "[확인 안내]",
+    disclaimer,
+  ].join("\n");
+
+  return {
+    title: `${petName} 병원 전달 요약`,
+    petProfile,
+    periodLabel,
+    recordCount: timeline.length,
+    highestRiskLabel: riskLabels[highestRisk],
+    repeatedSymptoms,
+    appetiteChangeCount,
+    energyChangeCount,
+    mediaCount,
+    mediaSummary,
+    timeline,
+    planTasks: plan?.tasks ?? [],
+    progress: orderedProgress,
+    shareText,
+    disclaimer,
   };
 }
 

@@ -9,6 +9,7 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
+  Share,
   StatusBar,
   StyleSheet,
   Switch,
@@ -22,6 +23,7 @@ import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
 import { getSupabaseClient, isSupabaseConfigured } from "./src/lib/supabase";
 import {
   analyzeLocally,
+  buildEpisodeReport,
   createUuid,
   durationOptions,
   formatFileSize,
@@ -42,9 +44,13 @@ import {
   toggleItem,
   type AnalysisResult,
   type DisplayHealthReport,
+  type EpisodePlan,
+  type EpisodeProgress,
+  type EpisodeReport,
   type HealthFlowSummary,
   type HealthCheckInput,
   type HistoryRecord,
+  type PetEpisode,
   type PetProfile,
   type PetSex,
   type ReportMediaAttachment,
@@ -77,6 +83,16 @@ interface PendingMediaAsset {
   mimeType: string;
   sizeBytes: number;
   kind: ReportMediaKind;
+}
+
+interface EpisodeReportGroup {
+  key: string;
+  episode?: PetEpisode;
+  records: HistoryRecord[];
+  plan?: EpisodePlan;
+  progress: EpisodeProgress[];
+  report: EpisodeReport;
+  latestAt: string;
 }
 
 const emptyDraft: TesterDraft = {
@@ -190,8 +206,12 @@ export default function App() {
   const [latestResult, setLatestResult] = useState<AnalysisResult | null>(null);
   const [latestEpisodeId, setLatestEpisodeId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
+  const [plans, setPlans] = useState<EpisodePlan[]>([]);
+  const [progress, setProgress] = useState<EpisodeProgress[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMessage, setHistoryMessage] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
   const [pendingMedia, setPendingMedia] = useState<PendingMediaAsset[]>([]);
   const [mediaMessage, setMediaMessage] = useState("");
   const [mediaUploadMessage, setMediaUploadMessage] = useState("");
@@ -210,6 +230,66 @@ export default function App() {
     () => summarizeHealthFlow(selectedPetHistory, selectedPet?.name),
     [selectedPet?.name, selectedPetHistory],
   );
+  const episodeReportGroups = useMemo<EpisodeReportGroup[]>(() => {
+    const episodeById = new Map(
+      episodes
+        .filter((episode) => episode.petId === selectedPetId)
+        .map((episode) => [episode.id, episode]),
+    );
+    const planByEpisode = new Map(plans.map((plan) => [plan.episodeId, plan]));
+    const progressByEpisode = new Map<string, EpisodeProgress[]>();
+    for (const item of progress) {
+      const items = progressByEpisode.get(item.episodeId) ?? [];
+      items.push(item);
+      progressByEpisode.set(item.episodeId, items);
+    }
+    const grouped = new Map<
+      string,
+      { episode?: PetEpisode; records: HistoryRecord[] }
+    >();
+
+    for (const record of selectedPetHistory) {
+      const key = record.episodeId ?? `record:${record.result.id}`;
+      const group = grouped.get(key) ?? {
+        episode: record.episodeId ? episodeById.get(record.episodeId) : undefined,
+        records: [],
+      };
+      group.records.push(record);
+      grouped.set(key, group);
+    }
+
+    return [...grouped.entries()]
+      .map(([key, group]) => {
+        const episodeProgress = group.episode
+          ? progressByEpisode.get(group.episode.id) ?? []
+          : [];
+        const plan = group.episode ? planByEpisode.get(group.episode.id) : undefined;
+        const report = buildEpisodeReport(
+          group.records,
+          selectedPet?.name,
+          plan,
+          episodeProgress,
+        );
+        return {
+          key,
+          episode: group.episode,
+          records: group.records,
+          plan,
+          progress: episodeProgress,
+          report,
+          latestAt:
+            group.episode?.lastActivityAt ??
+            group.records[0]?.result.createdAt ??
+            "",
+        };
+      })
+      .sort((a, b) => {
+        if (a.episode?.status !== b.episode?.status) {
+          return a.episode?.status === "open" ? -1 : 1;
+        }
+        return new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime();
+      });
+  }, [episodes, plans, progress, selectedPet?.name, selectedPetHistory, selectedPetId]);
 
   const needsTesterProfile = Boolean(
     user &&
@@ -242,7 +322,11 @@ export default function App() {
       setLatestResult(null);
       setLatestEpisodeId(null);
       setHistory([]);
+      setEpisodes([]);
+      setPlans([]);
+      setProgress([]);
       setHistoryMessage("");
+      setShareMessage("");
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -311,7 +395,11 @@ export default function App() {
       setLatestResult(null);
       setLatestEpisodeId(null);
       setHistory([]);
+      setEpisodes([]);
+      setPlans([]);
+      setProgress([]);
       setHistoryMessage("");
+      setShareMessage("");
       setPendingMedia([]);
       setMediaMessage("");
       setMediaUploadMessage("");
@@ -348,12 +436,18 @@ export default function App() {
       });
       if (!response.ok) throw new Error("history failed");
       const payload = (await response.json()) as {
+        episodes?: PetEpisode[];
+        plans?: EpisodePlan[];
+        progress?: EpisodeProgress[];
         reports?: DisplayHealthReport[];
       };
       const remoteRecords = (payload.reports ?? []).map((report) =>
         storedReportToHistoryRecord(report, pet),
       );
       setHistory((current) => mergePetHistory(current, remoteRecords, petId));
+      setEpisodes(payload.episodes ?? []);
+      setPlans(payload.plans ?? []);
+      setProgress(payload.progress ?? []);
     } catch {
       setHistoryMessage("최근 기록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     } finally {
@@ -457,6 +551,10 @@ export default function App() {
     setHealthMessage("");
     setLatestResult(null);
     setLatestEpisodeId(null);
+    setEpisodes([]);
+    setPlans([]);
+    setProgress([]);
+    setShareMessage("");
     setPendingMedia([]);
     setMediaMessage("");
     setMediaUploadMessage("");
@@ -693,6 +791,7 @@ export default function App() {
       setHealthMessage("오늘 기록할 반려동물을 먼저 선택해 주세요.");
       return;
     }
+    const petId = selectedPet.id;
 
     const input: HealthCheckInput = {
       ...healthInput,
@@ -725,7 +824,7 @@ export default function App() {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
           "x-petflow-client-id": clientId,
-          "x-petflow-pet-id": selectedPet.id,
+          "x-petflow-pet-id": petId,
         },
         body: JSON.stringify(input),
       });
@@ -741,14 +840,14 @@ export default function App() {
           result.storage === "remote" &&
           episodeId &&
           session.user.id &&
-          selectedPet.id
+          petId
         ) {
           try {
             media = await uploadPendingMediaFiles({
               accessToken,
               clientId,
               files: pendingMedia,
-              petId: selectedPet.id,
+              petId,
               reportId: result.id,
               userId: session.user.id,
             });
@@ -765,7 +864,7 @@ export default function App() {
         }
       }
       const record: HistoryRecord = {
-        petId: selectedPet.id,
+        petId,
         episodeId: episodeId ?? undefined,
         input,
         result,
@@ -774,6 +873,29 @@ export default function App() {
       setLatestResult(result);
       setLatestEpisodeId(episodeId ?? null);
       setHistory((current) => upsertHistoryRecord(current, record));
+      if (episodeId) {
+        setEpisodes((current) => {
+          const existing = current.find((episode) => episode.id === episodeId);
+          if (existing) {
+            return current.map((episode) =>
+              episode.id === episodeId
+                ? { ...episode, lastActivityAt: result.createdAt }
+                : episode,
+            );
+          }
+          return [
+            {
+              id: episodeId,
+              petId,
+              status: "open",
+              startedAt: result.createdAt,
+              lastActivityAt: result.createdAt,
+              closedAt: null,
+            },
+            ...current,
+          ];
+        });
+      }
       setPendingMedia([]);
       setMediaUploadMessage(mediaNotice);
       setHealthMessage(
@@ -796,6 +918,19 @@ export default function App() {
       );
     } finally {
       setHealthLoading(false);
+    }
+  }
+
+  async function shareEpisodeReport(report: EpisodeReport) {
+    setShareMessage("");
+    try {
+      await Share.share({
+        title: report.title,
+        message: report.shareText,
+      });
+      setShareMessage("병원 전달 요약을 공유했어요.");
+    } catch {
+      setShareMessage("공유 창을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
   }
 
@@ -871,11 +1006,14 @@ export default function App() {
                   ) : null}
                   {selectedPet ? (
                     <HealthHistoryCard
+                      episodeGroups={episodeReportGroups}
                       flow={healthFlow}
                       history={selectedPetHistory}
                       loading={historyLoading}
                       message={historyMessage}
                       onRefresh={() => loadPetHistory(selectedPet)}
+                      onShareReport={shareEpisodeReport}
+                      shareMessage={shareMessage}
                     />
                   ) : null}
                 </>
@@ -1625,19 +1763,26 @@ function HealthResultCard({
 }
 
 function HealthHistoryCard({
+  episodeGroups,
   flow,
   history,
   loading,
   message,
   onRefresh,
+  onShareReport,
+  shareMessage,
 }: {
+  episodeGroups: EpisodeReportGroup[];
   flow: HealthFlowSummary;
   history: HistoryRecord[];
   loading: boolean;
   message: string;
   onRefresh: () => Promise<void>;
+  onShareReport: (report: EpisodeReport) => Promise<void>;
+  shareMessage: string;
 }) {
   const recent = history.slice(0, 5);
+  const shareGroups = episodeGroups.slice(0, 4);
   const flowTone =
     flow.trend === "worsening"
       ? styles.flowCard_worsening
@@ -1694,6 +1839,27 @@ function HealthHistoryCard({
 
       <Message text={message} />
 
+      <Text style={styles.historyTitle}>병원 공유 요약</Text>
+      <Text style={styles.sectionHint}>
+        같은 사건에 연결된 기록을 수의사가 보기 좋은 제출용 텍스트로 정리해요.
+      </Text>
+      {shareGroups.length ? (
+        <View style={styles.episodeList}>
+          {shareGroups.map((group) => (
+            <EpisodeReportItem
+              group={group}
+              key={group.key}
+              onShareReport={onShareReport}
+            />
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.emptyText}>
+          아직 공유할 기록이 없어요. 오늘 기록을 저장하면 요약을 만들 수 있어요.
+        </Text>
+      )}
+      <Message text={shareMessage} tone="success" />
+
       <Text style={styles.historyTitle}>최근 기록</Text>
       {recent.length ? (
         <View style={styles.historyList}>
@@ -1706,6 +1872,64 @@ function HealthHistoryCard({
           아직 저장된 기록이 없어요. 오늘 기록을 남기면 여기에 쌓여요.
         </Text>
       )}
+    </View>
+  );
+}
+
+function EpisodeReportItem({
+  group,
+  onShareReport,
+}: {
+  group: EpisodeReportGroup;
+  onShareReport: (report: EpisodeReport) => Promise<void>;
+}) {
+  const isOpen = group.episode?.status === "open";
+  const mediaSummary = group.report.mediaCount
+    ? `${group.report.mediaCount}개 첨부`
+    : "첨부 없음";
+  const completedTasks =
+    group.plan?.tasks.filter((task) => task.completedAt).length ?? 0;
+  const planSummary = group.plan
+    ? `계획 ${completedTasks}/${group.plan.tasks.length}`
+    : group.episode
+      ? "계획 미등록"
+      : "개별 기록";
+
+  return (
+    <View style={styles.episodeItem}>
+      <View style={styles.episodeItemHeader}>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.episodeStatus}>
+            {isOpen ? "진행 중" : group.episode ? "마무리됨" : "개별 기록"}
+          </Text>
+          <Text style={styles.episodeTitle}>{group.report.title}</Text>
+          <Text style={styles.episodeDescription}>
+            {group.report.periodLabel} · {group.report.recordCount}회 기록 · 최고 단계{" "}
+            {group.report.highestRiskLabel}
+          </Text>
+        </View>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => void onShareReport(group.report)}
+          style={styles.episodeShareButton}
+        >
+          <Text style={styles.episodeShareButtonText}>공유</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.episodeMetaRow}>
+        <Text style={styles.episodeMeta}>{planSummary}</Text>
+        <Text style={styles.episodeMeta}>경과 {group.progress.length}개</Text>
+        <Text style={styles.episodeMeta}>{mediaSummary}</Text>
+      </View>
+
+      <View style={styles.episodePreviewBox}>
+        <Text style={styles.episodePreviewTitle}>제출용 미리보기</Text>
+        <Text numberOfLines={5} style={styles.episodePreviewText}>
+          {group.report.shareText}
+        </Text>
+      </View>
+      <Text style={styles.disclaimer}>{group.report.disclaimer}</Text>
     </View>
   );
 }
@@ -2502,6 +2726,100 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontSize: 17,
     fontWeight: "900",
+  },
+  sectionHint: {
+    marginTop: 6,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  episodeList: {
+    gap: 12,
+    marginTop: 12,
+  },
+  episodeItem: {
+    borderWidth: 1,
+    borderColor: "#c8e1d6",
+    borderRadius: 20,
+    backgroundColor: "#f8fcfa",
+    padding: 15,
+  },
+  episodeItemHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  episodeStatus: {
+    alignSelf: "flex-start",
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  episodeTitle: {
+    marginTop: 9,
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 21,
+  },
+  episodeDescription: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  episodeShareButton: {
+    borderRadius: 999,
+    backgroundColor: colors.green,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+  },
+  episodeShareButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  episodeMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 13,
+  },
+  episodeMeta: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    color: colors.ink,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  episodePreviewBox: {
+    marginTop: 13,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 13,
+  },
+  episodePreviewTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  episodePreviewText: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
   },
   historyList: {
     gap: 10,
