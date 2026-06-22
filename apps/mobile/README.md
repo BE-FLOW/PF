@@ -45,6 +45,9 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 - 참여코드 기반 GPT 검토용 초안과 테스터 피드백
 - 계정 삭제 요청 접수
 
-## 다음 구현 순서
+## 다음 진행 순서
 
-1. TestFlight와 Google Play 내부 테스트 빌드
+1. Expo 계정 로그인 또는 `EXPO_TOKEN` 연결
+2. EAS 프로젝트 생성
+3. Google Play 내부 테스트용 Android preview 빌드
+4. TestFlight용 iOS production 빌드
