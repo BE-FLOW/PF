@@ -68,6 +68,11 @@ export interface AiReportUsageInput {
   errorCode?: string | null;
 }
 
+interface AuthenticatedUser {
+  id: string;
+  email: string;
+}
+
 function getConfig() {
   const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -294,9 +299,9 @@ function isValidMediaInput(
   );
 }
 
-async function getAuthenticatedUserId(
+async function getAuthenticatedUser(
   accessToken: string | null,
-): Promise<string | null> {
+): Promise<AuthenticatedUser | null> {
   const config = getConfig();
   if (!config || !accessToken) return null;
   try {
@@ -309,8 +314,48 @@ async function getAuthenticatedUserId(
       signal: AbortSignal.timeout(requestTimeoutMs),
     });
     if (!response.ok) return null;
-    const user = (await response.json()) as { id?: string };
-    return isUuid(user.id) ? user.id : null;
+    const user = (await response.json()) as { id?: string; email?: string };
+    return isUuid(user.id)
+      ? { id: user.id, email: user.email?.trim() ?? "" }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getAuthenticatedUserId(
+  accessToken: string | null,
+): Promise<string | null> {
+  return (await getAuthenticatedUser(accessToken))?.id ?? null;
+}
+
+export async function requestAccountDeletion(
+  accessToken: string | null,
+): Promise<{ requestedAt: string } | null> {
+  const user = await getAuthenticatedUser(accessToken);
+  if (!user) return null;
+
+  try {
+    const requestedAt = new Date().toISOString();
+    const response = await supabaseRequest(
+      "account_deletion_requests?on_conflict=user_id",
+      {
+        method: "POST",
+        headers: {
+          Prefer: "resolution=merge-duplicates,return=representation",
+        },
+        body: JSON.stringify({
+          user_id: user.id,
+          email: user.email || "unknown",
+          status: "requested",
+          requested_at: requestedAt,
+          updated_at: requestedAt,
+        }),
+      },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{ requested_at: string }>;
+    return { requestedAt: rows[0]?.requested_at ?? requestedAt };
   } catch {
     return null;
   }

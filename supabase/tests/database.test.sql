@@ -1,6 +1,6 @@
 begin;
 
-select plan(61);
+select plan(67);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -24,6 +24,16 @@ select has_table('public', 'ai_access_grants', 'ai access grants table exists');
 select has_table('public', 'ai_report_usage', 'ai report usage table exists');
 select has_table('public', 'ai_report_feedback', 'ai report feedback table exists');
 select has_view('public', 'ai_usage_management', 'ai usage management view exists');
+select has_table(
+  'public',
+  'account_deletion_requests',
+  'account deletion request table exists'
+);
+select has_view(
+  'public',
+  'account_deletion_management',
+  'account deletion management view exists'
+);
 select col_not_null(
   'public',
   'health_reports',
@@ -264,6 +274,28 @@ select is(
   ),
   true,
   'service role can redeem AI access codes through route handlers'
+);
+
+select has_column(
+  'public',
+  'account_deletion_requests',
+  'status',
+  'account deletion request status is stored'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.account_deletion_requests'::regclass),
+  true,
+  'RLS is enabled for account deletion requests'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'account_deletion_requests'),
+  0,
+  'account deletion requests have no browser-facing policies'
+);
+select is(
+  (select confdeltype::text from pg_constraint where conname = 'account_deletion_requests_user_id_fkey'),
+  'c',
+  'account deletion request is removed with the auth user'
 );
 
 select * from finish();

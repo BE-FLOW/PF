@@ -43,8 +43,8 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 - 병원에서 받은 안내 체크리스트
 - 3일·7일·14일과 장기 30일·60일·90일 경과 기록
 - 참여코드 기반 GPT 검토용 초안과 테스터 피드백
+- 계정 삭제 요청 접수
 
 ## 다음 구현 순서
 
-1. 계정 삭제 요청 흐름
-2. TestFlight와 Google Play 내부 테스트 빌드
+1. TestFlight와 Google Play 내부 테스트 빌드

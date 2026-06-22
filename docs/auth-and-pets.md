@@ -38,6 +38,15 @@ PetFlow 안에서 수의사가 확인한 정보로 표시하지 않는다.
 날을 경과 기준일로 사용하고, 계획이 없으면 사건 시작일을 사용한다. 출처는
 `owner`, 확인 상태는 `unreviewed`로 고정한다.
 
+## 계정 삭제 요청
+
+로그인한 테스터는 앱 또는 웹 계정 화면에서 계정 삭제 요청을 남길 수 있다. 요청은
+`account_deletion_requests`에 저장하며 브라우저에서 직접 접근할 수 없다. 운영자는
+`account_deletion_management`에서 요청자 이메일, 닉네임, 전화번호를 확인한 뒤
+Supabase Authentication에서 Auth 사용자를 삭제한다. Auth 사용자 삭제 시 연결된
+테스터 정보, 반려동물, 사건, 기록, 계획, 경과, GPT 권한과 피드백은 cascade로 함께
+삭제된다.
+
 ## GPT 리포트 권한과 참여코드
 
 수의사 검토용 GPT 리포트는 로그인만으로 열지 않는다. 관리자가 Supabase SQL

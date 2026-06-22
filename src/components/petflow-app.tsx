@@ -3486,6 +3486,28 @@ export function PetFlowApp() {
       return "피드백을 저장하지 못했어요.";
     }
   }
+
+  async function requestAccountDeletion() {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
+      const response = await fetch("/api/account-deletion", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        return payload.error ?? "계정 삭제 요청을 접수하지 못했어요.";
+      }
+      return "";
+    } catch {
+      return "계정 삭제 요청을 접수하지 못했어요.";
+    }
+  }
+
   async function updateFeedback(value: HistoryRecord["feedback"]) {
     if (!selected) return;
     const updated = { ...selected, feedback: value };
@@ -3557,6 +3579,7 @@ export function PetFlowApp() {
             onAuth={handleAuth}
             onSaveTesterProfile={saveTesterProfile}
             onRedeemAiCode={redeemAiCode}
+            onRequestAccountDeletion={requestAccountDeletion}
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
             onEditPet={(pet) => openProfile("account", pet)}

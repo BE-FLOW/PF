@@ -330,6 +330,9 @@ export default function App() {
   const [aiCodeDraft, setAiCodeDraft] = useState("");
   const [aiCodeLoading, setAiCodeLoading] = useState(false);
   const [aiCodeMessage, setAiCodeMessage] = useState("");
+  const [accountDeletionLoading, setAccountDeletionLoading] = useState(false);
+  const [accountDeletionMessage, setAccountDeletionMessage] = useState("");
+  const [accountDeletionRequested, setAccountDeletionRequested] = useState(false);
   const [vetDrafts, setVetDrafts] = useState<VetDraftMap>({});
   const [vetDraftLoadingEpisodeId, setVetDraftLoadingEpisodeId] =
     useState<string | null>(null);
@@ -482,6 +485,9 @@ export default function App() {
       setAiCodeDraft("");
       setAiCodeLoading(false);
       setAiCodeMessage("");
+      setAccountDeletionLoading(false);
+      setAccountDeletionMessage("");
+      setAccountDeletionRequested(false);
       setVetDrafts({});
       setVetDraftLoadingEpisodeId(null);
       setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
@@ -498,6 +504,10 @@ export default function App() {
       setAuthReady(true);
       return;
     }
+
+    setAccountDeletionLoading(false);
+    setAccountDeletionMessage("");
+    setAccountDeletionRequested(false);
 
     const [{ data, error }, { data: petRows, error: petsError }] = await Promise.all([
       supabase
@@ -845,6 +855,38 @@ export default function App() {
     setLoading(true);
     await supabase?.auth.signOut();
     setLoading(false);
+  }
+
+  async function requestAccountDeletion() {
+    if (accountDeletionRequested) return;
+
+    setAccountDeletionLoading(true);
+    setAccountDeletionMessage("");
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/account-deletion`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error("request failed");
+
+      setAccountDeletionRequested(true);
+      setAccountDeletionMessage(
+        "계정 삭제 요청을 접수했어요. 운영자가 확인 후 테스트 데이터 삭제를 진행합니다.",
+      );
+    } catch {
+      setAccountDeletionMessage(
+        "계정 삭제 요청을 접수하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      );
+    } finally {
+      setAccountDeletionLoading(false);
+    }
   }
 
   function startNewPet() {
@@ -1564,11 +1606,15 @@ export default function App() {
                 aiCodeDraft={aiCodeDraft}
                 aiCodeLoading={aiCodeLoading}
                 aiCodeMessage={aiCodeMessage}
+                accountDeletionLoading={accountDeletionLoading}
+                accountDeletionMessage={accountDeletionMessage}
+                accountDeletionRequested={accountDeletionRequested}
                 user={user}
                 testerProfile={testerProfile}
                 onSignOut={signOut}
                 onChangeAiCode={setAiCodeDraft}
                 onRedeemAiCode={redeemAiCode}
+                onRequestAccountDeletion={requestAccountDeletion}
                 disabled={loading}
               />
               {needsTesterProfile ? (
@@ -1893,22 +1939,30 @@ function AccountCard({
   aiCodeDraft,
   aiCodeLoading,
   aiCodeMessage,
+  accountDeletionLoading,
+  accountDeletionMessage,
+  accountDeletionRequested,
   user,
   testerProfile,
   disabled,
   onChangeAiCode,
   onRedeemAiCode,
+  onRequestAccountDeletion,
   onSignOut,
 }: {
   aiAccess: AiAccessStatus | null;
   aiCodeDraft: string;
   aiCodeLoading: boolean;
   aiCodeMessage: string;
+  accountDeletionLoading: boolean;
+  accountDeletionMessage: string;
+  accountDeletionRequested: boolean;
   user: User;
   testerProfile: TesterProfile | null;
   disabled: boolean;
   onChangeAiCode: (value: string) => void;
   onRedeemAiCode: () => Promise<void>;
+  onRequestAccountDeletion: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }) {
   return (
@@ -1984,6 +2038,36 @@ function AccountCard({
         <Message
           text={aiCodeMessage}
           tone={aiCodeMessage === "테스터 키가 등록됐어요." ? "success" : "error"}
+        />
+      </View>
+
+      <View style={styles.accountDeletionBox}>
+        <Text style={styles.accountDeletionTitle}>계정 삭제 요청</Text>
+        <Text style={styles.accountDeletionText}>
+          테스트를 중단하려면 요청을 남겨주세요. 운영자가 확인 후 계정과 연결된
+          반려동물, 건강 기록, GPT 사용 권한을 삭제합니다.
+        </Text>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          disabled={disabled || accountDeletionLoading || accountDeletionRequested}
+          onPress={() => void onRequestAccountDeletion()}
+          style={[
+            styles.accountDeletionButton,
+            (disabled || accountDeletionLoading || accountDeletionRequested) &&
+              styles.buttonDisabled,
+          ]}
+        >
+          <Text style={styles.accountDeletionButtonText}>
+            {accountDeletionRequested
+              ? "삭제 요청 접수됨"
+              : accountDeletionLoading
+                ? "요청 중"
+                : "계정 삭제 요청"}
+          </Text>
+        </TouchableOpacity>
+        <Message
+          text={accountDeletionMessage}
+          tone={accountDeletionRequested ? "success" : "error"}
         />
       </View>
 
@@ -3765,6 +3849,38 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
   },
   aiCodeButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  accountDeletionBox: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: "#efd2ca",
+    borderRadius: 20,
+    backgroundColor: "#fff8f6",
+    padding: 14,
+  },
+  accountDeletionTitle: {
+    color: colors.danger,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  accountDeletionText: {
+    marginTop: 6,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  accountDeletionButton: {
+    alignItems: "center",
+    borderRadius: 16,
+    backgroundColor: colors.danger,
+    marginTop: 11,
+    paddingVertical: 12,
+  },
+  accountDeletionButtonText: {
     color: "#ffffff",
     fontSize: 13,
     fontWeight: "900",

@@ -138,6 +138,7 @@ export function AccountView({
   onAuth,
   onSaveTesterProfile,
   onRedeemAiCode,
+  onRequestAccountDeletion,
   onLogout,
   onAddPet,
   onEditPet,
@@ -159,6 +160,7 @@ export function AccountView({
   ) => Promise<string>;
   onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
   onRedeemAiCode: (code: string) => Promise<string>;
+  onRequestAccountDeletion: () => Promise<string>;
   onLogout: () => Promise<void>;
   onAddPet: () => void;
   onEditPet: (pet: PetProfile) => void;
@@ -186,6 +188,9 @@ export function AccountView({
   const [aiCode, setAiCode] = useState("");
   const [aiCodeSaving, setAiCodeSaving] = useState(false);
   const [aiCodeMessage, setAiCodeMessage] = useState("");
+  const [deletionSaving, setDeletionSaving] = useState(false);
+  const [deletionMessage, setDeletionMessage] = useState("");
+  const [deletionRequested, setDeletionRequested] = useState(false);
 
   const needsTesterProfile = Boolean(
     user &&
@@ -241,6 +246,18 @@ export function AccountView({
     setAiCodeSaving(false);
     setAiCodeMessage(result || "참여코드가 등록됐어요.");
     if (!result) setAiCode("");
+  }
+
+  async function requestDeletion() {
+    if (deletionRequested) return;
+    setDeletionSaving(true);
+    const result = await onRequestAccountDeletion();
+    setDeletionSaving(false);
+    setDeletionMessage(
+      result ||
+        "계정 삭제 요청을 접수했어요. 운영자가 확인 후 테스트 데이터 삭제를 진행합니다.",
+    );
+    if (!result) setDeletionRequested(true);
   }
 
   return (
@@ -325,6 +342,36 @@ export function AccountView({
             {aiCodeMessage && (
               <p className={aiCodeMessage.includes("등록") ? "form-success" : "form-error"} role="alert">
                 {aiCodeMessage}
+              </p>
+            )}
+          </section>
+
+          <section className="panel account-deletion-panel">
+            <div>
+              <h3>계정 삭제 요청</h3>
+              <p>
+                테스트를 중단하려면 요청을 남겨주세요. 운영자가 확인 후 계정과
+                연결된 반려동물, 건강 기록, GPT 사용 권한을 삭제합니다.
+              </p>
+            </div>
+            <button
+              className="secondary-button compact danger-button"
+              type="button"
+              onClick={requestDeletion}
+              disabled={deletionSaving || deletionRequested}
+            >
+              {deletionRequested
+                ? "삭제 요청 접수됨"
+                : deletionSaving
+                  ? "요청 중..."
+                  : "계정 삭제 요청"}
+            </button>
+            {deletionMessage && (
+              <p
+                className={deletionRequested ? "form-success" : "form-error"}
+                role="alert"
+              >
+                {deletionMessage}
               </p>
             )}
           </section>

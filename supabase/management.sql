@@ -4,6 +4,10 @@ select *
 from public.tester_management
 order by created_at desc;
 
+select *
+from public.account_deletion_management
+order by requested_at desc;
+
 select
   risk_level,
   count(*)::integer as report_count
