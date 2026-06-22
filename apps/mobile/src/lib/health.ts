@@ -3,6 +3,7 @@ export type PetSex = "unknown" | "male" | "female" | "neutered-male" | "spayed-f
 export type Level = "normal" | "slight" | "low" | "none";
 export type Duration = "today" | "2-3days" | "4-7days" | "over-week";
 export type RiskLevel = "watch" | "soon" | "urgent";
+export type ReportMediaKind = "image" | "video";
 
 export type SymptomId =
   | "vomiting"
@@ -73,6 +74,21 @@ export interface DisplayHealthReport {
   risk_score: number;
   analysis_source: AnalysisResult["source"];
   created_at: string;
+  media?: ReportMediaAttachment[];
+}
+
+export interface ReportMediaAttachment {
+  id: string;
+  reportId: string;
+  petId: string;
+  episodeId: string;
+  kind: ReportMediaKind;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+  createdAt: string;
+  signedUrl?: string;
 }
 
 export interface HistoryRecord {
@@ -80,6 +96,7 @@ export interface HistoryRecord {
   episodeId?: string;
   input: HealthCheckInput;
   result: AnalysisResult;
+  media?: ReportMediaAttachment[];
 }
 
 export type HealthTrend = "stable" | "watch" | "worsening";
@@ -132,6 +149,57 @@ export const riskLabels: Record<RiskLevel, string> = {
   soon: "진료 권장",
   urgent: "즉시 상담",
 };
+
+export const reportMediaBucket = "petflow-report-media";
+export const maxReportMediaFiles = 4;
+export const maxReportMediaSizeBytes = 50 * 1024 * 1024;
+export const allowedReportMediaMimeTypes = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+] as const;
+
+const allowedReportMediaMimeTypeSet = new Set<string>(
+  allowedReportMediaMimeTypes,
+);
+
+export function reportMediaKindFromMimeType(
+  mimeType: string,
+): ReportMediaKind | null {
+  if (!allowedReportMediaMimeTypeSet.has(mimeType)) return null;
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  return null;
+}
+
+export function reportMediaExtensionFromMimeType(mimeType: string) {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "video/quicktime") return "mov";
+  return mimeType.split("/")[1]?.replace(/[^a-z0-9]/g, "") || "bin";
+}
+
+export function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)}MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+export function formatReportMediaSummary(media: Array<{ kind: ReportMediaKind }>) {
+  const imageCount = media.filter((item) => item.kind === "image").length;
+  const videoCount = media.filter((item) => item.kind === "video").length;
+  return [
+    imageCount ? `사진 ${imageCount}개` : "",
+    videoCount ? `영상 ${videoCount}개` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
 
 const symptomLabels: Record<SymptomId, string> = Object.fromEntries(
   symptomOptions.map((option) => [option.id, option.label]),
@@ -370,6 +438,7 @@ export function storedReportToHistoryRecord(
       source: stored.analysis_source,
       storage: "remote",
     },
+    media: stored.media ?? [],
   };
 }
 

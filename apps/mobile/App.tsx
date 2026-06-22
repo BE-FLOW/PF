@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { File } from "expo-file-system";
+import * as ImagePicker from "expo-image-picker";
 import type { User } from "@supabase/supabase-js";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -21,8 +24,15 @@ import {
   analyzeLocally,
   createUuid,
   durationOptions,
+  formatFileSize,
+  formatReportMediaSummary,
   levelOptions,
+  maxReportMediaFiles,
+  maxReportMediaSizeBytes,
   profileToHealthInput,
+  reportMediaBucket,
+  reportMediaExtensionFromMimeType,
+  reportMediaKindFromMimeType,
   redFlagOptions,
   resetToNormal,
   riskLabels,
@@ -37,6 +47,8 @@ import {
   type HistoryRecord,
   type PetProfile,
   type PetSex,
+  type ReportMediaAttachment,
+  type ReportMediaKind,
   type Species,
 } from "./src/lib/health";
 
@@ -57,6 +69,15 @@ interface TesterDraft {
 }
 
 type PetDraft = Omit<PetProfile, "id">;
+
+interface PendingMediaAsset {
+  id: string;
+  uri: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: ReportMediaKind;
+}
 
 const emptyDraft: TesterDraft = {
   nickname: "",
@@ -117,6 +138,35 @@ function upsertHistoryRecord(current: HistoryRecord[], next: HistoryRecord) {
   ]);
 }
 
+function mimeTypeFromAsset(asset: ImagePicker.ImagePickerAsset) {
+  const explicit = asset.mimeType?.toLowerCase();
+  if (explicit) return explicit;
+  const extension = (asset.fileName ?? asset.uri)
+    .split(/[./]/)
+    .pop()
+    ?.toLowerCase();
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "heic") return "image/heic";
+  if (extension === "heif") return "image/heif";
+  if (extension === "mp4") return "video/mp4";
+  if (extension === "mov") return "video/quicktime";
+  if (extension === "webm") return "video/webm";
+  return asset.type === "video" ? "video/mp4" : "image/jpeg";
+}
+
+function cleanFileName(name: string) {
+  const cleaned = name.replace(/[\\/:*?"<>|]/g, "-").trim();
+  return (cleaned || `petflow-media-${Date.now()}`).slice(0, 160);
+}
+
+function fileNameFromAsset(asset: ImagePicker.ImagePickerAsset, mimeType: string) {
+  if (asset.fileName?.trim()) return cleanFileName(asset.fileName);
+  const extension = reportMediaExtensionFromMimeType(mimeType);
+  return cleanFileName(`petflow-media-${Date.now()}.${extension}`);
+}
+
 export default function App() {
   const configured = isSupabaseConfigured();
   const [authReady, setAuthReady] = useState(false);
@@ -142,6 +192,9 @@ export default function App() {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMessage, setHistoryMessage] = useState("");
+  const [pendingMedia, setPendingMedia] = useState<PendingMediaAsset[]>([]);
+  const [mediaMessage, setMediaMessage] = useState("");
+  const [mediaUploadMessage, setMediaUploadMessage] = useState("");
   const selectedPet = useMemo(
     () => pets.find((pet) => pet.id === selectedPetId),
     [pets, selectedPetId],
@@ -190,6 +243,9 @@ export default function App() {
       setLatestEpisodeId(null);
       setHistory([]);
       setHistoryMessage("");
+      setPendingMedia([]);
+      setMediaMessage("");
+      setMediaUploadMessage("");
       setAuthReady(true);
       return;
     }
@@ -256,6 +312,9 @@ export default function App() {
       setLatestEpisodeId(null);
       setHistory([]);
       setHistoryMessage("");
+      setPendingMedia([]);
+      setMediaMessage("");
+      setMediaUploadMessage("");
     }
     setDraft(
       profile
@@ -280,7 +339,8 @@ export default function App() {
       const { data } = supabase
         ? await supabase.auth.getSession()
         : { data: { session: null } };
-      const accessToken = data.session?.access_token;
+      const session = data.session;
+      const accessToken = session?.access_token;
       if (!accessToken) throw new Error("missing session");
 
       const response = await fetch(`${apiBaseUrl}/api/pets/${petId}/history`, {
@@ -300,6 +360,82 @@ export default function App() {
       setHistoryLoading(false);
     }
   }, []);
+
+  async function uploadPendingMediaFiles({
+    accessToken,
+    clientId,
+    files,
+    petId,
+    reportId,
+    userId,
+  }: {
+    accessToken: string;
+    clientId: string;
+    files: PendingMediaAsset[];
+    petId: string;
+    reportId: string;
+    userId: string;
+  }): Promise<ReportMediaAttachment[]> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !files.length) return [];
+
+    const uploadedPaths: string[] = [];
+    const registeredFiles: Array<{
+      storagePath: string;
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+      kind: ReportMediaKind;
+    }> = [];
+
+    try {
+      for (const [index, item] of files.entries()) {
+        const uploadFile = new File(item.uri);
+        const body = await uploadFile.arrayBuffer();
+        if (body.byteLength <= 0 || body.byteLength > maxReportMediaSizeBytes) {
+          throw new Error("invalid media size");
+        }
+        const extension = reportMediaExtensionFromMimeType(item.mimeType);
+        const storagePath = `${userId}/${petId}/${reportId}/${Date.now()}-${index}-${createUuid()}.${extension}`;
+
+        const { error } = await supabase.storage
+          .from(reportMediaBucket)
+          .upload(storagePath, body, {
+            cacheControl: "3600",
+            contentType: item.mimeType,
+            upsert: false,
+          });
+        if (error) throw error;
+        uploadedPaths.push(storagePath);
+        registeredFiles.push({
+          storagePath,
+          fileName: item.fileName,
+          mimeType: item.mimeType,
+          sizeBytes: body.byteLength || item.sizeBytes,
+          kind: item.kind,
+        });
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/reports/${reportId}/media`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ clientId, files: registeredFiles }),
+      });
+      const payload = (await response.json()) as {
+        media?: ReportMediaAttachment[];
+      };
+      if (!response.ok || !payload.media) throw new Error("media registration failed");
+      return payload.media;
+    } catch (error) {
+      if (uploadedPaths.length) {
+        await supabase.storage.from(reportMediaBucket).remove(uploadedPaths);
+      }
+      throw error;
+    }
+  }
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -321,6 +457,9 @@ export default function App() {
     setHealthMessage("");
     setLatestResult(null);
     setLatestEpisodeId(null);
+    setPendingMedia([]);
+    setMediaMessage("");
+    setMediaUploadMessage("");
     void loadPetHistory(selectedPet);
   }, [loadPetHistory, selectedPet]);
 
@@ -436,6 +575,66 @@ export default function App() {
     setPetMessage("");
   }
 
+  async function pickMedia() {
+    setMediaMessage("");
+    if (pendingMedia.length >= maxReportMediaFiles) {
+      setMediaMessage(`사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`);
+      return;
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setMediaMessage("사진·영상 접근 권한이 필요해요. 권한을 허용한 뒤 다시 시도해 주세요.");
+      return;
+    }
+
+    const remaining = maxReportMediaFiles - pendingMedia.length;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsMultipleSelection: true,
+      mediaTypes: ["images", "videos"],
+      quality: 0.8,
+      selectionLimit: remaining,
+    });
+    if (result.canceled) return;
+
+    const next: PendingMediaAsset[] = [];
+    let nextMessage = "";
+    for (const asset of result.assets) {
+      if (pendingMedia.length + next.length >= maxReportMediaFiles) {
+        nextMessage = `사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`;
+        break;
+      }
+      const mimeType = mimeTypeFromAsset(asset);
+      const kind = reportMediaKindFromMimeType(mimeType);
+      if (!kind) {
+        nextMessage =
+          "JPG, PNG, WEBP, HEIC 이미지 또는 MP4, MOV, WEBM 영상만 저장할 수 있어요.";
+        continue;
+      }
+      const sizeBytes = asset.fileSize ?? 0;
+      if (sizeBytes > maxReportMediaSizeBytes) {
+        nextMessage = "파일 하나는 50MB 이하로 올려 주세요.";
+        continue;
+      }
+      next.push({
+        id: createUuid(),
+        uri: asset.uri,
+        fileName: fileNameFromAsset(asset, mimeType),
+        mimeType,
+        sizeBytes,
+        kind,
+      });
+    }
+
+    setMediaMessage(nextMessage);
+    if (next.length) setPendingMedia((current) => [...current, ...next]);
+  }
+
+  function removePendingMedia(id: string) {
+    setPendingMedia((current) => current.filter((item) => item.id !== id));
+    setMediaMessage("");
+  }
+
   async function savePetProfile() {
     const supabase = getSupabaseClient();
     if (!supabase || !user) {
@@ -507,6 +706,7 @@ export default function App() {
     const localResult = analyzeLocally(input);
     setHealthLoading(true);
     setHealthMessage("");
+    setMediaUploadMessage("");
     setLatestEpisodeId(null);
 
     try {
@@ -514,15 +714,17 @@ export default function App() {
       const { data } = supabase
         ? await supabase.auth.getSession()
         : { data: { session: null } };
-      const accessToken = data.session?.access_token;
+      const session = data.session;
+      const accessToken = session?.access_token;
       if (!accessToken) throw new Error("missing session");
+      const clientId = createUuid();
 
       const response = await fetch(`${apiBaseUrl}/api/analyze`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
-          "x-petflow-client-id": createUuid(),
+          "x-petflow-client-id": clientId,
           "x-petflow-pet-id": selectedPet.id,
         },
         body: JSON.stringify(input),
@@ -532,16 +734,48 @@ export default function App() {
         episodeId?: string | null;
       };
       const { episodeId, ...result } = payload;
+      let media: ReportMediaAttachment[] = [];
+      let mediaNotice = "";
+      if (pendingMedia.length) {
+        if (
+          result.storage === "remote" &&
+          episodeId &&
+          session.user.id &&
+          selectedPet.id
+        ) {
+          try {
+            media = await uploadPendingMediaFiles({
+              accessToken,
+              clientId,
+              files: pendingMedia,
+              petId: selectedPet.id,
+              reportId: result.id,
+              userId: session.user.id,
+            });
+            mediaNotice = media.length
+              ? `${formatReportMediaSummary(media)} 첨부도 함께 저장됐어요.`
+              : "";
+          } catch {
+            mediaNotice =
+              "기록은 저장됐지만 사진·영상 첨부는 저장하지 못했어요. 필요하면 새 기록에서 다시 첨부해 주세요.";
+          }
+        } else {
+          mediaNotice =
+            "기록은 저장됐지만 사진·영상은 계정에 연결된 서버 기록에서만 저장할 수 있어요.";
+        }
+      }
+      const record: HistoryRecord = {
+        petId: selectedPet.id,
+        episodeId: episodeId ?? undefined,
+        input,
+        result,
+        media,
+      };
       setLatestResult(result);
       setLatestEpisodeId(episodeId ?? null);
-      setHistory((current) =>
-        upsertHistoryRecord(current, {
-          petId: selectedPet.id,
-          episodeId: episodeId ?? undefined,
-          input,
-          result,
-        }),
-      );
+      setHistory((current) => upsertHistoryRecord(current, record));
+      setPendingMedia([]);
+      setMediaUploadMessage(mediaNotice);
       setHealthMessage(
         result.storage === "remote"
           ? "오늘 기록이 저장됐어요."
@@ -622,10 +856,15 @@ export default function App() {
                     <HealthRecorder
                       input={healthInput}
                       loading={healthLoading}
+                      mediaMessage={mediaMessage}
+                      mediaUploadMessage={mediaUploadMessage}
                       message={healthMessage}
+                      pendingMedia={pendingMedia}
                       result={latestResult}
                       episodeId={latestEpisodeId}
                       pet={selectedPet}
+                      onPickMedia={pickMedia}
+                      onRemoveMedia={removePendingMedia}
                       setInput={setHealthInput}
                       onSubmit={submitHealthCheck}
                     />
@@ -1124,19 +1363,29 @@ function ChipGroup<T extends string>({
 function HealthRecorder({
   input,
   loading,
+  mediaMessage,
+  mediaUploadMessage,
   message,
+  pendingMedia,
   result,
   episodeId,
   pet,
+  onPickMedia,
+  onRemoveMedia,
   setInput,
   onSubmit,
 }: {
   input: HealthCheckInput;
   loading: boolean;
+  mediaMessage: string;
+  mediaUploadMessage: string;
   message: string;
+  pendingMedia: PendingMediaAsset[];
   result: AnalysisResult | null;
   episodeId: string | null;
   pet: PetProfile;
+  onPickMedia: () => Promise<void>;
+  onRemoveMedia: (id: string) => void;
   setInput: (input: HealthCheckInput) => void;
   onSubmit: () => Promise<void>;
 }) {
@@ -1212,14 +1461,91 @@ function HealthRecorder({
         value={input.note}
       />
 
+      <MediaPickerSection
+        mediaMessage={mediaMessage}
+        onPickMedia={onPickMedia}
+        onRemoveMedia={onRemoveMedia}
+        pendingMedia={pendingMedia}
+      />
+
       <PrimaryButton
         disabled={loading}
         label={loading ? "기록 중..." : "오늘 건강 기록 저장"}
         onPress={onSubmit}
       />
       <Message text={message} />
+      <Message text={mediaUploadMessage} tone="success" />
 
       {result ? <HealthResultCard episodeId={episodeId} result={result} /> : null}
+    </View>
+  );
+}
+
+function MediaPickerSection({
+  mediaMessage,
+  onPickMedia,
+  onRemoveMedia,
+  pendingMedia,
+}: {
+  mediaMessage: string;
+  onPickMedia: () => Promise<void>;
+  onRemoveMedia: (id: string) => void;
+  pendingMedia: PendingMediaAsset[];
+}) {
+  return (
+    <View style={styles.mediaBox}>
+      <View style={styles.mediaHeader}>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.mediaTitle}>사진·영상 첨부 (선택)</Text>
+          <Text style={styles.mediaText}>
+            병원에 보여줄 참고 자료만 골라주세요. PetFlow가 내용을 판독하지는 않아요.
+          </Text>
+        </View>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => void onPickMedia()}
+          style={styles.mediaAddButton}
+        >
+          <Text style={styles.mediaAddButtonText}>추가</Text>
+        </TouchableOpacity>
+      </View>
+
+      {pendingMedia.length ? (
+        <View style={styles.mediaList}>
+          {pendingMedia.map((item) => (
+            <View key={item.id} style={styles.mediaItem}>
+              {item.kind === "image" ? (
+                <Image source={{ uri: item.uri }} style={styles.mediaThumb} />
+              ) : (
+                <View style={[styles.mediaThumb, styles.videoThumb]}>
+                  <Text style={styles.videoThumbText}>영상</Text>
+                </View>
+              )}
+              <View style={styles.mediaItemText}>
+                <Text numberOfLines={1} style={styles.mediaFileName}>
+                  {item.fileName}
+                </Text>
+                <Text style={styles.mediaFileMeta}>
+                  {item.kind === "image" ? "사진" : "영상"} ·{" "}
+                  {item.sizeBytes ? formatFileSize(item.sizeBytes) : "크기 확인 중"}
+                </Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => onRemoveMedia(item.id)}
+                style={styles.mediaRemoveButton}
+              >
+                <Text style={styles.mediaRemoveButtonText}>삭제</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.mediaEmptyText}>
+          최대 {maxReportMediaFiles}개, 파일 하나당 50MB까지 저장할 수 있어요.
+        </Text>
+      )}
+      <Message text={mediaMessage} />
     </View>
   );
 }
@@ -1385,6 +1711,7 @@ function HealthHistoryCard({
 }
 
 function HistoryRecordItem({ record }: { record: HistoryRecord }) {
+  const mediaSummary = formatReportMediaSummary(record.media ?? []);
   return (
     <View style={styles.historyItem}>
       <View style={styles.historyItemHeader}>
@@ -1403,6 +1730,7 @@ function HistoryRecordItem({ record }: { record: HistoryRecord }) {
       <Text style={styles.historyStorage}>
         {record.result.storage === "remote" ? "서버 저장" : "기기 내 결과"}
         {record.episodeId ? " · 사건 연결" : ""}
+        {mediaSummary ? ` · ${mediaSummary}` : ""}
       </Text>
     </View>
   );
@@ -1460,9 +1788,19 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Message({ text }: { text: string }) {
+function Message({
+  text,
+  tone = "error",
+}: {
+  text: string;
+  tone?: "error" | "success";
+}) {
   if (!text) return null;
-  return <Text style={styles.message}>{text}</Text>;
+  return (
+    <Text style={[styles.message, tone === "success" && styles.messageSuccess]}>
+      {text}
+    </Text>
+  );
 }
 
 function PrimaryButton({
@@ -1680,6 +2018,9 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 19,
   },
+  messageSuccess: {
+    color: colors.green,
+  },
   primaryButton: {
     marginTop: 18,
     alignItems: "center",
@@ -1872,6 +2213,103 @@ const styles = StyleSheet.create({
   },
   textarea: {
     minHeight: 94,
+  },
+  mediaBox: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: "#f8fcfa",
+    padding: 14,
+  },
+  mediaHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  mediaTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  mediaText: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  mediaAddButton: {
+    borderRadius: 999,
+    backgroundColor: colors.green,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  mediaAddButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  mediaList: {
+    gap: 9,
+    marginTop: 13,
+  },
+  mediaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 9,
+  },
+  mediaThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: colors.greenSoft,
+  },
+  videoThumb: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoThumbText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  mediaItemText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mediaFileName: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  mediaFileMeta: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  mediaRemoveButton: {
+    borderRadius: 999,
+    backgroundColor: "#edf5f0",
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  mediaRemoveButtonText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  mediaEmptyText: {
+    marginTop: 12,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
   },
   resultCard: {
     marginTop: 20,
