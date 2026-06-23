@@ -2839,7 +2839,7 @@ export function PetFlowApp() {
           .order("created_at", { ascending: true }),
         supabase
           .from("tester_profiles")
-          .select("nickname,phone,age_band,care_experience,consent_version,consented_at,phone_consented_at")
+          .select("nickname,phone,consent_version,consented_at,phone_consented_at")
           .maybeSingle(),
       ]);
       const loadedPets: PetProfile[] = (data ?? []).map((pet) => ({
@@ -2857,8 +2857,6 @@ export function PetFlowApp() {
           ? {
               nickname: tester.nickname,
               phone: tester.phone ?? "",
-              ageBand: tester.age_band ?? "",
-              careExperience: tester.care_experience ?? "",
               consentVersion: tester.consent_version,
               consentedAt: tester.consented_at,
               phoneConsentedAt: tester.phone_consented_at ?? "",
@@ -3080,7 +3078,7 @@ export function PetFlowApp() {
     mode: "login" | "signup",
     email: string,
     password: string,
-    tester: Pick<TesterProfile, "nickname" | "phone" | "ageBand" | "careExperience">,
+    tester: Pick<TesterProfile, "nickname" | "phone">,
     consented: boolean,
   ) {
     const supabase = getSupabaseBrowserClient();
@@ -3101,7 +3099,7 @@ export function PetFlowApp() {
     return "";
   }
   async function saveTesterProfile(
-    tester: Pick<TesterProfile, "nickname" | "phone" | "ageBand" | "careExperience">,
+    tester: Pick<TesterProfile, "nickname" | "phone">,
     consented: boolean,
     userId = user?.id,
   ) {
@@ -3115,8 +3113,6 @@ export function PetFlowApp() {
       user_id: userId,
       nickname: tester.nickname.trim(),
       phone,
-      age_band: tester.ageBand || null,
-      care_experience: tester.careExperience || null,
       consent_version: testerConsentVersion,
       consented_at: consentedAt,
       phone_consented_at: consentedAt,

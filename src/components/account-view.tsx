@@ -8,16 +8,11 @@ import type { AiAccessStatus, PetProfile, TesterProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
-type TesterDraft = Pick<
-  TesterProfile,
-  "nickname" | "phone" | "ageBand" | "careExperience"
->;
+type TesterDraft = Pick<TesterProfile, "nickname" | "phone">;
 
 const emptyTesterDraft: TesterDraft = {
   nickname: "",
   phone: "",
-  ageBand: "",
-  careExperience: "",
 };
 
 function TesterFields({
@@ -54,43 +49,6 @@ function TesterFields({
         />
         <small className="field-help">서비스 안내와 테스트 관련 연락에만 사용합니다.</small>
       </div>
-      <div className="form-grid">
-        <div className="field">
-          <label htmlFor="testerAge">연령대 (선택)</label>
-          <select
-            id="testerAge"
-            value={draft.ageBand}
-            onChange={(event) =>
-              setDraft({ ...draft, ageBand: event.target.value as TesterDraft["ageBand"] })
-            }
-          >
-            <option value="">선택 안 함</option>
-            <option value="under-20">20세 미만</option>
-            <option value="20s">20대</option>
-            <option value="30s">30대</option>
-            <option value="40s">40대</option>
-            <option value="50-plus">50대 이상</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="testerExperience">반려 경험 (선택)</label>
-          <select
-            id="testerExperience"
-            value={draft.careExperience}
-            onChange={(event) =>
-              setDraft({
-                ...draft,
-                careExperience: event.target.value as TesterDraft["careExperience"],
-              })
-            }
-          >
-            <option value="">선택 안 함</option>
-            <option value="first">처음</option>
-            <option value="under-3-years">3년 미만</option>
-            <option value="over-3-years">3년 이상</option>
-          </select>
-        </div>
-      </div>
     </div>
   );
 }
@@ -101,11 +59,10 @@ function PrivacyNotice() {
       <summary>수집 정보와 이용 안내</summary>
       <dl>
         <div><dt>필수</dt><dd>{testerPrivacySummary.required}</dd></div>
-        <div><dt>선택</dt><dd>{testerPrivacySummary.optional}</dd></div>
         <div><dt>목적</dt><dd>{testerPrivacySummary.purpose}</dd></div>
         <div><dt>보관</dt><dd>{testerPrivacySummary.retention}</dd></div>
       </dl>
-      <p>전화번호는 광고나 마케팅에 사용하지 않습니다. 선택 정보는 입력하지 않아도 가입할 수 있습니다.</p>
+      <p>전화번호는 광고나 마케팅에 사용하지 않습니다. 주소, 위치, 실명 확인 정보는 받지 않습니다.</p>
       <a href="/privacy" target="_blank" rel="noreferrer">전체 테스트 개인정보 안내 보기</a>
     </details>
   );
@@ -174,8 +131,6 @@ export function AccountView({
       ? {
           nickname: testerProfile.nickname,
           phone: formatKoreanMobile(testerProfile.phone),
-          ageBand: testerProfile.ageBand,
-          careExperience: testerProfile.careExperience,
         }
       : emptyTesterDraft,
   );

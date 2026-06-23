@@ -12,8 +12,7 @@ export default function PrivacyPage() {
         <section>
           <h2>수집 정보</h2>
           <p>필수: {testerPrivacySummary.required}</p>
-          <p>선택: {testerPrivacySummary.optional}</p>
-          <p>반려동물 이름과 건강 관찰 기록도 서비스 제공을 위해 저장됩니다.</p>
+          <p>반려동물 이름과 건강 관찰 기록은 서비스 제공을 위해 저장됩니다.</p>
         </section>
         <section>
           <h2>이용 목적과 기간</h2>
@@ -23,7 +22,7 @@ export default function PrivacyPage() {
         </section>
         <section>
           <h2>선택과 삭제</h2>
-          <p>연령대와 반려 경험은 입력하지 않아도 됩니다. 테스트 중 삭제가 필요하면 앱 또는 웹의 계정 화면에서 계정 삭제 요청을 남길 수 있습니다.</p>
+          <p>주소, 위치, 실명 확인 정보는 받지 않습니다. 테스트 중 삭제가 필요하면 앱 또는 웹의 계정 화면에서 계정 삭제 요청을 남길 수 있습니다.</p>
         </section>
         <section>
           <h2>외부 서비스</h2>

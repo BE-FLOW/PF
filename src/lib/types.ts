@@ -34,8 +34,6 @@ export interface PetProfile {
 export interface TesterProfile {
   nickname: string;
   phone: string;
-  ageBand: "" | "under-20" | "20s" | "30s" | "40s" | "50-plus";
-  careExperience: "" | "first" | "under-3-years" | "over-3-years";
   consentVersion: string;
   consentedAt: string;
   phoneConsentedAt: string;

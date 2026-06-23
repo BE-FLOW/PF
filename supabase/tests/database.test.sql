@@ -1,6 +1,6 @@
 begin;
 
-select plan(67);
+select plan(70);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -88,6 +88,8 @@ select is(
   'tester profiles has owner-only CRUD policies'
 );
 select has_column('public', 'tester_profiles', 'phone', 'tester phone exists');
+select hasnt_column('public', 'tester_profiles', 'age_band', 'tester age is not collected');
+select hasnt_column('public', 'tester_profiles', 'care_experience', 'tester care experience is not collected');
 select has_column(
   'public',
   'tester_profiles',
@@ -296,6 +298,17 @@ select is(
   (select confdeltype::text from pg_constraint where conname = 'account_deletion_requests_user_id_fkey'),
   'c',
   'account deletion request is removed with the auth user'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.health_reports
+    where is_test = true
+      and app_version = 'seed-v1'
+      and deployment_environment = 'seed'
+  ),
+  0,
+  'legacy seed reports are removed'
 );
 
 select * from finish();

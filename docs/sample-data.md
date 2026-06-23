@@ -1,22 +1,17 @@
 # 샘플 데이터 관리
 
-`supabase/seed.sql`은 개인정보 없는 샘플 리포트 8건과 피드백 5건을 만든다.
-같은 파일을 다시 실행해도 고정 UUID를 사용하므로 중복되지 않는다.
+현재 tester DB와 로컬 reset에서는 샘플 데이터를 자동 생성하지 않는다. 실제 테스터
+흐름은 회원가입, 반려동물 등록, 건강 기록 입력으로 확인한다.
 
-## 구분 방법
+이전에 사용하던 `seed-v1` 익명 샘플 리포트와 피드백은
+`202606230002_cleanup_seed_and_profile_fields.sql` 마이그레이션에서 삭제한다.
 
-- `is_test = true`
-- `app_version = seed-v1`
-- `deployment_environment = seed`
-
-Supabase Table Editor에서 `health_reports` 테이블에 위 필터를 적용하면 샘플만 볼 수 있다.
-
-## 삭제
-
-피드백은 외래 키의 `on delete cascade`로 함께 삭제된다.
+필요할 때만 SQL Editor에서 아래 조건으로 남은 샘플을 확인한다.
 
 ```sql
-delete from public.health_reports
+select id, client_id, created_at
+from public.health_reports
 where is_test = true
-  and app_version = 'seed-v1';
+  and app_version = 'seed-v1'
+  and deployment_environment = 'seed';
 ```
