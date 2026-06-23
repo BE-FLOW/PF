@@ -34,7 +34,6 @@ module.exports = {
     },
     android: {
       package: "com.beflow.petflow",
-      versionCode: 1,
       blockedPermissions: ["android.permission.RECORD_AUDIO"],
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
@@ -44,6 +43,9 @@ module.exports = {
     },
     extra: {
       apiBaseUrl,
+      eas: {
+        projectId: "89407691-ca07-4a92-bf16-bed006004720",
+      },
     },
   },
 };

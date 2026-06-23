@@ -44,6 +44,10 @@ cd apps/mobile
 npm run build:android:preview
 ```
 
+2026-06-23 첫 Android preview 빌드:
+
+- https://expo.dev/accounts/beflow/projects/petflow-mobile/builds/bb76fc98-b171-4dcc-beb0-91d942a6bd10
+
 Google Play 내부 테스트 트랙에 올릴 때는 production 빌드를 사용한다.
 
 ```bash
