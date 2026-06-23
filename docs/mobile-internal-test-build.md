@@ -32,8 +32,7 @@ npx eas-cli login
 npm run eas:init
 ```
 
-자동화 환경에서는 `EXPO_TOKEN`을 설정한 뒤 같은 명령을 실행한다. 2026-06-23 현재
-이 로컬 환경은 Expo 계정에 로그인되어 있지 않아 실제 EAS 빌드는 여기서 멈춘다.
+자동화 환경에서는 `EXPO_TOKEN`을 설정한 뒤 같은 명령을 실행한다.
 
 ## Android 내부 테스트
 
@@ -46,7 +45,10 @@ npm run build:android:preview
 
 2026-06-23 Android preview 빌드:
 
-- https://expo.dev/accounts/beflow/projects/petflow-mobile/builds/2ace41d2-66f9-4fc2-97ef-15967d70a9fc
+- 최신: https://expo.dev/accounts/beflow/projects/petflow-mobile/builds/886b35d9-d1ec-4c04-b766-5abeca5c79d2
+
+이번 빌드는 로그인 후 화면을 `오늘 기록`, `기록·보고서`, `계정` 탭으로 나누고,
+이미 반려동물이 있으면 등록 폼을 접어 긴 스크롤을 줄인다.
 
 이 빌드는 EAS preview 환경의 `EXPO_PUBLIC_SUPABASE_URL`과
 `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 포함한다.

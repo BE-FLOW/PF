@@ -65,6 +65,19 @@ import {
 } from "./src/lib/health";
 
 type AuthMode = "login" | "signup";
+type MainSection = "record" | "reports" | "account";
+
+const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
+  { id: "record", label: "오늘 기록" },
+  { id: "reports", label: "기록·보고서" },
+  { id: "account", label: "계정" },
+];
+
+const mainSectionDescriptions: Record<MainSection, string> = {
+  record: "반려동물을 고르고 오늘 관찰한 변화만 빠르게 남겨요.",
+  reports: "기록 흐름, 3·7·14일 경과, 수의사 검토용 초안을 확인해요.",
+  account: "테스터 키, GPT 권한, 계정 관리를 한곳에서 확인해요.",
+};
 
 interface TesterProfile {
   nickname: string;
@@ -285,6 +298,7 @@ export default function App() {
   const configured = isSupabaseConfigured();
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [mainSection, setMainSection] = useState<MainSection>("record");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [draft, setDraft] = useState<TesterDraft>(emptyDraft);
@@ -293,6 +307,7 @@ export default function App() {
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string>();
   const [petDraft, setPetDraft] = useState<PetDraft>(emptyPetDraft);
+  const [petFormExpanded, setPetFormExpanded] = useState(false);
   const [editingPetId, setEditingPetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -450,7 +465,7 @@ export default function App() {
     if (!user) return "계정으로 이어서 관리";
     if (needsTesterProfile) return "테스터 정보를 확인해요";
     if (!pets.length) return "첫 반려동물을 등록해요";
-    return "오늘 기록할 반려동물을 골라요";
+    return "필요한 화면만 골라요";
   }, [authReady, configured, needsTesterProfile, pets.length, user]);
 
   const loadAccount = useCallback(async (nextUser: User | null) => {
@@ -458,11 +473,13 @@ export default function App() {
     setMessage("");
     setPetMessage("");
     if (!nextUser) {
+      setMainSection("record");
       setTesterProfile(null);
       setDraft(emptyDraft);
       setPets([]);
       setSelectedPetId(undefined);
       setPetDraft(emptyPetDraft);
+      setPetFormExpanded(false);
       setEditingPetId(null);
       setHealthInput(null);
       setLatestResult(null);
@@ -557,7 +574,9 @@ export default function App() {
         ? current
         : loadedPets[0]?.id,
     );
+    setPetFormExpanded(!loadedPets.length);
     if (!loadedPets.length) {
+      setMainSection("record");
       setPetDraft(emptyPetDraft);
       setEditingPetId(null);
       setHealthInput(null);
@@ -892,11 +911,13 @@ export default function App() {
   function startNewPet() {
     setEditingPetId(null);
     setPetDraft(emptyPetDraft);
+    setPetFormExpanded(true);
     setPetMessage("");
   }
 
   function startEditingPet(pet: PetProfile) {
     setEditingPetId(pet.id ?? null);
+    setPetFormExpanded(true);
     setPetDraft({
       name: pet.name,
       species: pet.species,
@@ -905,6 +926,13 @@ export default function App() {
       sex: pet.sex,
       weight: pet.weight,
     });
+    setPetMessage("");
+  }
+
+  function closePetForm() {
+    setEditingPetId(null);
+    setPetDraft(emptyPetDraft);
+    setPetFormExpanded(false);
     setPetMessage("");
   }
 
@@ -1018,6 +1046,7 @@ export default function App() {
     setSelectedPetId(data.id);
     setEditingPetId(null);
     setPetDraft(emptyPetDraft);
+    setPetFormExpanded(false);
     setPetMessage("반려동물 정보가 저장됐어요.");
   }
 
@@ -1577,6 +1606,30 @@ export default function App() {
     }
   }
 
+  const appDescription =
+    user && !needsTesterProfile
+      ? mainSectionDescriptions[mainSection]
+      : "로그인 세션을 앱에 저장하고, 테스터 필수 정보를 웹과 같은 DB 구조로 관리하는 단계예요.";
+
+  const accountCard = user ? (
+    <AccountCard
+      aiAccess={aiAccess}
+      aiCodeDraft={aiCodeDraft}
+      aiCodeLoading={aiCodeLoading}
+      aiCodeMessage={aiCodeMessage}
+      accountDeletionLoading={accountDeletionLoading}
+      accountDeletionMessage={accountDeletionMessage}
+      accountDeletionRequested={accountDeletionRequested}
+      user={user}
+      testerProfile={testerProfile}
+      onSignOut={signOut}
+      onChangeAiCode={setAiCodeDraft}
+      onRedeemAiCode={redeemAiCode}
+      onRequestAccountDeletion={requestAccountDeletion}
+      disabled={loading}
+    />
+  ) : null;
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="dark-content" />
@@ -1590,10 +1643,7 @@ export default function App() {
           </View>
 
           <Text style={styles.title}>{headline}</Text>
-          <Text style={styles.description}>
-            로그인 세션을 앱에 저장하고, 테스터 필수 정보를 웹과 같은 DB 구조로
-            관리하는 단계예요.
-          </Text>
+          <Text style={styles.description}>{appDescription}</Text>
 
           {!configured ? (
             <ConfigurationCard />
@@ -1601,103 +1651,102 @@ export default function App() {
             <LoadingCard />
           ) : user ? (
             <>
-              <AccountCard
-                aiAccess={aiAccess}
-                aiCodeDraft={aiCodeDraft}
-                aiCodeLoading={aiCodeLoading}
-                aiCodeMessage={aiCodeMessage}
-                accountDeletionLoading={accountDeletionLoading}
-                accountDeletionMessage={accountDeletionMessage}
-                accountDeletionRequested={accountDeletionRequested}
-                user={user}
-                testerProfile={testerProfile}
-                onSignOut={signOut}
-                onChangeAiCode={setAiCodeDraft}
-                onRedeemAiCode={redeemAiCode}
-                onRequestAccountDeletion={requestAccountDeletion}
-                disabled={loading}
-              />
               {needsTesterProfile ? (
-                <TesterProfileForm
-                  draft={draft}
-                  setDraft={setDraft}
-                  loading={loading}
-                  message={message}
-                  onSubmit={submitTesterProfile}
-                />
+                <>
+                  {accountCard}
+                  <TesterProfileForm
+                    draft={draft}
+                    setDraft={setDraft}
+                    loading={loading}
+                    message={message}
+                    onSubmit={submitTesterProfile}
+                  />
+                </>
               ) : (
                 <>
-                  <PetManager
-                    draft={petDraft}
-                    editingPetId={editingPetId}
-                    loading={petLoading}
-                    message={petMessage}
-                    pets={pets}
-                    selectedPetId={selectedPetId}
-                    setDraft={setPetDraft}
-                    onEdit={startEditingPet}
-                    onNew={startNewPet}
-                    onSave={savePetProfile}
-                    onSelect={setSelectedPetId}
-                  />
-                  {selectedPet && healthInput ? (
-                    <HealthRecorder
-                      input={healthInput}
-                      loading={healthLoading}
-                      mediaMessage={mediaMessage}
-                      mediaUploadMessage={mediaUploadMessage}
-                      message={healthMessage}
-                      pendingMedia={pendingMedia}
-                      result={latestResult}
-                      episodeId={latestEpisodeId}
-                      pet={selectedPet}
-                      onPickMedia={pickMedia}
-                      onRemoveMedia={removePendingMedia}
-                      setInput={setHealthInput}
-                      onSubmit={submitHealthCheck}
-                    />
+                  <MainSectionTabs value={mainSection} onChange={setMainSection} />
+                  {mainSection === "record" ? (
+                    <>
+                      <PetManager
+                        draft={petDraft}
+                        editingPetId={editingPetId}
+                        formExpanded={petFormExpanded}
+                        loading={petLoading}
+                        message={petMessage}
+                        pets={pets}
+                        selectedPetId={selectedPetId}
+                        setDraft={setPetDraft}
+                        onCancelForm={closePetForm}
+                        onEdit={startEditingPet}
+                        onNew={startNewPet}
+                        onSave={savePetProfile}
+                        onSelect={setSelectedPetId}
+                      />
+                      {selectedPet && healthInput ? (
+                        <HealthRecorder
+                          input={healthInput}
+                          loading={healthLoading}
+                          mediaMessage={mediaMessage}
+                          mediaUploadMessage={mediaUploadMessage}
+                          message={healthMessage}
+                          pendingMedia={pendingMedia}
+                          result={latestResult}
+                          episodeId={latestEpisodeId}
+                          pet={selectedPet}
+                          onPickMedia={pickMedia}
+                          onRemoveMedia={removePendingMedia}
+                          setInput={setHealthInput}
+                          onSubmit={submitHealthCheck}
+                        />
+                      ) : null}
+                    </>
                   ) : null}
-                  {selectedPet ? (
-                    <HealthHistoryCard
-                      aiAccess={aiAccess}
-                      aiFeedbackDrafts={aiFeedbackDrafts}
-                      aiFeedbackNotice={aiFeedbackNotice}
-                      aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
-                      episodeGroups={episodeReportGroups}
-                      flow={healthFlow}
-                      history={selectedPetHistory}
-                      loading={historyLoading}
-                      message={historyMessage}
-                      editingPlanEpisodeId={editingPlanEpisodeId}
-                      planDraft={planDraft}
-                      planSavingEpisodeId={planSavingEpisodeId}
-                      planTogglingTaskId={planTogglingTaskId}
-                      planNotice={planNotice}
-                      progressDraft={progressDraft}
-                      progressNotice={progressNotice}
-                      progressSavingKey={progressSavingKey}
-                      vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
-                      vetDraftNotice={vetDraftNotice}
-                      vetDrafts={vetDrafts}
-                      savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
-                      onRefresh={() => loadPetHistory(selectedPet)}
-                      onShareReport={shareEpisodeReport}
-                      onCreateVetDraft={createVetDraft}
-                      onSaveAiFeedback={saveAiFeedback}
-                      onShareVetDraft={shareVetDraft}
-                      onStartPlanEdit={startPlanEdit}
-                      onCancelPlanEdit={cancelPlanEdit}
-                      onChangePlanDraft={setPlanDraft}
-                      onSavePlan={saveEpisodePlan}
-                      onTogglePlanTask={toggleEpisodePlanTask}
-                      onStartProgressEdit={startProgressEdit}
-                      onCancelProgressEdit={cancelProgressEdit}
-                      onChangeProgressDraft={setProgressDraft}
-                      onChangeAiFeedbackDraft={updateAiFeedbackDraft}
-                      onSaveProgress={saveEpisodeProgress}
-                      shareMessage={shareMessage}
-                    />
+                  {mainSection === "reports" ? (
+                    selectedPet ? (
+                      <HealthHistoryCard
+                        aiAccess={aiAccess}
+                        aiFeedbackDrafts={aiFeedbackDrafts}
+                        aiFeedbackNotice={aiFeedbackNotice}
+                        aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
+                        episodeGroups={episodeReportGroups}
+                        flow={healthFlow}
+                        history={selectedPetHistory}
+                        loading={historyLoading}
+                        message={historyMessage}
+                        editingPlanEpisodeId={editingPlanEpisodeId}
+                        planDraft={planDraft}
+                        planSavingEpisodeId={planSavingEpisodeId}
+                        planTogglingTaskId={planTogglingTaskId}
+                        planNotice={planNotice}
+                        progressDraft={progressDraft}
+                        progressNotice={progressNotice}
+                        progressSavingKey={progressSavingKey}
+                        vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
+                        vetDraftNotice={vetDraftNotice}
+                        vetDrafts={vetDrafts}
+                        savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
+                        onRefresh={() => loadPetHistory(selectedPet)}
+                        onShareReport={shareEpisodeReport}
+                        onCreateVetDraft={createVetDraft}
+                        onSaveAiFeedback={saveAiFeedback}
+                        onShareVetDraft={shareVetDraft}
+                        onStartPlanEdit={startPlanEdit}
+                        onCancelPlanEdit={cancelPlanEdit}
+                        onChangePlanDraft={setPlanDraft}
+                        onSavePlan={saveEpisodePlan}
+                        onTogglePlanTask={toggleEpisodePlanTask}
+                        onStartProgressEdit={startProgressEdit}
+                        onCancelProgressEdit={cancelProgressEdit}
+                        onChangeProgressDraft={setProgressDraft}
+                        onChangeAiFeedbackDraft={updateAiFeedbackDraft}
+                        onSaveProgress={saveEpisodeProgress}
+                        shareMessage={shareMessage}
+                      />
+                    ) : (
+                      <ReportsEmptyState onGoRecord={() => setMainSection("record")} />
+                    )
                   ) : null}
+                  {mainSection === "account" ? accountCard : null}
                 </>
               )}
             </>
@@ -1758,6 +1807,49 @@ function LoadingCard() {
     <View style={[styles.card, styles.loadingCard]}>
       <ActivityIndicator color={colors.green} />
       <Text style={styles.cardText}>저장된 로그인 세션을 확인하고 있어요.</Text>
+    </View>
+  );
+}
+
+function MainSectionTabs({
+  value,
+  onChange,
+}: {
+  value: MainSection;
+  onChange: (value: MainSection) => void;
+}) {
+  return (
+    <View style={styles.mainTabs}>
+      {mainSectionOptions.map((section) => {
+        const active = section.id === value;
+        return (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            activeOpacity={0.85}
+            key={section.id}
+            onPress={() => onChange(section.id)}
+            style={[styles.mainTab, active && styles.mainTabActive]}
+          >
+            <Text style={[styles.mainTabText, active && styles.mainTabTextActive]}>
+              {section.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function ReportsEmptyState({ onGoRecord }: { onGoRecord: () => void }) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardEyebrow}>REPORTS</Text>
+      <Text style={styles.cardTitle}>먼저 반려동물을 등록해 주세요</Text>
+      <Text style={styles.cardText}>
+        기록과 수의사 검토용 보고서는 반려동물별로 모아서 보여드려요.
+      </Text>
+      <SecondaryButton label="오늘 기록으로 이동" onPress={onGoRecord} />
     </View>
   );
 }
@@ -2086,11 +2178,13 @@ function AccountCard({
 function PetManager({
   draft,
   editingPetId,
+  formExpanded,
   loading,
   message,
   pets,
   selectedPetId,
   setDraft,
+  onCancelForm,
   onEdit,
   onNew,
   onSave,
@@ -2098,17 +2192,20 @@ function PetManager({
 }: {
   draft: PetDraft;
   editingPetId: string | null;
+  formExpanded: boolean;
   loading: boolean;
   message: string;
   pets: PetProfile[];
   selectedPetId?: string;
   setDraft: (draft: PetDraft) => void;
+  onCancelForm: () => void;
   onEdit: (pet: PetProfile) => void;
   onNew: () => void;
   onSave: () => Promise<void>;
   onSelect: (petId: string) => void;
 }) {
   const selectedPet = pets.find((pet) => pet.id === selectedPetId);
+  const showPetForm = formExpanded || !pets.length;
 
   return (
     <View style={styles.card}>
@@ -2177,13 +2274,16 @@ function PetManager({
         </View>
       ) : null}
 
-      <PetForm
-        draft={draft}
-        editing={Boolean(editingPetId)}
-        loading={loading}
-        setDraft={setDraft}
-        onSave={onSave}
-      />
+      {showPetForm ? (
+        <PetForm
+          draft={draft}
+          editing={Boolean(editingPetId)}
+          loading={loading}
+          setDraft={setDraft}
+          onCancel={pets.length ? onCancelForm : undefined}
+          onSave={onSave}
+        />
+      ) : null}
       <Message text={message} />
     </View>
   );
@@ -2194,17 +2294,32 @@ function PetForm({
   editing,
   loading,
   setDraft,
+  onCancel,
   onSave,
 }: {
   draft: PetDraft;
   editing: boolean;
   loading: boolean;
   setDraft: (draft: PetDraft) => void;
+  onCancel?: () => void;
   onSave: () => Promise<void>;
 }) {
   return (
     <View style={styles.petForm}>
-      <Text style={styles.formTitle}>{editing ? "반려동물 정보 수정" : "반려동물 등록"}</Text>
+      <View style={styles.petFormHeader}>
+        <Text style={styles.formTitle}>
+          {editing ? "반려동물 정보 수정" : "반려동물 등록"}
+        </Text>
+        {onCancel ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onCancel}
+            style={styles.formCloseButton}
+          >
+            <Text style={styles.formCloseButtonText}>접기</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
       <FieldLabel label="이름" />
       <TextInput
         maxLength={30}
@@ -3583,6 +3698,14 @@ function PrimaryButton({
   );
 }
 
+function SecondaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={styles.secondaryButton}>
+      <Text style={styles.secondaryButtonText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const colors = {
   background: "#f2faeb",
   card: "#ffffff",
@@ -3634,6 +3757,39 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     lineHeight: 24,
+  },
+  mainTabs: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: "#d8eadf",
+    borderRadius: 999,
+    backgroundColor: "#eaf6ef",
+    padding: 5,
+  },
+  mainTab: {
+    flex: 1,
+    alignItems: "center",
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 11,
+  },
+  mainTabActive: {
+    backgroundColor: colors.card,
+    shadowColor: "#0a3027",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  mainTabText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  mainTabTextActive: {
+    color: colors.green,
   },
   card: {
     marginTop: 24,
@@ -4030,10 +4186,28 @@ const styles = StyleSheet.create({
     borderTopColor: colors.line,
     paddingTop: 4,
   },
-  formTitle: {
+  petFormHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
     marginTop: 12,
+  },
+  formTitle: {
+    flex: 1,
     color: colors.ink,
     fontSize: 17,
+    fontWeight: "900",
+  },
+  formCloseButton: {
+    borderRadius: 999,
+    backgroundColor: "#edf5f0",
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  formCloseButtonText: {
+    color: colors.muted,
+    fontSize: 12,
     fontWeight: "900",
   },
   chipGroup: {
