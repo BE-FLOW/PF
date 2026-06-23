@@ -29,6 +29,7 @@ apps/mobile/*.ipa
 
 # misc
 .DS_Store
+.codex-remote-attachments/
 *.pem
 *.p8
 *.mobileprovision

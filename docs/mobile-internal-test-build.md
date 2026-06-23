@@ -44,9 +44,12 @@ cd apps/mobile
 npm run build:android:preview
 ```
 
-2026-06-23 첫 Android preview 빌드:
+2026-06-23 Android preview 빌드:
 
-- https://expo.dev/accounts/beflow/projects/petflow-mobile/builds/bb76fc98-b171-4dcc-beb0-91d942a6bd10
+- https://expo.dev/accounts/beflow/projects/petflow-mobile/builds/2ace41d2-66f9-4fc2-97ef-15967d70a9fc
+
+이 빌드는 EAS preview 환경의 `EXPO_PUBLIC_SUPABASE_URL`과
+`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 포함한다.
 
 Google Play 내부 테스트 트랙에 올릴 때는 production 빌드를 사용한다.
 
