@@ -9,8 +9,8 @@
 ```bash
 cd apps/mobile
 npm install
-npx expo-doctor
-npx expo install --check
+npm run doctor
+npm run expo:check
 npm run typecheck
 ```
 
@@ -29,7 +29,7 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```bash
 cd apps/mobile
 npx eas-cli login
-npx eas-cli init
+npm run eas:init
 ```
 
 자동화 환경에서는 `EXPO_TOKEN`을 설정한 뒤 같은 명령을 실행한다. 2026-06-23 현재
@@ -41,14 +41,14 @@ npx eas-cli init
 
 ```bash
 cd apps/mobile
-npx eas-cli build --platform android --profile preview
+npm run build:android:preview
 ```
 
 Google Play 내부 테스트 트랙에 올릴 때는 production 빌드를 사용한다.
 
 ```bash
-npx eas-cli build --platform android --profile production
-npx eas-cli submit --platform android --profile production
+npm run build:android:production
+npm run submit:android
 ```
 
 ## iOS TestFlight
@@ -57,8 +57,8 @@ Apple Developer Program, App Store Connect 앱, 제출용 API 키가 준비된 �
 
 ```bash
 cd apps/mobile
-npx eas-cli build --platform ios --profile production
-npx eas-cli submit --platform ios --profile production
+npm run build:ios:production
+npm run submit:ios
 ```
 
 ## 내부 테스트 체크리스트

@@ -45,14 +45,15 @@ Google 공개 트랙 제출 전에는 내부 테스트 빌드를 한 번 더 확
 
 ```bash
 cd apps/mobile
-npx expo-doctor
-npx expo install --check
+npm run doctor
+npm run expo:check
 npm run typecheck
-npx eas-cli init
-npx eas-cli build --platform all --profile preview
-npx eas-cli build --platform all --profile production
-npx eas-cli submit --platform ios --profile production
-npx eas-cli submit --platform android --profile production
+npm run eas:init
+npm run build:android:preview
+npm run build:android:production
+npm run build:ios:production
+npm run submit:ios
+npm run submit:android
 ```
 
 ## 2026-06-23 빌드 준비 상태
@@ -68,7 +69,7 @@ npx eas-cli submit --platform android --profile production
 
 - 현재 로컬 EAS CLI는 Expo 계정에 로그인되어 있지 않다.
 - `apps/mobile`에서 `npx eas-cli login` 또는 `EXPO_TOKEN` 설정이 필요하다.
-- 로그인 뒤 `npx eas-cli init`으로 EAS 프로젝트를 연결하고 preview 빌드를 만든다.
+- 로그인 뒤 `npm run eas:init`으로 EAS 프로젝트를 연결하고 preview 빌드를 만든다.
 - `EXPO_PUBLIC_*` 값만 모바일 빌드에 넣고, OpenAI 키와 service role key는 서버에만 둔다.
 
 ## 스토어 개인정보 응답 초안

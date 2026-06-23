@@ -51,3 +51,18 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 2. EAS 프로젝트 생성
 3. Google Play 내부 테스트용 Android preview 빌드
 4. TestFlight용 iOS production 빌드
+
+## 내부 테스트 빌드 명령
+
+```bash
+cd apps/mobile
+npm run doctor
+npm run expo:check
+npm run typecheck
+npm run eas:whoami
+npm run eas:init
+npm run build:android:preview
+```
+
+현재 로컬 환경은 Expo 계정에 로그인되어 있지 않다. `npx eas-cli login`으로 로그인하거나
+자동화용 `EXPO_TOKEN`을 설정한 뒤 위 명령을 이어간다.
