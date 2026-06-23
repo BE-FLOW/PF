@@ -552,17 +552,14 @@ function HomeView({
           </button>
         </div>
         <div className="hero-visual" aria-hidden="true">
-          <div className="pet-orb" />
-          <div className="pet-character">
-            <div className="pet-ear left" />
-            <div className="pet-ear right" />
-            <div className="pet-face">
-              <span className="pet-eye left" />
-              <span className="pet-eye right" />
-              <div className="pet-muzzle">
-                <div className="pet-nose" />
-              </div>
-            </div>
+          <div className="hero-paw-card">
+            <span className="hero-paw-wave one" />
+            <span className="hero-paw-wave two" />
+            <span className="hero-paw-toe toe-one" />
+            <span className="hero-paw-toe toe-two" />
+            <span className="hero-paw-toe toe-three" />
+            <span className="hero-paw-toe toe-four" />
+            <span className="hero-paw-pad" />
           </div>
           <div className="float-badge top">
             <span className="badge-icon">

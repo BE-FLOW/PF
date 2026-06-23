@@ -1638,8 +1638,12 @@ export default function App() {
         style={styles.keyboard}
       >
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>PETFLOW APP</Text>
+          <View style={styles.appBrand}>
+            <AppBrandMark />
+            <View>
+              <Text style={styles.badgeText}>PETFLOW APP</Text>
+              <Text style={styles.brandTagline}>관찰을 병원 준비로</Text>
+            </View>
           </View>
 
           <Text style={styles.title}>{headline}</Text>
@@ -1807,6 +1811,20 @@ function LoadingCard() {
     <View style={[styles.card, styles.loadingCard]}>
       <ActivityIndicator color={colors.green} />
       <Text style={styles.cardText}>저장된 로그인 세션을 확인하고 있어요.</Text>
+    </View>
+  );
+}
+
+function AppBrandMark() {
+  return (
+    <View style={styles.appBrandMark} accessible={false}>
+      <View style={[styles.appBrandWave, styles.appBrandWaveTop]} />
+      <View style={[styles.appBrandWave, styles.appBrandWaveBottom]} />
+      <View style={[styles.appPawToe, styles.appPawToeOne]} />
+      <View style={[styles.appPawToe, styles.appPawToeTwo]} />
+      <View style={[styles.appPawToe, styles.appPawToeThree]} />
+      <View style={[styles.appPawToe, styles.appPawToeFour]} />
+      <View style={styles.appPawPad} />
     </View>
   );
 }
@@ -3711,6 +3729,8 @@ const colors = {
   card: "#ffffff",
   green: "#1f936f",
   greenSoft: "#e3f5ec",
+  cream: "#fff8df",
+  orange: "#f6b154",
   ink: "#11352d",
   muted: "#6a7d75",
   placeholder: "#94a39c",
@@ -3731,18 +3751,94 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingTop: 40,
   },
-  badge: {
+  appBrand: {
     alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#e6eadc",
     borderRadius: 999,
-    backgroundColor: colors.greenSoft,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  appBrandMark: {
+    position: "relative",
+    overflow: "hidden",
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: colors.cream,
+  },
+  appBrandWave: {
+    position: "absolute",
+    left: -8,
+    width: 58,
+    height: 22,
+    borderRadius: 999,
+    backgroundColor: colors.orange,
+  },
+  appBrandWaveTop: {
+    top: 17,
+    opacity: 0.42,
+    transform: [{ rotate: "-8deg" }],
+  },
+  appBrandWaveBottom: {
+    bottom: -3,
+    opacity: 0.86,
+    transform: [{ rotate: "-16deg" }],
+  },
+  appPawToe: {
+    position: "absolute",
+    zIndex: 1,
+    width: 7,
+    height: 13,
+    borderRadius: 999,
+    backgroundColor: "#fffbdf",
+  },
+  appPawToeOne: {
+    left: 10,
+    top: 14,
+    transform: [{ rotate: "-24deg" }],
+  },
+  appPawToeTwo: {
+    left: 18,
+    top: 8,
+    transform: [{ rotate: "-6deg" }],
+  },
+  appPawToeThree: {
+    left: 27,
+    top: 8,
+    transform: [{ rotate: "8deg" }],
+  },
+  appPawToeFour: {
+    left: 34,
+    top: 15,
+    transform: [{ rotate: "18deg" }],
+  },
+  appPawPad: {
+    position: "absolute",
+    zIndex: 1,
+    left: 14,
+    top: 27,
+    width: 22,
+    height: 15,
+    borderRadius: 11,
+    backgroundColor: "#fffbdf",
+    transform: [{ rotate: "-12deg" }],
   },
   badgeText: {
     color: colors.green,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.8,
+  },
+  brandTagline: {
+    marginTop: 2,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
   },
   title: {
     marginTop: 22,
