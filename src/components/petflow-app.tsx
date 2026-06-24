@@ -189,6 +189,10 @@ function levelLabel(value: Level) {
   return levels.find((option) => option.id === value)?.label ?? "평소와 같음";
 }
 
+function avatarLabel(value: string, fallback = "펫") {
+  return Array.from(value.trim() || fallback).slice(0, 2).join("");
+}
+
 function followUpDate(startedAt: string, day: FollowUpDay) {
   const date = new Date(startedAt);
   date.setDate(date.getDate() + day);
@@ -366,7 +370,7 @@ function Brand({ small = false }: { small?: boolean }) {
     <div className="brand">
       <span className={`brand-mark ${small ? "small" : ""}`} aria-hidden="true" />
       <span>
-        펫플로우<small className="brand-sub">PET HEALTH FLOW</small>
+        펫플로우<small className="brand-sub">PET FLOW</small>
       </span>
     </div>
   );
@@ -503,7 +507,7 @@ function HomeView({
         </div>
         <div className="top-actions">
           <button className="profile-dot" onClick={onAccount} aria-label="내 계정">
-            {(profile.name || "펫").slice(0, 1)}
+            {avatarLabel(profile.name)}
           </button>
         </div>
       </header>
@@ -512,7 +516,7 @@ function HomeView({
         onClick={onProfile}
       >
         <span className="pet-profile-avatar">
-          <Icon name="paw" size={18} />
+          {hasProfile ? avatarLabel(profile.name) : <Icon name="paw" size={18} />}
         </span>
         <span className="pet-profile-copy">
           <strong>
@@ -1150,7 +1154,7 @@ function CheckView({
       <div className="form-panel">
         <button className="check-profile-summary" onClick={onEditProfile}>
           <span className="pet-profile-avatar">
-            <Icon name="paw" size={17} />
+            {input.petName ? avatarLabel(input.petName) : <Icon name="paw" size={17} />}
           </span>
           <span>
             <strong>{input.petName}</strong>

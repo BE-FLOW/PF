@@ -1641,7 +1641,7 @@ export default function App() {
           <View style={styles.appBrand}>
             <AppBrandMark />
             <View>
-              <Text style={styles.badgeText}>PETFLOW APP</Text>
+              <Text style={styles.badgeText}>PET FLOW</Text>
               <Text style={styles.brandTagline}>관찰을 병원 준비로</Text>
             </View>
           </View>
@@ -2251,7 +2251,7 @@ function PetManager({
               >
                 <View style={styles.petAvatar}>
                   <Text style={styles.petAvatarText}>
-                    {speciesLabel(pet.species).slice(0, 1)}
+                    {avatarLabel(pet.name)}
                   </Text>
                 </View>
                 <View style={styles.petListText}>
@@ -3664,6 +3664,10 @@ function speciesLabel(species: Species) {
   return speciesOptions.find((option) => option.id === species)?.label ?? "기타";
 }
 
+function avatarLabel(value: string, fallback = "펫") {
+  return Array.from(value.trim() || fallback).slice(0, 2).join("");
+}
+
 function FieldLabel({ label }: { label: string }) {
   return <Text style={styles.label}>{label}</Text>;
 }
@@ -4157,8 +4161,10 @@ const styles = StyleSheet.create({
   },
   petAvatarText: {
     color: colors.green,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "900",
+    letterSpacing: -0.5,
+    textAlign: "center",
   },
   petListText: {
     flex: 1,

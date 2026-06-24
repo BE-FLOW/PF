@@ -15,6 +15,10 @@ const emptyTesterDraft: TesterDraft = {
   phone: "",
 };
 
+function avatarLabel(value: string, fallback = "펫") {
+  return Array.from(value.trim() || fallback).slice(0, 2).join("");
+}
+
 function TesterFields({
   draft,
   setDraft,
@@ -358,7 +362,7 @@ export function AccountView({
                   {pets.map((pet) => (
                     <div className={`pet-list-item ${pet.id === selectedPetId ? "selected" : ""}`} key={pet.id}>
                       <button className="pet-select" onClick={() => onSelectPet(pet)}>
-                        <span className="pet-profile-avatar"><Icon name="paw" size={17} /></span>
+                        <span className="pet-profile-avatar">{avatarLabel(pet.name)}</span>
                         <span>
                           <strong>{pet.name}</strong>
                           <small>{pet.species === "dog" ? "강아지" : pet.species === "cat" ? "고양이" : "기타"}{pet.breed ? ` · ${pet.breed}` : ""}</small>
