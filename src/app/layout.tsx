@@ -1,12 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Sans_KR } from "next/font/google";
+import "@fontsource/pretendard/400.css";
+import "@fontsource/pretendard/600.css";
+import "@fontsource/pretendard/700.css";
+import "@fontsource/pretendard/800.css";
+import "@fontsource/pretendard/900.css";
 import "./globals.css";
-
-const notoSansKr = Noto_Sans_KR({
-  variable: "--font-noto-sans-kr",
-  subsets: ["latin"],
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://pf-two-eta.vercel.app"),
@@ -50,7 +48,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko" className={notoSansKr.variable}>
+    <html lang="ko">
       <body>{children}</body>
     </html>
   );

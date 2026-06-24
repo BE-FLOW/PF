@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useFonts } from "expo-font";
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import type { User } from "@supabase/supabase-js";
+import type { TextInputProps, TextProps, TextStyle } from "react-native";
 import {
   ActivityIndicator,
   Image,
@@ -13,8 +15,8 @@ import {
   StatusBar,
   StyleSheet,
   Switch,
-  Text,
-  TextInput,
+  Text as NativeText,
+  TextInput as NativeTextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -294,8 +296,59 @@ function fileNameFromAsset(asset: ImagePicker.ImagePickerAsset, mimeType: string
   return cleanFileName(`petflow-media-${Date.now()}.${extension}`);
 }
 
+const petFlowFontAssets = {
+  "Pretendard-Regular": require("./assets/fonts/Pretendard-Regular.otf"),
+  "Pretendard-SemiBold": require("./assets/fonts/Pretendard-SemiBold.otf"),
+  "Pretendard-Bold": require("./assets/fonts/Pretendard-Bold.otf"),
+  "Pretendard-ExtraBold": require("./assets/fonts/Pretendard-ExtraBold.otf"),
+  "Pretendard-Black": require("./assets/fonts/Pretendard-Black.otf"),
+};
+
+const petFlowFontFamilies = {
+  regular: "Pretendard-Regular",
+  semibold: "Pretendard-SemiBold",
+  bold: "Pretendard-Bold",
+  extrabold: "Pretendard-ExtraBold",
+  black: "Pretendard-Black",
+};
+
+let petFlowFontsReady = false;
+
+function fontWeightValue(fontWeight: TextStyle["fontWeight"]) {
+  if (fontWeight === "bold") return 700;
+  if (fontWeight === "normal" || fontWeight === undefined) return 400;
+  return Number(fontWeight) || 400;
+}
+
+function fontFamilyForStyle(style: TextProps["style"] | TextInputProps["style"]) {
+  const flattened = StyleSheet.flatten(style) as TextStyle | undefined;
+  const weight = fontWeightValue(flattened?.fontWeight);
+  if (weight >= 900) return petFlowFontFamilies.black;
+  if (weight >= 800) return petFlowFontFamilies.extrabold;
+  if (weight >= 700) return petFlowFontFamilies.bold;
+  if (weight >= 600) return petFlowFontFamilies.semibold;
+  return petFlowFontFamilies.regular;
+}
+
+function Text({ style, ...props }: TextProps) {
+  const fontStyle = petFlowFontsReady
+    ? { fontFamily: fontFamilyForStyle(style) }
+    : null;
+  return <NativeText {...props} style={[style, fontStyle]} />;
+}
+
+function TextInput({ style, ...props }: TextInputProps) {
+  const fontStyle = petFlowFontsReady
+    ? { fontFamily: fontFamilyForStyle(style) }
+    : null;
+  return <NativeTextInput {...props} style={[style, fontStyle]} />;
+}
+
 export default function App() {
+  const [fontsLoaded, fontLoadError] = useFonts(petFlowFontAssets);
   const configured = isSupabaseConfigured();
+  petFlowFontsReady = fontsLoaded && !fontLoadError;
+
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [mainSection, setMainSection] = useState<MainSection>("record");
@@ -1629,6 +1682,18 @@ export default function App() {
       disabled={loading}
     />
   ) : null;
+
+  if (!fontsLoaded && !fontLoadError) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.fontLoading}>
+          <ActivityIndicator color={colors.green} />
+          <NativeText style={styles.fontLoadingText}>PetFlow 준비 중</NativeText>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -3745,6 +3810,17 @@ const styles = StyleSheet.create({
   },
   keyboard: {
     flex: 1,
+  },
+  fontLoading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  fontLoadingText: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
   },
   content: {
     flexGrow: 1,
