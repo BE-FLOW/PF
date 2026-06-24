@@ -1817,15 +1817,12 @@ function LoadingCard() {
 
 function AppBrandMark() {
   return (
-    <View style={styles.appBrandMark} accessible={false}>
-      <View style={[styles.appBrandWave, styles.appBrandWaveTop]} />
-      <View style={[styles.appBrandWave, styles.appBrandWaveBottom]} />
-      <View style={[styles.appPawToe, styles.appPawToeOne]} />
-      <View style={[styles.appPawToe, styles.appPawToeTwo]} />
-      <View style={[styles.appPawToe, styles.appPawToeThree]} />
-      <View style={[styles.appPawToe, styles.appPawToeFour]} />
-      <View style={styles.appPawPad} />
-    </View>
+    <Image
+      accessible={false}
+      resizeMode="cover"
+      source={require("./assets/icon.png")}
+      style={styles.appBrandIcon}
+    />
   );
 }
 
@@ -3730,7 +3727,6 @@ const colors = {
   green: "#1f936f",
   greenSoft: "#e3f5ec",
   cream: "#fff8df",
-  orange: "#f6b154",
   ink: "#11352d",
   muted: "#6a7d75",
   placeholder: "#94a39c",
@@ -3763,70 +3759,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
-  appBrandMark: {
-    position: "relative",
-    overflow: "hidden",
+  appBrandIcon: {
     width: 42,
     height: 42,
     borderRadius: 15,
     backgroundColor: colors.cream,
-  },
-  appBrandWave: {
-    position: "absolute",
-    left: -8,
-    width: 58,
-    height: 22,
-    borderRadius: 999,
-    backgroundColor: colors.orange,
-  },
-  appBrandWaveTop: {
-    top: 17,
-    opacity: 0.42,
-    transform: [{ rotate: "-8deg" }],
-  },
-  appBrandWaveBottom: {
-    bottom: -3,
-    opacity: 0.86,
-    transform: [{ rotate: "-16deg" }],
-  },
-  appPawToe: {
-    position: "absolute",
-    zIndex: 1,
-    width: 7,
-    height: 13,
-    borderRadius: 999,
-    backgroundColor: "#fffbdf",
-  },
-  appPawToeOne: {
-    left: 10,
-    top: 14,
-    transform: [{ rotate: "-24deg" }],
-  },
-  appPawToeTwo: {
-    left: 18,
-    top: 8,
-    transform: [{ rotate: "-6deg" }],
-  },
-  appPawToeThree: {
-    left: 27,
-    top: 8,
-    transform: [{ rotate: "8deg" }],
-  },
-  appPawToeFour: {
-    left: 34,
-    top: 15,
-    transform: [{ rotate: "18deg" }],
-  },
-  appPawPad: {
-    position: "absolute",
-    zIndex: 1,
-    left: 14,
-    top: 27,
-    width: 22,
-    height: 15,
-    borderRadius: 11,
-    backgroundColor: "#fffbdf",
-    transform: [{ rotate: "-12deg" }],
   },
   badgeText: {
     color: colors.green,

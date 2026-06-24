@@ -72,30 +72,12 @@ button {
   letter-spacing: -0.6px;
 }
 .brand-mark {
-  position: relative;
   overflow: hidden;
   width: 38px;
   height: 38px;
   border-radius: 13px;
-  display: grid;
-  place-items: center;
-  color: #ef9f45;
-  background: linear-gradient(145deg, #fff8df, #f7e4ae);
+  background: #fff8df url("/icon-192.png") center / cover no-repeat;
   box-shadow: 0 8px 20px rgba(203, 140, 64, 0.2);
-}
-.brand-mark::before {
-  position: absolute;
-  inset: 48% -18% -18%;
-  content: "";
-  background: #f6b154;
-  border-radius: 50% 50% 0 0;
-  opacity: 0.8;
-}
-.brand-mark svg {
-  position: relative;
-  z-index: 1;
-  fill: rgba(255, 251, 230, 0.74);
-  stroke-width: 1.6;
 }
 .brand-mark.small {
   width: 34px;

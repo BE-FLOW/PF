@@ -364,9 +364,7 @@ function mergePetHistory(
 function Brand({ small = false }: { small?: boolean }) {
   return (
     <div className="brand">
-      <span className={`brand-mark ${small ? "small" : ""}`}>
-        <Icon name="paw" size={small ? 18 : 20} />
-      </span>
+      <span className={`brand-mark ${small ? "small" : ""}`} aria-hidden="true" />
       <span>
         펫플로우<small className="brand-sub">PET HEALTH FLOW</small>
       </span>
