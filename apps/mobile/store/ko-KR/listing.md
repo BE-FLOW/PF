@@ -45,6 +45,10 @@ PetFlow는 진단이나 처방을 제공하지 않습니다. AI 리포트는 인
 
 https://pf-two-eta.vercel.app/privacy
 
+## 계정 및 데이터 삭제 URL
+
+https://pf-two-eta.vercel.app/account-deletion
+
 ## 지원 URL
 
 https://pf-two-eta.vercel.app
