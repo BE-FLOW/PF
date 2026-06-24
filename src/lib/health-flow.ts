@@ -86,7 +86,7 @@ export function summarizeHealthFlow(
       : trend === "watch"
         ? {
             headline: "반복되는 변화를 조금 더 지켜봐 주세요",
-            description: "같은 증상이나 컨디션 변화가 이어지는지 같은 기준으로 기록해 주세요.",
+            description: "증상이나 컨디션 변화를 같은 기준으로 기록해 주세요.",
           }
         : {
             headline: "최근 기록은 비교적 안정적인 흐름이에요",

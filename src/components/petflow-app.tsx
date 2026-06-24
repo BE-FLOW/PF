@@ -500,7 +500,6 @@ function HomeView({
     <div className="content-wrap">
       <header className="top-row">
         <div>
-          <p className="eyebrow">오늘도 함께 건강하게</p>
           <h1>
             {profile.name ? `${profile.name}와` : "반려동물과"} 좋은 하루 보내고 있나요?
           </h1>
@@ -537,12 +536,12 @@ function HomeView({
           </span>
           <h2>
             작은 변화를 기록하면
-            <br />더 빠르게 알아챌 수 있어요
+            <br />더 빠르게 알 수 있어요
           </h2>
           <p>
             오늘의 식욕과 활력, 증상을 남기면
             <br />
-            기록이 쌓여 건강 흐름과 병원용 요약으로 정리해 드려요.
+            기록이 쌓이고 흐름을 정리해 드려요.
           </p>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
