@@ -372,80 +372,14 @@ p {
 }
 .hero-paw-card {
   position: absolute;
-  right: 17px;
-  top: 4px;
-  width: 194px;
-  height: 194px;
+  right: 20px;
+  top: 22px;
+  width: 176px;
+  height: 176px;
   overflow: hidden;
-  border-radius: 46px;
-  background: linear-gradient(145deg, #fff8df, #f7e8bc);
+  border-radius: 29px;
+  background: url("/hero-paw-card.svg") center / cover no-repeat;
   box-shadow: 0 18px 36px rgba(101, 75, 37, 0.1);
-}
-.hero-paw-card::before {
-  position: absolute;
-  inset: 0;
-  content: "";
-  background:
-    radial-gradient(circle at 70% 10%, rgba(255, 255, 255, 0.35), transparent 5rem),
-    linear-gradient(125deg, rgba(255, 255, 255, 0.22), transparent 45%);
-}
-.hero-paw-wave {
-  position: absolute;
-  left: -22px;
-  width: 240px;
-  height: 80px;
-  border-radius: 50%;
-  background: #f6b154;
-}
-.hero-paw-wave.one {
-  top: 62px;
-  opacity: 0.42;
-  transform: rotate(-6deg);
-}
-.hero-paw-wave.two {
-  bottom: -9px;
-  opacity: 0.88;
-  transform: rotate(-14deg);
-}
-.hero-paw-toe,
-.hero-paw-pad {
-  position: absolute;
-  z-index: 1;
-  background: #fffbdf;
-  box-shadow: 10px 12px 0 rgba(127, 85, 37, 0.08);
-}
-.hero-paw-toe {
-  width: 28px;
-  height: 50px;
-  border-radius: 999px;
-}
-.hero-paw-toe.toe-one {
-  left: 46px;
-  top: 66px;
-  transform: rotate(-24deg);
-}
-.hero-paw-toe.toe-two {
-  left: 82px;
-  top: 43px;
-  transform: rotate(-7deg);
-}
-.hero-paw-toe.toe-three {
-  left: 119px;
-  top: 43px;
-  transform: rotate(8deg);
-}
-.hero-paw-toe.toe-four {
-  left: 151px;
-  top: 68px;
-  transform: rotate(18deg);
-}
-.hero-paw-pad {
-  left: 66px;
-  top: 123px;
-  width: 89px;
-  height: 58px;
-  border-radius: 44% 56% 50% 50% / 58% 68% 38% 42%;
-  transform: rotate(-13deg);
 }
 .float-badge {
   position: absolute;
@@ -461,12 +395,12 @@ p {
   white-space: nowrap;
 }
 .float-badge.top {
-  top: 15px;
+  top: 10px;
   right: 0;
 }
 .float-badge.bottom {
-  bottom: 15px;
-  left: 4px;
+  bottom: 16px;
+  left: 0;
 }
 .badge-icon {
   width: 28px;

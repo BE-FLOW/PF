@@ -550,15 +550,7 @@ function HomeView({
           </button>
         </div>
         <div className="hero-visual" aria-hidden="true">
-          <div className="hero-paw-card">
-            <span className="hero-paw-wave one" />
-            <span className="hero-paw-wave two" />
-            <span className="hero-paw-toe toe-one" />
-            <span className="hero-paw-toe toe-two" />
-            <span className="hero-paw-toe toe-three" />
-            <span className="hero-paw-toe toe-four" />
-            <span className="hero-paw-pad" />
-          </div>
+          <div className="hero-paw-card" />
           <div className="float-badge top">
             <span className="badge-icon">
               <Icon name="heart" size={14} />
