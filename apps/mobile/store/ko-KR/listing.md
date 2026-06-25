@@ -60,3 +60,13 @@ PetFlow는 보호자 관찰을 정리하고 병원 상담 자료로 공유하도
 현재 테스트 단계에서는 이메일, 닉네임, 국내 휴대전화번호를 필수로 받고, 전화번호는
 서비스 안내와 테스트 관련 연락에만 사용합니다. AI 리포트는 참여코드가 있는
 테스터에게만 제공되는 수의사 검토용 초안이며, 전문가 확인 정보로 표시하지 않습니다.
+
+## Google Play 그래픽 업로드 파일
+
+- 앱 아이콘: `apps/mobile/store/google-play/app-icon-512.png`
+- 그래픽 이미지: `apps/mobile/store/google-play/feature-graphic-1024x500.png`
+- 휴대전화 스크린샷: `apps/mobile/store/google-play/screenshots-phone/*.png`
+- 7인치 태블릿 스크린샷: `apps/mobile/store/google-play/screenshots-tablet-7/*.png`
+- 10인치 태블릿 스크린샷: `apps/mobile/store/google-play/screenshots-tablet-10/*.png`
+
+동영상, Chromebook 스크린샷, Android XR 스크린샷, 공간 XR 동영상은 현재 테스트 등록 단계에서 비워 둔다.
