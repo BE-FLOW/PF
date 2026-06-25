@@ -8,7 +8,6 @@ module.exports = {
     description: "보호자 관찰을 병원에 전달하기 좋은 흐름으로 정리하는 PetFlow 모바일 앱",
     scheme: "petflow",
     version: "0.1.0",
-    orientation: "portrait",
     icon: "./assets/icon.png",
     userInterfaceStyle: "light",
     splash: {
@@ -37,7 +36,7 @@ module.exports = {
       blockedPermissions: ["android.permission.RECORD_AUDIO"],
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
-        backgroundColor: "#f2faeb",
+        backgroundColor: "#f8dca3",
       },
       permissions: [],
     },

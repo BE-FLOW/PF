@@ -12,7 +12,6 @@ import {
   SafeAreaView,
   ScrollView,
   Share,
-  StatusBar,
   StyleSheet,
   Switch,
   Text as NativeText,
@@ -67,16 +66,18 @@ import {
 } from "./src/lib/health";
 
 type AuthMode = "login" | "signup";
-type MainSection = "record" | "reports" | "account";
+type MainSection = "home" | "record" | "reports" | "account";
 
 const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
-  { id: "record", label: "오늘 기록" },
-  { id: "reports", label: "기록·보고서" },
+  { id: "home", label: "홈" },
+  { id: "record", label: "기록" },
+  { id: "reports", label: "보고서" },
   { id: "account", label: "계정" },
 ];
 
 const mainSectionDescriptions: Record<MainSection, string> = {
-  record: "반려동물을 고르고 오늘 관찰한 변화만 빠르게 남겨요.",
+  home: "오늘 상태, 최근 기록, 병원 공유 준비를 한눈에 확인해요.",
+  record: "오늘 관찰한 변화만 빠르게 남겨요.",
   reports: "기록 흐름, 3·7·14일 경과, 수의사 검토용 초안을 확인해요.",
   account: "테스터 키, GPT 권한, 계정 관리를 한곳에서 확인해요.",
 };
@@ -351,7 +352,7 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [mainSection, setMainSection] = useState<MainSection>("record");
+  const [mainSection, setMainSection] = useState<MainSection>("home");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [draft, setDraft] = useState<TesterDraft>(emptyDraft);
@@ -518,15 +519,26 @@ export default function App() {
     if (!user) return "계정으로 이어서 관리";
     if (needsTesterProfile) return "테스터 정보를 확인해요";
     if (!pets.length) return "첫 반려동물을 등록해요";
-    return "필요한 화면만 골라요";
-  }, [authReady, configured, needsTesterProfile, pets.length, user]);
+    if (mainSection === "record") return "오늘의 건강 기록";
+    if (mainSection === "reports") return "기록과 보고서";
+    if (mainSection === "account") return "내 계정";
+    return `${selectedPet?.name ?? "반려동물"}와 좋은 하루 보내고 있나요?`;
+  }, [
+    authReady,
+    configured,
+    mainSection,
+    needsTesterProfile,
+    pets.length,
+    selectedPet?.name,
+    user,
+  ]);
 
   const loadAccount = useCallback(async (nextUser: User | null) => {
     setUser(nextUser);
     setMessage("");
     setPetMessage("");
     if (!nextUser) {
-      setMainSection("record");
+      setMainSection("home");
       setTesterProfile(null);
       setDraft(emptyDraft);
       setPets([]);
@@ -629,7 +641,7 @@ export default function App() {
     );
     setPetFormExpanded(!loadedPets.length);
     if (!loadedPets.length) {
-      setMainSection("record");
+      setMainSection("home");
       setPetDraft(emptyPetDraft);
       setEditingPetId(null);
       setHealthInput(null);
@@ -1686,7 +1698,6 @@ export default function App() {
   if (!fontsLoaded && !fontLoadError) {
     return (
       <SafeAreaView style={styles.screen}>
-        <StatusBar barStyle="dark-content" />
         <View style={styles.fontLoading}>
           <ActivityIndicator color={colors.green} />
           <NativeText style={styles.fontLoadingText}>PetFlow 준비 중</NativeText>
@@ -1697,7 +1708,6 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboard}
@@ -1706,7 +1716,7 @@ export default function App() {
           <View style={styles.appBrand}>
             <AppBrandMark />
             <View>
-              <Text style={styles.badgeText}>PET FLOW</Text>
+              <Text style={styles.badgeText}>PETFLOW</Text>
               <Text style={styles.brandTagline}>관찰을 병원 준비로</Text>
             </View>
           </View>
@@ -1734,6 +1744,18 @@ export default function App() {
               ) : (
                 <>
                   <MainSectionTabs value={mainSection} onChange={setMainSection} />
+                  {mainSection === "home" ? (
+                    <HomeDashboard
+                      flow={healthFlow}
+                      history={selectedPetHistory}
+                      latestResult={latestResult}
+                      pets={pets}
+                      selectedPet={selectedPet}
+                      onGoAccount={() => setMainSection("account")}
+                      onGoRecord={() => setMainSection("record")}
+                      onGoReports={() => setMainSection("reports")}
+                    />
+                  ) : null}
                   {mainSection === "record" ? (
                     <>
                       <PetManager
@@ -1888,6 +1910,130 @@ function AppBrandMark() {
       source={require("./assets/icon.png")}
       style={styles.appBrandIcon}
     />
+  );
+}
+
+function HomeDashboard({
+  flow,
+  history,
+  latestResult,
+  pets,
+  selectedPet,
+  onGoAccount,
+  onGoRecord,
+  onGoReports,
+}: {
+  flow: HealthFlowSummary;
+  history: HistoryRecord[];
+  latestResult: AnalysisResult | null;
+  pets: PetProfile[];
+  selectedPet?: PetProfile;
+  onGoAccount: () => void;
+  onGoRecord: () => void;
+  onGoReports: () => void;
+}) {
+  const latestRecord = history[0];
+  const score = latestResult?.riskScore ?? latestRecord?.result.riskScore;
+  const riskLevel = latestResult?.riskLevel ?? latestRecord?.result.riskLevel;
+  const latestAt = latestResult?.createdAt ?? latestRecord?.result.createdAt;
+
+  if (!pets.length) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.cardEyebrow}>WELCOME</Text>
+        <Text style={styles.cardTitle}>함께할 아이를 먼저 알려주세요</Text>
+        <Text style={styles.cardText}>
+          이름과 종류만 저장하면 오늘 기록, 건강 흐름, 병원 공유 요약을 이어서
+          관리할 수 있어요.
+        </Text>
+        <SecondaryButton label="첫 반려동물 등록" onPress={onGoRecord} />
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <View style={styles.homePetCard}>
+        <View style={styles.petAvatarLarge}>
+          <Text style={styles.petAvatarLargeText}>
+            {avatarLabel(selectedPet?.name ?? "펫")}
+          </Text>
+        </View>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.cardEyebrow}>TODAY</Text>
+          <Text style={styles.cardTitle}>
+            {selectedPet ? `${selectedPet.name}의 오늘을 살펴봐요` : "오늘을 살펴봐요"}
+          </Text>
+          <Text style={styles.cardText}>
+            기록은 짧게 남기고, 흐름과 병원 공유 준비는 PetFlow가 정리해요.
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.homeGrid}>
+        <View style={styles.homeScoreCard}>
+          <Text style={styles.cardEyebrow}>CHECK SCORE</Text>
+          <Text style={styles.homeScoreValue}>{score ?? "--"}</Text>
+          <Text style={styles.homeScoreLabel}>
+            {riskLevel ? riskLabels[riskLevel] : "첫 기록을 기다려요"}
+          </Text>
+          <Text style={styles.homeMutedText}>
+            {latestAt ? `${formatRecordedAt(latestAt)} 기준` : "오늘 기록을 남기면 바로 보여요."}
+          </Text>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onGoRecord}
+            style={styles.homePrimaryAction}
+          >
+            <Text style={styles.homePrimaryActionText}>오늘 기록하기</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.homeFlowCard}>
+          <Text style={styles.cardEyebrow}>HEALTH FLOW</Text>
+          <Text style={styles.homeFlowTitle}>{flow.recordCount}회 기록</Text>
+          <Text style={styles.homeFlowHeadline}>{flow.headline}</Text>
+          <Text style={styles.homeMutedText} numberOfLines={3}>
+            {flow.description}
+          </Text>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onGoReports}
+            style={styles.homeSecondaryAction}
+          >
+            <Text style={styles.homeSecondaryActionText}>보고서 보기</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.homeActionCard}>
+        <Text style={styles.cardEyebrow}>NEXT</Text>
+        <Text style={styles.cardTitle}>한눈에 보고 이어서 관리해요</Text>
+        <View style={styles.homeActionRow}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onGoRecord}
+            style={styles.homeActionButton}
+          >
+            <Text style={styles.homeActionButtonText}>기록</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onGoReports}
+            style={styles.homeActionButton}
+          >
+            <Text style={styles.homeActionButtonText}>보고서</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onGoAccount}
+            style={styles.homeActionButton}
+          >
+            <Text style={styles.homeActionButtonText}>계정</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </>
   );
 }
 
@@ -2291,8 +2437,13 @@ function PetManager({
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View>
-          <Text style={styles.cardEyebrow}>MY PETS</Text>
-          <Text style={styles.cardTitle}>반려동물 {pets.length}마리</Text>
+          <Text style={styles.cardEyebrow}>MY FAMILY</Text>
+          <Text style={styles.cardTitle}>함께하는 아이들</Text>
+          {pets.length ? (
+            <Text style={styles.cardText}>
+              {selectedPet ? `${selectedPet.name} 중심으로 오늘 기록을 이어갈게요.` : "오늘 기록할 아이를 선택해 주세요."}
+            </Text>
+          ) : null}
         </View>
         <TouchableOpacity activeOpacity={0.85} onPress={onNew} style={styles.smallButton}>
           <Text style={styles.smallButtonText}>+ 추가</Text>
@@ -2349,7 +2500,7 @@ function PetManager({
 
       {selectedPet ? (
         <View style={styles.selectedPetBox}>
-          <Text style={styles.selectedPetLabel}>오늘 기록 대상</Text>
+          <Text style={styles.selectedPetLabel}>오늘 살펴볼 아이</Text>
           <Text style={styles.selectedPetName}>{selectedPet.name}</Text>
         </View>
       ) : null}
@@ -3946,6 +4097,135 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     lineHeight: 21,
+  },
+  homePetCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: "#d8eadf",
+    borderRadius: 26,
+    backgroundColor: "#ffffff",
+    padding: 18,
+    shadowColor: "#0a3027",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.07,
+    shadowRadius: 20,
+    elevation: 3,
+  },
+  petAvatarLarge: {
+    width: 58,
+    height: 58,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 20,
+    backgroundColor: colors.greenSoft,
+  },
+  petAvatarLargeText: {
+    color: colors.green,
+    fontSize: 17,
+    fontWeight: "900",
+    letterSpacing: -0.6,
+  },
+  homeGrid: {
+    gap: 14,
+    marginTop: 16,
+  },
+  homeScoreCard: {
+    borderWidth: 1,
+    borderColor: "#bfe5d1",
+    borderRadius: 26,
+    backgroundColor: "#f5fcf8",
+    padding: 20,
+  },
+  homeScoreValue: {
+    marginTop: 8,
+    color: colors.ink,
+    fontSize: 52,
+    fontWeight: "900",
+    lineHeight: 58,
+  },
+  homeScoreLabel: {
+    color: colors.green,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  homeMutedText: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
+  homePrimaryAction: {
+    alignSelf: "flex-start",
+    marginTop: 15,
+    borderRadius: 999,
+    backgroundColor: colors.green,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+  },
+  homePrimaryActionText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  homeFlowCard: {
+    borderWidth: 1,
+    borderColor: "#f0dfad",
+    borderRadius: 26,
+    backgroundColor: "#fffaf0",
+    padding: 20,
+  },
+  homeFlowTitle: {
+    marginTop: 8,
+    color: colors.ink,
+    fontSize: 28,
+    fontWeight: "900",
+  },
+  homeFlowHeadline: {
+    marginTop: 5,
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 22,
+  },
+  homeSecondaryAction: {
+    alignSelf: "flex-start",
+    marginTop: 15,
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+  },
+  homeSecondaryActionText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  homeActionCard: {
+    marginTop: 16,
+    borderRadius: 26,
+    backgroundColor: "#ffffff",
+    padding: 20,
+  },
+  homeActionRow: {
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 14,
+  },
+  homeActionButton: {
+    flex: 1,
+    alignItems: "center",
+    borderRadius: 17,
+    backgroundColor: colors.greenSoft,
+    paddingVertical: 13,
+  },
+  homeActionButtonText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
   },
   authTabs: {
     flexDirection: "row",
