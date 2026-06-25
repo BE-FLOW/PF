@@ -171,6 +171,29 @@ const speciesOptions: Array<{ id: Species; label: string }> = [
   { id: "other", label: "기타" },
 ];
 
+const breedOptions: Record<Species, string[]> = {
+  dog: [
+    "말티즈",
+    "푸들",
+    "포메라니안",
+    "시츄",
+    "비숑 프리제",
+    "웰시코기",
+    "골든 리트리버",
+    "믹스견",
+  ],
+  cat: [
+    "코리안 숏헤어",
+    "러시안 블루",
+    "페르시안",
+    "샴",
+    "브리티시 숏헤어",
+    "랙돌",
+    "믹스묘",
+  ],
+  other: [],
+};
+
 const sexOptions: Array<{ id: PetSex; label: string }> = [
   { id: "unknown", label: "모름" },
   { id: "male", label: "남아" },
@@ -1907,7 +1930,7 @@ function AppBrandMark() {
     <Image
       accessible={false}
       resizeMode="cover"
-      source={require("./assets/icon.png")}
+      source={require("./assets/brand-icon.png")}
       style={styles.appBrandIcon}
     />
   );
@@ -2535,6 +2558,18 @@ function PetForm({
   onCancel?: () => void;
   onSave: () => Promise<void>;
 }) {
+  const breedSuggestions = breedOptions[draft.species];
+  const birthDateShortcuts = useMemo(() => buildBirthDateShortcuts(), []);
+  const selectedBreed = draft.breed.trim();
+
+  const chooseSpecies = (species: Species) => {
+    setDraft({
+      ...draft,
+      species,
+      breed: species === draft.species ? draft.breed : "",
+    });
+  };
+
   return (
     <View style={styles.petForm}>
       <View style={styles.petFormHeader}>
@@ -2565,27 +2600,47 @@ function PetForm({
       <ChipGroup
         options={speciesOptions}
         selected={draft.species}
-        onSelect={(species) => setDraft({ ...draft, species })}
+        onSelect={chooseSpecies}
       />
 
       <FieldLabel label="품종 (선택)" />
+      {breedSuggestions.length ? (
+        <View style={styles.choicePanel}>
+          <Text style={styles.choicePanelText}>자주 쓰는 품종을 먼저 골라요.</Text>
+          <ChipGroup
+            options={breedSuggestions.map((breed) => ({ id: breed, label: breed }))}
+            selected={selectedBreed}
+            onSelect={(breed) => setDraft({ ...draft, breed })}
+          />
+        </View>
+      ) : (
+        <Text style={styles.helperText}>특별히 정해진 품종이 없으면 비워둬도 괜찮아요.</Text>
+      )}
       <TextInput
         maxLength={40}
         onChangeText={(breed) => setDraft({ ...draft, breed })}
-        placeholder="선택하거나 직접 입력"
+        placeholder="목록에 없으면 직접 입력"
         placeholderTextColor={colors.placeholder}
-        style={styles.input}
+        style={[styles.input, styles.inputAfterChoice]}
         value={draft.breed}
       />
 
       <FieldLabel label="생일 (선택)" />
+      <View style={styles.choicePanel}>
+        <Text style={styles.choicePanelText}>정확하지 않으면 비워둬도 돼요.</Text>
+        <ChipGroup
+          options={birthDateShortcuts}
+          selected={draft.birthDate}
+          onSelect={(birthDate) => setDraft({ ...draft, birthDate })}
+        />
+      </View>
       <TextInput
         keyboardType="numbers-and-punctuation"
         maxLength={10}
         onChangeText={(birthDate) => setDraft({ ...draft, birthDate })}
         placeholder="YYYY-MM-DD"
         placeholderTextColor={colors.placeholder}
-        style={styles.input}
+        style={[styles.input, styles.inputAfterChoice]}
         value={draft.birthDate}
       />
 
@@ -3842,6 +3897,30 @@ function followUpDate(startedAt: string | undefined, day: FollowUpDay) {
   }).format(date);
 }
 
+function buildBirthDateShortcuts() {
+  return [
+    { id: "", label: "나중에" },
+    { id: formatIsoDate(new Date()), label: "오늘" },
+    { id: dateYearsAgo(1), label: "1살쯤" },
+    { id: dateYearsAgo(3), label: "3살쯤" },
+    { id: dateYearsAgo(5), label: "5살쯤" },
+    { id: dateYearsAgo(10), label: "10살쯤" },
+  ];
+}
+
+function dateYearsAgo(years: number) {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - years);
+  return formatIsoDate(date);
+}
+
+function formatIsoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access || access.reason === "no_code") {
     return "관리자가 발급한 테스터 키를 입력하면 GPT 초안을 만들 수 있어요.";
@@ -3994,7 +4073,6 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 15,
-    backgroundColor: colors.cream,
   },
   badgeText: {
     color: colors.green,
@@ -4270,6 +4348,30 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     paddingHorizontal: 15,
     paddingVertical: 13,
+  },
+  inputAfterChoice: {
+    marginTop: 9,
+  },
+  helperText: {
+    marginTop: -2,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  choicePanel: {
+    gap: 9,
+    borderWidth: 1,
+    borderColor: "#e0eee6",
+    borderRadius: 18,
+    backgroundColor: "#f7fcf9",
+    padding: 12,
+  },
+  choicePanelText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 17,
   },
   privacyBox: {
     gap: 7,
