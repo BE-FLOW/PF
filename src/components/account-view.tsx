@@ -16,8 +16,35 @@ const emptyTesterDraft: TesterDraft = {
   phone: "",
 };
 
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const passwordPolicy = [
+  { id: "length", label: "8~64자", test: (value: string) => value.length >= 8 && value.length <= 64 },
+  { id: "letter", label: "영문 포함", test: (value: string) => /[A-Za-z]/.test(value) },
+  { id: "number", label: "숫자 포함", test: (value: string) => /\d/.test(value) },
+  { id: "special", label: "특수문자 포함", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
+];
+
 function avatarLabel(value: string, fallback = "펫") {
   return Array.from(value.trim() || fallback).slice(0, 2).join("");
+}
+
+function isStrongPassword(value: string) {
+  return passwordPolicy.every((item) => item.test(value));
+}
+
+function PasswordChecklist({ password }: { password: string }) {
+  return (
+    <div className="password-checklist" aria-label="비밀번호 조건">
+      {passwordPolicy.map((item) => {
+        const passed = item.test(password);
+        return (
+          <span className={passed ? "passed" : ""} key={item.id}>
+            {passed ? "✓" : "•"} {item.label}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function TesterFields({
@@ -164,8 +191,16 @@ export function AccountView({
   const showTesterForm = needsTesterProfile || editingTester;
 
   async function submitAuth() {
-    if (!email.trim() || password.length < 6) {
-      setMessage("이메일과 6자 이상의 비밀번호를 입력해 주세요.");
+    if (!emailPattern.test(email.trim())) {
+      setMessage("이메일 형식을 확인해 주세요.");
+      return;
+    }
+    if (mode === "login" && !password) {
+      setMessage("비밀번호를 입력해 주세요.");
+      return;
+    }
+    if (mode === "signup" && !isStrongPassword(password)) {
+      setMessage("비밀번호 조건을 모두 충족해 주세요.");
       return;
     }
     if (
@@ -422,10 +457,14 @@ export function AccountView({
           <div className="field">
             <label htmlFor="authEmail">이메일</label>
             <input id="authEmail" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="test@example.com" />
+            {mode === "signup" && (
+              <small className="field-help">가입 후 이메일 인증을 완료하면 기록을 안전하게 이어갈 수 있어요.</small>
+            )}
           </div>
           <div className="field">
             <label htmlFor="authPassword">비밀번호</label>
-            <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="6자 이상" onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
+            <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "signup" ? 8 : undefined} maxLength={64} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"} onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
+            {mode === "signup" && <PasswordChecklist password={password} />}
           </div>
           {mode === "signup" && (
             <>
@@ -438,7 +477,7 @@ export function AccountView({
             </>
           )}
           {message && <div className="form-error" role="alert">{message}</div>}
-          <button className="primary-button auth-submit" onClick={submitAuth} disabled={loading}>
+          <button className="primary-button auth-submit" onClick={submitAuth} disabled={loading || oauthLoading !== null}>
             {loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
           </button>
         </section>

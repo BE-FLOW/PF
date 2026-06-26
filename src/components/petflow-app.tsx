@@ -3075,7 +3075,14 @@ export function PetFlowApp() {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return "로그인 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.";
     const result = mode === "signup"
-      ? await supabase.auth.signUp({ email, password })
+      ? await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo:
+              typeof window === "undefined" ? undefined : window.location.origin,
+          },
+        })
       : await supabase.auth.signInWithPassword({ email, password });
     if (result.error) return result.error.message === "Invalid login credentials"
       ? "이메일 또는 비밀번호를 확인해 주세요."

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFonts } from "expo-font";
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -90,6 +91,14 @@ const oauthProviderLabels: Record<OAuthProvider, string> = {
   google: "Google",
   apple: "Apple",
 };
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const passwordPolicy = [
+  { id: "length", label: "8~64자", test: (value: string) => value.length >= 8 && value.length <= 64 },
+  { id: "letter", label: "영문 포함", test: (value: string) => /[A-Za-z]/.test(value) },
+  { id: "number", label: "숫자 포함", test: (value: string) => /\d/.test(value) },
+  { id: "special", label: "특수문자 포함", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
+];
 
 interface TesterProfile {
   nickname: string;
@@ -381,6 +390,7 @@ export default function App() {
   const [fontsLoaded, fontLoadError] = useFonts(petFlowFontAssets);
   const configured = isSupabaseConfigured();
   petFlowFontsReady = fontsLoaded && !fontLoadError;
+  const oauthSessionActiveRef = useRef(false);
 
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -854,6 +864,29 @@ export default function App() {
   }, [loadAccount]);
 
   useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return undefined;
+    const authClient = supabase.auth;
+
+    async function exchangeAuthUrl(url: string | null) {
+      if (!url || !url.startsWith("petflow://auth-callback")) return;
+      if (oauthSessionActiveRef.current) return;
+
+      const { error } = await authClient.exchangeCodeForSession(url);
+      if (error) {
+        setMessage("이메일 인증 링크를 처리하지 못했어요. 다시 로그인해 주세요.");
+      }
+    }
+
+    void Linking.getInitialURL().then(exchangeAuthUrl);
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      void exchangeAuthUrl(url);
+    });
+
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
     if (!selectedPet) return;
     setHealthInput(profileToHealthInput(selectedPet));
     setHealthMessage("");
@@ -918,8 +951,16 @@ export default function App() {
       setMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
       return;
     }
-    if (!email.trim() || password.length < 6) {
-      setMessage("이메일과 6자 이상의 비밀번호를 입력해 주세요.");
+    if (!emailPattern.test(email.trim())) {
+      setMessage("이메일 형식을 확인해 주세요.");
+      return;
+    }
+    if (authMode === "login" && !password) {
+      setMessage("비밀번호를 입력해 주세요.");
+      return;
+    }
+    if (authMode === "signup" && !isStrongPassword(password)) {
+      setMessage("비밀번호 조건을 모두 충족해 주세요.");
       return;
     }
     if (
@@ -934,7 +975,13 @@ export default function App() {
     setMessage("");
     const result =
       authMode === "signup"
-        ? await supabase.auth.signUp({ email: email.trim(), password })
+        ? await supabase.auth.signUp({
+            email: email.trim(),
+            password,
+            options: {
+              emailRedirectTo: "petflow://auth-callback",
+            },
+          })
         : await supabase.auth.signInWithPassword({ email: email.trim(), password });
 
     if (result.error) {
@@ -969,6 +1016,7 @@ export default function App() {
 
     setOauthLoading(provider);
     setMessage("");
+    oauthSessionActiveRef.current = true;
 
     try {
       const redirectTo = "petflow://auth-callback";
@@ -1002,6 +1050,7 @@ export default function App() {
         `${oauthProviderLabels[provider]} 로그인 설정을 확인해 주세요. Supabase Provider와 Redirect URL이 필요해요.`,
       );
     } finally {
+      oauthSessionActiveRef.current = false;
       setOauthLoading(null);
     }
   }
@@ -2161,6 +2210,32 @@ function ReportsEmptyState({ onGoRecord }: { onGoRecord: () => void }) {
   );
 }
 
+function isStrongPassword(value: string) {
+  return passwordPolicy.every((item) => item.test(value));
+}
+
+function PasswordChecklist({ password }: { password: string }) {
+  return (
+    <View style={styles.passwordChecklist} accessibilityLabel="비밀번호 조건">
+      {passwordPolicy.map((item) => {
+        const passed = item.test(password);
+        return (
+          <View
+            key={item.id}
+            style={[styles.passwordCheckItem, passed && styles.passwordCheckItemPassed]}
+          >
+            <Text
+              style={[styles.passwordCheckText, passed && styles.passwordCheckTextPassed]}
+            >
+              {passed ? "✓" : "•"} {item.label}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function AuthForm({
   mode,
   setMode,
@@ -2258,18 +2333,25 @@ function AuthForm({
         textContentType="emailAddress"
         value={email}
       />
+      {mode === "signup" ? (
+        <Text style={styles.fieldHelp}>
+          가입 후 이메일 인증을 완료하면 기록을 안전하게 이어갈 수 있어요.
+        </Text>
+      ) : null}
 
       <FieldLabel label="비밀번호" />
       <TextInput
         autoCapitalize="none"
+        maxLength={64}
         onChangeText={setPassword}
-        placeholder="6자 이상"
+        placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"}
         placeholderTextColor={colors.placeholder}
         secureTextEntry
         style={styles.input}
         textContentType={mode === "login" ? "password" : "newPassword"}
         value={password}
       />
+      {mode === "signup" ? <PasswordChecklist password={password} /> : null}
 
       {mode === "signup" && (
         <TesterFields draft={draft} setDraft={setDraft} />
@@ -4495,6 +4577,39 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     paddingHorizontal: 15,
     paddingVertical: 13,
+  },
+  fieldHelp: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  passwordChecklist: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 9,
+  },
+  passwordCheckItem: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 999,
+    backgroundColor: "#f8fcfa",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  passwordCheckItemPassed: {
+    borderColor: "#bfe5d1",
+    backgroundColor: "#effaf4",
+  },
+  passwordCheckText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  passwordCheckTextPassed: {
+    color: colors.green,
   },
   inputAfterChoice: {
     marginTop: 9,
