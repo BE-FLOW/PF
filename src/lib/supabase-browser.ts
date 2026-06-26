@@ -7,6 +7,13 @@ export function getSupabaseBrowserClient() {
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  client = url && publishableKey ? createClient(url, publishableKey) : null;
+  client =
+    url && publishableKey
+      ? createClient(url, publishableKey, {
+          auth: {
+            flowType: "pkce",
+          },
+        })
+      : null;
   return client;
 }

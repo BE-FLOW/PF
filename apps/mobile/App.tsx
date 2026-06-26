@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFonts } from "expo-font";
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
+import * as WebBrowser from "expo-web-browser";
 import type { User } from "@supabase/supabase-js";
 import type { TextInputProps, TextProps, TextStyle } from "react-native";
 import {
@@ -65,7 +66,10 @@ import {
   type VetReviewDraft,
 } from "./src/lib/health";
 
+WebBrowser.maybeCompleteAuthSession();
+
 type AuthMode = "login" | "signup";
+type OAuthProvider = "google" | "apple";
 type MainSection = "home" | "record" | "reports" | "account";
 
 const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
@@ -80,6 +84,11 @@ const mainSectionDescriptions: Record<MainSection, string> = {
   record: "오늘 관찰한 변화만 빠르게 남겨요.",
   reports: "기록 흐름, 3·7·14일 경과, 수의사 검토용 초안을 확인해요.",
   account: "테스터 키, GPT 권한, 계정 관리를 한곳에서 확인해요.",
+};
+
+const oauthProviderLabels: Record<OAuthProvider, string> = {
+  google: "Google",
+  apple: "Apple",
 };
 
 interface TesterProfile {
@@ -376,6 +385,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [mainSection, setMainSection] = useState<MainSection>("home");
+  const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [draft, setDraft] = useState<TesterDraft>(emptyDraft);
@@ -948,6 +958,52 @@ export default function App() {
       setMessage(saveMessage || "가입 정보가 저장됐어요.");
     }
     setLoading(false);
+  }
+
+  async function submitOAuth(provider: OAuthProvider) {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
+      return;
+    }
+
+    setOauthLoading(provider);
+    setMessage("");
+
+    try {
+      const redirectTo = "petflow://auth-callback";
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error || !data.url) {
+        throw error ?? new Error("OAuth URL was not created.");
+      }
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === "success") {
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(
+          result.url,
+        );
+        if (exchangeError) throw exchangeError;
+        setMessage("");
+        return;
+      }
+
+      if (result.type !== "cancel" && result.type !== "dismiss") {
+        setMessage(`${oauthProviderLabels[provider]} 로그인이 완료되지 않았어요.`);
+      }
+    } catch {
+      setMessage(
+        `${oauthProviderLabels[provider]} 로그인 설정을 확인해 주세요. Supabase Provider와 Redirect URL이 필요해요.`,
+      );
+    } finally {
+      setOauthLoading(null);
+    }
   }
 
   async function submitTesterProfile() {
@@ -1876,6 +1932,8 @@ export default function App() {
               setDraft={setDraft}
               loading={loading}
               message={message}
+              oauthLoading={oauthLoading}
+              onOAuth={submitOAuth}
               onSubmit={submitAuth}
             />
           )}
@@ -2114,6 +2172,8 @@ function AuthForm({
   setDraft,
   loading,
   message,
+  oauthLoading,
+  onOAuth,
   onSubmit,
 }: {
   mode: AuthMode;
@@ -2126,8 +2186,12 @@ function AuthForm({
   setDraft: (draft: TesterDraft) => void;
   loading: boolean;
   message: string;
+  oauthLoading: OAuthProvider | null;
+  onOAuth: (provider: OAuthProvider) => Promise<void>;
   onSubmit: () => Promise<void>;
 }) {
+  const authBusy = loading || oauthLoading !== null;
+
   return (
     <View style={styles.card}>
       <View style={styles.authTabs}>
@@ -2149,6 +2213,37 @@ function AuthForm({
             회원가입
           </Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.oauthButtons}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          disabled={authBusy}
+          onPress={() => void onOAuth("google")}
+          style={[styles.oauthButton, authBusy && styles.buttonDisabled]}
+        >
+          <Text style={styles.oauthButtonMark}>G</Text>
+          <Text style={styles.oauthButtonText}>
+            {oauthLoading === "google" ? "Google 로그인 중..." : "Google로 계속하기"}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          disabled={authBusy}
+          onPress={() => void onOAuth("apple")}
+          style={[styles.oauthButton, styles.oauthButtonDark, authBusy && styles.buttonDisabled]}
+        >
+          <Text style={[styles.oauthButtonMark, styles.oauthButtonMarkDark]}></Text>
+          <Text style={[styles.oauthButtonText, styles.oauthButtonTextDark]}>
+            {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.authDivider}>
+        <View style={styles.authDividerLine} />
+        <Text style={styles.authDividerText}>또는 이메일로</Text>
+        <View style={styles.authDividerLine} />
       </View>
 
       <FieldLabel label="이메일" />
@@ -2182,7 +2277,7 @@ function AuthForm({
 
       <Message text={message} />
       <PrimaryButton
-        disabled={loading}
+        disabled={authBusy}
         label={loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
         onPress={onSubmit}
       />
@@ -4327,6 +4422,58 @@ const styles = StyleSheet.create({
   },
   tabTextActive: {
     color: "#ffffff",
+  },
+  oauthButtons: {
+    gap: 9,
+    marginBottom: 16,
+  },
+  oauthButton: {
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 17,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 14,
+  },
+  oauthButtonDark: {
+    borderColor: colors.ink,
+    backgroundColor: colors.ink,
+  },
+  oauthButtonMark: {
+    color: colors.green,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  oauthButtonMarkDark: {
+    color: "#ffffff",
+  },
+  oauthButtonText: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  oauthButtonTextDark: {
+    color: "#ffffff",
+  },
+  authDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 2,
+  },
+  authDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.line,
+  },
+  authDividerText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
   },
   formBlock: {
     marginTop: 4,

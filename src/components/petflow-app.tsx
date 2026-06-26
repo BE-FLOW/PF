@@ -62,6 +62,7 @@ type View =
   | "history"
   | "episode-report"
   | "account";
+type OAuthProvider = "google" | "apple";
 
 interface EpisodeReportSelection {
   episode?: PetEpisode;
@@ -3088,6 +3089,27 @@ export function PetFlowApp() {
     }
     return "";
   }
+
+  async function handleOAuth(provider: OAuthProvider) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || typeof window === "undefined") {
+      return "로그인 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.";
+    }
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      return `${provider === "google" ? "Google" : "Apple"} 로그인 설정을 확인해 주세요.`;
+    }
+
+    return "";
+  }
+
   async function saveTesterProfile(
     tester: Pick<TesterProfile, "nickname" | "phone">,
     consented: boolean,
@@ -3563,6 +3585,7 @@ export function PetFlowApp() {
             authReady={authReady}
             onBack={() => setView("home")}
             onAuth={handleAuth}
+            onOAuth={handleOAuth}
             onSaveTesterProfile={saveTesterProfile}
             onRedeemAiCode={redeemAiCode}
             onRequestAccountDeletion={requestAccountDeletion}

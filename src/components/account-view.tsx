@@ -8,6 +8,7 @@ import type { AiAccessStatus, PetProfile, TesterProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
+type OAuthProvider = "google" | "apple";
 type TesterDraft = Pick<TesterProfile, "nickname" | "phone">;
 
 const emptyTesterDraft: TesterDraft = {
@@ -97,6 +98,7 @@ export function AccountView({
   authReady,
   onBack,
   onAuth,
+  onOAuth,
   onSaveTesterProfile,
   onRedeemAiCode,
   onRequestAccountDeletion,
@@ -119,6 +121,7 @@ export function AccountView({
     profile: TesterDraft,
     consented: boolean,
   ) => Promise<string>;
+  onOAuth: (provider: OAuthProvider) => Promise<string>;
   onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
   onRedeemAiCode: (code: string) => Promise<string>;
   onRequestAccountDeletion: () => Promise<string>;
@@ -143,6 +146,7 @@ export function AccountView({
   );
   const [editingTester, setEditingTester] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
   const [message, setMessage] = useState("");
   const [aiCode, setAiCode] = useState("");
   const [aiCodeSaving, setAiCodeSaving] = useState(false);
@@ -174,6 +178,12 @@ export function AccountView({
     setLoading(true);
     setMessage(await onAuth(mode, email.trim(), password, draft, consented));
     setLoading(false);
+  }
+
+  async function submitOAuth(provider: OAuthProvider) {
+    setOauthLoading(provider);
+    setMessage(await onOAuth(provider));
+    setOauthLoading(null);
   }
 
   async function saveTester() {
@@ -388,6 +398,27 @@ export function AccountView({
             <button className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setMessage(""); }}>로그인</button>
             <button className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setMessage(""); }}>회원가입</button>
           </div>
+          <div className="oauth-button-group">
+            <button
+              className="oauth-button"
+              onClick={() => void submitOAuth("google")}
+              disabled={loading || oauthLoading !== null}
+              type="button"
+            >
+              <span>G</span>
+              {oauthLoading === "google" ? "Google 로그인 중..." : "Google로 계속하기"}
+            </button>
+            <button
+              className="oauth-button apple"
+              onClick={() => void submitOAuth("apple")}
+              disabled={loading || oauthLoading !== null}
+              type="button"
+            >
+              <span></span>
+              {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
+            </button>
+          </div>
+          <div className="auth-divider"><span>또는 이메일로</span></div>
           <div className="field">
             <label htmlFor="authEmail">이메일</label>
             <input id="authEmail" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="test@example.com" />

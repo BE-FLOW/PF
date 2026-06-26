@@ -1853,6 +1853,54 @@ p {
   background: #fff;
   box-shadow: 0 4px 14px rgba(35, 72, 59, 0.08);
 }
+.oauth-button-group {
+  display: grid;
+  gap: 9px;
+}
+.oauth-button {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 900;
+  cursor: pointer;
+}
+.oauth-button span {
+  color: var(--mint-dark);
+  font-weight: 900;
+}
+.oauth-button.apple {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+.oauth-button.apple span {
+  color: #fff;
+}
+.oauth-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+}
 .auth-submit {
   width: 100%;
   margin-top: 0;
