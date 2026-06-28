@@ -67,7 +67,7 @@ function TesterFields({
         />
       </div>
       <div className="field">
-        <label htmlFor="testerPhone">휴대전화번호</label>
+        <label htmlFor="testerPhone">휴대전화번호 (연락용)</label>
         <input
           id="testerPhone"
           type="tel"
@@ -79,7 +79,9 @@ function TesterFields({
           }
           placeholder="010-1234-5678"
         />
-        <small className="field-help">서비스 안내와 테스트 관련 연락에만 사용합니다.</small>
+        <small className="field-help">
+          인증번호는 보내지 않고 서비스 안내와 테스트 관련 연락에만 사용합니다.
+        </small>
       </div>
     </div>
   );
@@ -94,7 +96,7 @@ function PrivacyNotice() {
         <div><dt>목적</dt><dd>{testerPrivacySummary.purpose}</dd></div>
         <div><dt>보관</dt><dd>{testerPrivacySummary.retention}</dd></div>
       </dl>
-      <p>전화번호는 광고나 마케팅에 사용하지 않습니다. 주소, 위치, 실명 확인 정보는 받지 않습니다.</p>
+      <p>전화번호는 본인 인증, 광고나 마케팅에 사용하지 않습니다. 주소, 위치, 실명 확인 정보는 받지 않습니다.</p>
       <a href="/privacy" target="_blank" rel="noreferrer">전체 테스트 개인정보 안내 보기</a>
     </details>
   );
@@ -429,9 +431,12 @@ export function AccountView({
         </div>
       ) : (
         <section className="form-panel auth-panel">
-          <div className="auth-tabs">
-            <button className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setMessage(""); }}>로그인</button>
-            <button className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setMessage(""); }}>회원가입</button>
+          <div className="auth-intro">
+            <h2>Google 또는 Apple로 시작하기</h2>
+            <p>
+              이메일 확인과 비밀번호 관리는 각 계정에서 맡기고, 펫플로우는 로그인 후
+              닉네임과 테스트 연락처만 한 번 확인해요.
+            </p>
           </div>
           <div className="oauth-button-group">
             <button
@@ -453,33 +458,44 @@ export function AccountView({
               {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
             </button>
           </div>
-          <div className="auth-divider"><span>또는 이메일로</span></div>
-          <div className="field">
-            <label htmlFor="authEmail">이메일</label>
-            <input id="authEmail" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="test@example.com" />
-            {mode === "signup" && (
-              <small className="field-help">가입 후 이메일 인증을 완료하면 기록을 안전하게 이어갈 수 있어요.</small>
-            )}
-          </div>
-          <div className="field">
-            <label htmlFor="authPassword">비밀번호</label>
-            <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "signup" ? 8 : undefined} maxLength={64} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"} onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
-            {mode === "signup" && <PasswordChecklist password={password} />}
-          </div>
-          {mode === "signup" && (
-            <>
-              <TesterFields draft={draft} setDraft={setDraft} />
-              <PrivacyNotice />
-              <label className="consent-check">
-                <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
-                <span>휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.</span>
-              </label>
-            </>
-          )}
+          <p className="auth-note">
+            Google은 확인된 이메일을 제공해요. Apple은 사용자가 선택하면 비공개 릴레이
+            이메일로 연결될 수 있어요.
+          </p>
           {message && <div className="form-error" role="alert">{message}</div>}
-          <button className="primary-button auth-submit" onClick={submitAuth} disabled={loading || oauthLoading !== null}>
-            {loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
-          </button>
+          <details className="password-auth-fallback">
+            <summary>기존 이메일 계정으로 계속하기</summary>
+            <div className="auth-tabs">
+              <button className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setMessage(""); }}>로그인</button>
+              <button className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setMessage(""); }}>회원가입</button>
+            </div>
+            <div className="auth-divider"><span>이메일과 비밀번호</span></div>
+            <div className="field">
+              <label htmlFor="authEmail">이메일</label>
+              <input id="authEmail" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="test@example.com" />
+              {mode === "signup" && (
+                <small className="field-help">가입 후 이메일 인증을 완료하면 기록을 안전하게 이어갈 수 있어요.</small>
+              )}
+            </div>
+            <div className="field">
+              <label htmlFor="authPassword">비밀번호</label>
+              <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "signup" ? 8 : undefined} maxLength={64} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"} onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
+              {mode === "signup" && <PasswordChecklist password={password} />}
+            </div>
+            {mode === "signup" && (
+              <>
+                <TesterFields draft={draft} setDraft={setDraft} />
+                <PrivacyNotice />
+                <label className="consent-check">
+                  <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
+                  <span>휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.</span>
+                </label>
+              </>
+            )}
+            <button className="primary-button auth-submit" onClick={submitAuth} disabled={loading || oauthLoading !== null}>
+              {loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
+            </button>
+          </details>
         </section>
       )}
     </div>

@@ -1798,6 +1798,16 @@ p {
   margin: 0;
   font-size: 17px;
 }
+.auth-intro {
+  display: grid;
+  gap: 7px;
+}
+.auth-intro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .tester-fields {
   display: grid;
   gap: 16px;
@@ -1933,6 +1943,26 @@ p {
   color: var(--muted);
   text-align: center;
   font-size: 10px;
+  line-height: 1.55;
+}
+.password-auth-fallback {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fbfcfb;
+  padding: 13px 14px;
+}
+.password-auth-fallback summary {
+  color: #52635e;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+.password-auth-fallback[open] {
+  display: grid;
+  gap: 14px;
+}
+.password-auth-fallback[open] summary {
+  color: var(--mint-dark);
 }
 .privacy-page {
   min-height: 100vh;

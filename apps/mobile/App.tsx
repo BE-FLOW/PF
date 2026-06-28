@@ -2266,29 +2266,15 @@ function AuthForm({
   onSubmit: () => Promise<void>;
 }) {
   const authBusy = loading || oauthLoading !== null;
+  const [showEmailAuth, setShowEmailAuth] = useState(false);
 
   return (
     <View style={styles.card}>
-      <View style={styles.authTabs}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[styles.tabButton, mode === "login" && styles.tabButtonActive]}
-          onPress={() => setMode("login")}
-        >
-          <Text style={[styles.tabText, mode === "login" && styles.tabTextActive]}>
-            로그인
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[styles.tabButton, mode === "signup" && styles.tabButtonActive]}
-          onPress={() => setMode("signup")}
-        >
-          <Text style={[styles.tabText, mode === "signup" && styles.tabTextActive]}>
-            회원가입
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <Text style={styles.cardTitle}>Google 또는 Apple로 시작하기</Text>
+      <Text style={styles.cardText}>
+        이메일 확인과 비밀번호 관리는 각 계정에서 맡기고, 펫플로우는 로그인 후
+        닉네임과 테스트 연락처만 한 번 확인해요.
+      </Text>
 
       <View style={styles.oauthButtons}>
         <TouchableOpacity
@@ -2315,54 +2301,92 @@ function AuthForm({
         </TouchableOpacity>
       </View>
 
-      <View style={styles.authDivider}>
-        <View style={styles.authDividerLine} />
-        <Text style={styles.authDividerText}>또는 이메일로</Text>
-        <View style={styles.authDividerLine} />
-      </View>
-
-      <FieldLabel label="이메일" />
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="email-address"
-        onChangeText={setEmail}
-        placeholder="test@example.com"
-        placeholderTextColor={colors.placeholder}
-        style={styles.input}
-        textContentType="emailAddress"
-        value={email}
-      />
-      {mode === "signup" ? (
-        <Text style={styles.fieldHelp}>
-          가입 후 이메일 인증을 완료하면 기록을 안전하게 이어갈 수 있어요.
-        </Text>
-      ) : null}
-
-      <FieldLabel label="비밀번호" />
-      <TextInput
-        autoCapitalize="none"
-        maxLength={64}
-        onChangeText={setPassword}
-        placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"}
-        placeholderTextColor={colors.placeholder}
-        secureTextEntry
-        style={styles.input}
-        textContentType={mode === "login" ? "password" : "newPassword"}
-        value={password}
-      />
-      {mode === "signup" ? <PasswordChecklist password={password} /> : null}
-
-      {mode === "signup" && (
-        <TesterFields draft={draft} setDraft={setDraft} />
-      )}
-
+      <Text style={styles.authHint}>
+        Google은 확인된 이메일을 제공해요. Apple은 비공개 릴레이 이메일로 연결될 수
+        있어요.
+      </Text>
       <Message text={message} />
-      <PrimaryButton
-        disabled={authBusy}
-        label={loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
-        onPress={onSubmit}
-      />
+
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => setShowEmailAuth((current) => !current)}
+        style={styles.emailFallbackToggle}
+      >
+        <Text style={styles.emailFallbackText}>
+          {showEmailAuth ? "이메일 계정 접기" : "기존 이메일 계정으로 계속하기"}
+        </Text>
+      </TouchableOpacity>
+
+      {showEmailAuth ? (
+        <View style={styles.emailFallbackPanel}>
+          <View style={styles.authTabs}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={[styles.tabButton, mode === "login" && styles.tabButtonActive]}
+              onPress={() => setMode("login")}
+            >
+              <Text style={[styles.tabText, mode === "login" && styles.tabTextActive]}>
+                로그인
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={[styles.tabButton, mode === "signup" && styles.tabButtonActive]}
+              onPress={() => setMode("signup")}
+            >
+              <Text style={[styles.tabText, mode === "signup" && styles.tabTextActive]}>
+                회원가입
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.authDivider}>
+            <View style={styles.authDividerLine} />
+            <Text style={styles.authDividerText}>이메일과 비밀번호</Text>
+            <View style={styles.authDividerLine} />
+          </View>
+
+          <FieldLabel label="이메일" />
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            onChangeText={setEmail}
+            placeholder="test@example.com"
+            placeholderTextColor={colors.placeholder}
+            style={styles.input}
+            textContentType="emailAddress"
+            value={email}
+          />
+          {mode === "signup" ? (
+            <Text style={styles.fieldHelp}>
+              가입 후 이메일 인증을 완료하면 기록을 안전하게 이어갈 수 있어요.
+            </Text>
+          ) : null}
+
+          <FieldLabel label="비밀번호" />
+          <TextInput
+            autoCapitalize="none"
+            maxLength={64}
+            onChangeText={setPassword}
+            placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"}
+            placeholderTextColor={colors.placeholder}
+            secureTextEntry
+            style={styles.input}
+            textContentType={mode === "login" ? "password" : "newPassword"}
+            value={password}
+          />
+          {mode === "signup" ? <PasswordChecklist password={password} /> : null}
+
+          {mode === "signup" && <TesterFields draft={draft} setDraft={setDraft} />}
+
+          <PrimaryButton
+            disabled={authBusy}
+            label={loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
+            onPress={onSubmit}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -2384,7 +2408,7 @@ function TesterProfileForm({
     <View style={styles.card}>
       <Text style={styles.cardTitle}>테스터 필수 정보</Text>
       <Text style={styles.cardText}>
-        웹과 같은 기준으로 닉네임과 010 휴대전화번호를 저장해요.
+        닉네임과 연락용 010 번호를 저장해요. 인증번호는 보내지 않아요.
       </Text>
       <TesterFields draft={draft} setDraft={setDraft} />
       <Message text={message} />
@@ -2416,7 +2440,7 @@ function TesterFields({
         value={draft.nickname}
       />
 
-      <FieldLabel label="휴대전화번호" />
+      <FieldLabel label="휴대전화번호 (연락용)" />
       <TextInput
         keyboardType="phone-pad"
         onChangeText={(phone) => setDraft({ ...draft, phone: formatKoreanMobile(phone) })}
@@ -2433,7 +2457,7 @@ function TesterFields({
         <InfoRow label="목적" value={testerPrivacySummary.purpose} />
         <InfoRow label="보관" value={testerPrivacySummary.retention} />
         <Text style={styles.privacyText}>
-          전화번호는 광고나 마케팅에 사용하지 않습니다.
+          전화번호는 본인 인증, 광고나 마케팅에 사용하지 않습니다.
         </Text>
       </View>
 
@@ -4540,6 +4564,37 @@ const styles = StyleSheet.create({
   },
   oauthButtonTextDark: {
     color: "#ffffff",
+  },
+  authHint: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginBottom: 6,
+    textAlign: "center",
+  },
+  emailFallbackToggle: {
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: "#fbfcfb",
+    marginTop: 4,
+    paddingVertical: 12,
+  },
+  emailFallbackText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  emailFallbackPanel: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: "#fbfcfb",
+    gap: 12,
+    marginTop: 12,
+    padding: 14,
   },
   authDivider: {
     flexDirection: "row",
