@@ -33,7 +33,7 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 
 ## 현재 구현
 
-- Supabase Auth 로그인/회원가입
+- Google/Apple 계정 로그인, 기존 이메일 계정 보조 로그인
 - AsyncStorage 기반 세션 유지
 - 테스터 필수 정보 저장: 닉네임, 국내 휴대전화번호, 개인정보 동의
 - 반려동물 목록, 등록, 수정, 선택
@@ -48,9 +48,8 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 ## 다음 진행 순서
 
 1. Expo 계정 로그인 또는 `EXPO_TOKEN` 연결
-2. EAS 프로젝트 생성
-3. Google Play 내부 테스트용 Android preview 빌드
-4. TestFlight용 iOS production 빌드
+2. Google Play 테스트용 Android production 빌드
+3. TestFlight용 iOS production 빌드
 
 ## 내부 테스트 빌드 명령
 
@@ -60,9 +59,8 @@ npm run doctor
 npm run expo:check
 npm run typecheck
 npm run eas:whoami
-npm run eas:init
-npm run build:android:preview
+npm run build:android:production
 ```
 
-현재 로컬 환경은 Expo 계정에 로그인되어 있지 않다. `npx eas-cli login`으로 로그인하거나
-자동화용 `EXPO_TOKEN`을 설정한 뒤 위 명령을 이어간다.
+EAS CLI가 `Not logged in`을 표시하면 `npx eas-cli login`으로 로그인하거나
+자동화용 `EXPO_TOKEN`을 설정한 뒤 빌드를 다시 실행한다.

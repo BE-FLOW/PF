@@ -18,7 +18,7 @@ export default function PrivacyPage() {
           <h2>이용 목적과 기간</h2>
           <p>목적: {testerPrivacySummary.purpose}</p>
           <p>보관: {testerPrivacySummary.retention}</p>
-          <p>휴대전화번호는 서비스 안내와 테스트 관련 연락에만 사용하며 광고·마케팅에는 사용하지 않습니다.</p>
+          <p>휴대전화번호는 본인 인증, 광고나 마케팅에 사용하지 않고 서비스 안내와 테스트 관련 연락에만 사용합니다.</p>
         </section>
         <section>
           <h2>선택과 삭제</h2>
