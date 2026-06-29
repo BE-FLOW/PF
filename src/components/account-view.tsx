@@ -32,6 +32,10 @@ function isStrongPassword(value: string) {
   return passwordPolicy.every((item) => item.test(value));
 }
 
+function hasLinkedProvider(user: User | null, provider: OAuthProvider) {
+  return Boolean(user?.identities?.some((identity) => identity.provider === provider));
+}
+
 function PasswordChecklist({ password }: { password: string }) {
   return (
     <div className="password-checklist" aria-label="비밀번호 조건">
@@ -128,6 +132,7 @@ export function AccountView({
   onBack,
   onAuth,
   onOAuth,
+  onLinkOAuth,
   onSaveTesterProfile,
   onRedeemAiCode,
   onRequestAccountDeletion,
@@ -151,6 +156,7 @@ export function AccountView({
     consented: boolean,
   ) => Promise<string>;
   onOAuth: (provider: OAuthProvider) => Promise<string>;
+  onLinkOAuth: (provider: OAuthProvider) => Promise<string>;
   onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
   onRedeemAiCode: (code: string) => Promise<string>;
   onRequestAccountDeletion: () => Promise<string>;
@@ -176,7 +182,9 @@ export function AccountView({
   const [editingTester, setEditingTester] = useState(false);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
+  const [linkLoading, setLinkLoading] = useState<OAuthProvider | null>(null);
   const [message, setMessage] = useState("");
+  const [linkMessage, setLinkMessage] = useState("");
   const [aiCode, setAiCode] = useState("");
   const [aiCodeSaving, setAiCodeSaving] = useState(false);
   const [aiCodeMessage, setAiCodeMessage] = useState("");
@@ -191,6 +199,7 @@ export function AccountView({
         testerProfile.consentVersion !== testerConsentVersion),
   );
   const showTesterForm = needsTesterProfile || editingTester;
+  const googleLinked = hasLinkedProvider(user, "google");
 
   async function submitAuth() {
     if (!emailPattern.test(email.trim())) {
@@ -221,6 +230,12 @@ export function AccountView({
     setOauthLoading(provider);
     setMessage(await onOAuth(provider));
     setOauthLoading(null);
+  }
+
+  async function submitOAuthLink(provider: OAuthProvider) {
+    setLinkLoading(provider);
+    setLinkMessage(await onLinkOAuth(provider));
+    setLinkLoading(null);
   }
 
   async function saveTester() {
@@ -293,6 +308,49 @@ export function AccountView({
               {testerProfile && <button className="text-button" onClick={startEditingTester}>정보 수정</button>}
               <button className="text-button muted" onClick={onLogout}>로그아웃</button>
             </div>
+          </section>
+
+          <section className="panel identity-link-panel">
+            <div className="identity-link-row">
+              <div>
+                <h3>로그인 연결</h3>
+                <p>
+                  기존 이메일 계정에 Google을 연결하면 반려동물, 기록, GPT 권한이
+                  그대로 이어져요.
+                </p>
+              </div>
+              <span className={`identity-link-badge ${googleLinked ? "connected" : ""}`}>
+                {googleLinked ? "Google 연결됨" : "연결 전"}
+              </span>
+            </div>
+            {googleLinked ? (
+              <p className="identity-link-note success">
+                Google로 다시 로그인해도 지금 계정의 기록을 그대로 볼 수 있어요.
+              </p>
+            ) : (
+              <>
+                <button
+                  className="secondary-button compact identity-link-button"
+                  type="button"
+                  onClick={() => void submitOAuthLink("google")}
+                  disabled={linkLoading !== null}
+                >
+                  {linkLoading === "google" ? "Google 연결 중..." : "Google 계정 연결"}
+                </button>
+                <p className="identity-link-note">
+                  로그아웃 상태에서 Google로 새로 시작하면 기록이 다른 계정으로
+                  나뉠 수 있어요. 먼저 이메일 계정으로 로그인한 뒤 연결해 주세요.
+                </p>
+              </>
+            )}
+            {linkMessage && (
+              <p
+                className={linkMessage.includes("연결했어요") ? "form-success" : "form-error"}
+                role="alert"
+              >
+                {linkMessage}
+              </p>
+            )}
           </section>
 
           <section className={`panel ai-access-panel ${aiAccess?.enabled ? "enabled" : ""}`}>

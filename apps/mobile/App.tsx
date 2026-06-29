@@ -93,6 +93,37 @@ const oauthProviderLabels: Record<OAuthProvider, string> = {
   apple: "Apple",
 };
 
+function hasLinkedProvider(user: User | null, provider: OAuthProvider) {
+  return Boolean(user?.identities?.some((identity) => identity.provider === provider));
+}
+
+function oauthLinkErrorMessage(provider: OAuthProvider, error: unknown) {
+  const label = oauthProviderLabels[provider];
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: string }).code ?? "")
+      : "";
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  const normalizedMessage = message.toLowerCase();
+
+  if (code === "manual_linking_disabled" || normalizedMessage.includes("manual")) {
+    return "계정 연결 설정이 아직 꺼져 있어요. 관리자 설정을 확인해 주세요.";
+  }
+  if (
+    code === "identity_already_exists" ||
+    normalizedMessage.includes("identity_already_exists") ||
+    normalizedMessage.includes("already")
+  ) {
+    return `${label} 계정이 이미 다른 펫플로우 계정에 연결되어 있어요. 기록이 섞이지 않도록 연결하지 않았어요.`;
+  }
+  return `${label} 계정을 연결하지 못했어요. 잠시 후 다시 시도해 주세요.`;
+}
+
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPolicy = [
   { id: "length", label: "8~64자", test: (value: string) => value.length >= 8 && value.length <= 64 },
@@ -397,6 +428,9 @@ export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [mainSection, setMainSection] = useState<MainSection>("home");
   const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
+  const [linkOauthLoading, setLinkOauthLoading] =
+    useState<OAuthProvider | null>(null);
+  const [linkOauthMessage, setLinkOauthMessage] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [draft, setDraft] = useState<TesterDraft>(emptyDraft);
@@ -1058,6 +1092,52 @@ export default function App() {
     } finally {
       oauthSessionActiveRef.current = false;
       setOauthLoading(null);
+    }
+  }
+
+  async function linkOAuthIdentity(provider: OAuthProvider) {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setLinkOauthMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
+      return;
+    }
+
+    setLinkOauthLoading(provider);
+    setLinkOauthMessage("");
+    oauthSessionActiveRef.current = true;
+
+    try {
+      const redirectTo = "petflow://auth-callback";
+      const { data, error } = await supabase.auth.linkIdentity({
+        provider,
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error || !data.url) {
+        throw error ?? new Error("OAuth link URL was not created.");
+      }
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === "success") {
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(
+          result.url,
+        );
+        if (exchangeError) throw exchangeError;
+        setLinkOauthMessage(`${oauthProviderLabels[provider]} 계정을 연결했어요.`);
+        return;
+      }
+
+      if (result.type !== "cancel" && result.type !== "dismiss") {
+        setLinkOauthMessage(`${oauthProviderLabels[provider]} 연결이 완료되지 않았어요.`);
+      }
+    } catch (error) {
+      setLinkOauthMessage(oauthLinkErrorMessage(provider, error));
+    } finally {
+      oauthSessionActiveRef.current = false;
+      setLinkOauthLoading(null);
     }
   }
 
@@ -1979,8 +2059,11 @@ export default function App() {
       accountDeletionRequested={accountDeletionRequested}
       user={user}
       testerProfile={testerProfile}
+      linkOauthLoading={linkOauthLoading}
+      linkOauthMessage={linkOauthMessage}
       onSignOut={signOut}
       onChangeAiCode={setAiCodeDraft}
+      onLinkOAuth={linkOAuthIdentity}
       onRedeemAiCode={redeemAiCode}
       onRequestAccountDeletion={requestAccountDeletion}
       disabled={loading}
@@ -2653,8 +2736,11 @@ function AccountCard({
   accountDeletionRequested,
   user,
   testerProfile,
+  linkOauthLoading,
+  linkOauthMessage,
   disabled,
   onChangeAiCode,
+  onLinkOAuth,
   onRedeemAiCode,
   onRequestAccountDeletion,
   onSignOut,
@@ -2668,12 +2754,17 @@ function AccountCard({
   accountDeletionRequested: boolean;
   user: User;
   testerProfile: TesterProfile | null;
+  linkOauthLoading: OAuthProvider | null;
+  linkOauthMessage: string;
   disabled: boolean;
   onChangeAiCode: (value: string) => void;
+  onLinkOAuth: (provider: OAuthProvider) => Promise<void>;
   onRedeemAiCode: () => Promise<void>;
   onRequestAccountDeletion: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }) {
+  const googleLinked = hasLinkedProvider(user, "google");
+
   return (
     <View style={styles.card}>
       <Text style={styles.cardEyebrow}>SIGNED IN</Text>
@@ -2684,6 +2775,55 @@ function AccountCard({
       {testerProfile?.phone ? (
         <Text style={styles.cardText}>{formatKoreanMobile(testerProfile.phone)}</Text>
       ) : null}
+
+      <View style={styles.identityLinkBox}>
+        <View style={styles.identityLinkHeader}>
+          <View style={styles.cardHeaderText}>
+            <Text style={styles.identityLinkTitle}>로그인 연결</Text>
+            <Text style={styles.identityLinkText}>
+              기존 이메일 계정에 Google을 연결하면 반려동물, 기록, GPT 권한이
+              그대로 이어져요.
+            </Text>
+          </View>
+          <Text
+            style={[
+              styles.identityLinkBadge,
+              googleLinked && styles.identityLinkBadgeConnected,
+            ]}
+          >
+            {googleLinked ? "Google 연결됨" : "연결 전"}
+          </Text>
+        </View>
+        {googleLinked ? (
+          <Text style={styles.identityLinkSuccess}>
+            Google로 다시 로그인해도 지금 계정의 기록을 그대로 볼 수 있어요.
+          </Text>
+        ) : (
+          <>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={disabled || linkOauthLoading !== null}
+              onPress={() => void onLinkOAuth("google")}
+              style={[
+                styles.identityLinkButton,
+                (disabled || linkOauthLoading !== null) && styles.buttonDisabled,
+              ]}
+            >
+              <Text style={styles.identityLinkButtonText}>
+                {linkOauthLoading === "google" ? "Google 연결 중" : "Google 계정 연결"}
+              </Text>
+            </TouchableOpacity>
+            <Text style={styles.identityLinkHelp}>
+              로그아웃 상태에서 Google로 새로 시작하면 기록이 다른 계정으로 나뉠
+              수 있어요. 먼저 이메일 계정으로 로그인한 뒤 연결해 주세요.
+            </Text>
+          </>
+        )}
+        <Message
+          text={linkOauthMessage}
+          tone={linkOauthMessage.includes("연결했어요") ? "success" : "error"}
+        />
+      </View>
 
       <View style={[styles.aiAccessBox, aiAccess?.enabled && styles.aiAccessBoxEnabled]}>
         <View style={styles.aiAccessHeader}>
@@ -4956,6 +5096,73 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
     lineHeight: 19,
+  },
+  identityLinkBox: {
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: "#d7e8df",
+    borderRadius: 20,
+    backgroundColor: "#f6fbf8",
+    padding: 14,
+  },
+  identityLinkHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  identityLinkTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  identityLinkText: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  identityLinkBadge: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#fff2d4",
+    color: "#7d6a45",
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  identityLinkBadgeConnected: {
+    backgroundColor: colors.greenSoft,
+    color: colors.green,
+  },
+  identityLinkButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderRadius: 16,
+    backgroundColor: colors.greenSoft,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  identityLinkButtonText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  identityLinkHelp: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  identityLinkSuccess: {
+    marginTop: 10,
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 18,
   },
   aiAccessBox: {
     marginTop: 16,
