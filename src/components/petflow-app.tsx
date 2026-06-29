@@ -12,7 +12,7 @@ import {
 import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
-import { deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
+import { analyzeLocally, deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
 import { buildEpisodeReport } from "@/lib/episode-report";
 import { summarizeHealthFlow } from "@/lib/health-flow";
 import { normalizeKoreanMobile } from "@/lib/phone";
@@ -1038,6 +1038,7 @@ function ProfileView({
 function CheckView({
   input,
   setInput,
+  isEditing,
   mediaFiles,
   setMediaFiles,
   mediaEnabled,
@@ -1051,6 +1052,7 @@ function CheckView({
 }: {
   input: HealthCheckInput;
   setInput: (value: HealthCheckInput) => void;
+  isEditing: boolean;
   mediaFiles: PendingMediaFile[];
   setMediaFiles: (files: PendingMediaFile[]) => void;
   mediaEnabled: boolean;
@@ -1093,6 +1095,10 @@ function CheckView({
   }
   function addMediaFiles(fileList: FileList | null) {
     if (!fileList?.length) return;
+    if (isEditing) {
+      setMediaError("첨부 변경은 새 기록에서 다시 추가해 주세요.");
+      return;
+    }
     if (!mediaEnabled) {
       setMediaError("사진·영상 저장은 로그인 후 등록된 반려동물 기록에서 사용할 수 있어요.");
       return;
@@ -1138,8 +1144,12 @@ function CheckView({
         </button>
         <div>
           <p className="eyebrow">HEALTH CHECK</p>
-          <h1>오늘의 건강 기록</h1>
-          <p>달라진 것만 골라주세요. 나머지는 평소 상태로 기록할게요.</p>
+          <h1>{isEditing ? "기록 수정" : "오늘의 건강 기록"}</h1>
+          <p>
+            {isEditing
+              ? "수정할 부분만 바꾸면 같은 기록에 다시 반영돼요."
+              : "달라진 것만 골라주세요. 나머지는 평소 상태로 기록할게요."}
+          </p>
         </div>
       </div>
       <div className="progress-wrap">
@@ -1310,12 +1320,18 @@ function CheckView({
             <div className="field full">
               <span className="field-label">사진·영상 (선택)</span>
               <div className="media-uploader">
-                <label className={`media-dropzone ${mediaEnabled ? "" : "disabled"}`}>
+                <label
+                  className={`media-dropzone ${mediaEnabled && !isEditing ? "" : "disabled"}`}
+                >
                   <input
                     type="file"
                     accept={reportMediaAccept}
                     multiple
-                    disabled={!mediaEnabled || mediaFiles.length >= maxReportMediaFiles}
+                    disabled={
+                      isEditing ||
+                      !mediaEnabled ||
+                      mediaFiles.length >= maxReportMediaFiles
+                    }
                     onChange={(event) => {
                       addMediaFiles(event.currentTarget.files);
                       event.currentTarget.value = "";
@@ -1329,7 +1345,11 @@ function CheckView({
                   </span>
                   <em>{mediaFiles.length}/{maxReportMediaFiles}</em>
                 </label>
-                {!mediaEnabled && (
+                {isEditing ? (
+                  <p className="media-helper">
+                    첨부를 바꾸고 싶다면 새 기록으로 다시 추가해 주세요.
+                  </p>
+                ) : !mediaEnabled && (
                   <p className="media-helper">
                     로그인 후 등록된 반려동물을 선택하면 계정 기록에 첨부할 수 있어요.
                   </p>
@@ -1385,11 +1405,13 @@ function CheckView({
           >
             {loading ? (
               <>
-                <span className="loading-dot" /> 리포트 정리 중
+                <span className="loading-dot" />{" "}
+                {isEditing ? "수정 반영 중" : "리포트 정리 중"}
               </>
             ) : (
               <>
-                <Icon name="spark" size={17} /> 기록 완료하기
+                <Icon name="spark" size={17} />{" "}
+                {isEditing ? "수정 완료하기" : "기록 완료하기"}
               </>
             )}
           </button>
@@ -1404,12 +1426,16 @@ function ResultView({
   mediaWarning,
   onHome,
   onRestart,
+  onEdit,
+  onDelete,
   onFeedback,
 }: {
   record: HistoryRecord;
   mediaWarning: string;
   onHome: () => void;
   onRestart: () => void;
+  onEdit: (record: HistoryRecord) => void;
+  onDelete: (record: HistoryRecord) => void;
   onFeedback: (value: HistoryRecord["feedback"]) => void;
 }) {
   const { result } = record;
@@ -1618,6 +1644,15 @@ function ResultView({
               <Icon name="plus" size={17} />{" "}
               {record.episodeId ? "경과 이어 기록" : "새 기록 남기기"}
             </button>
+            <button className="secondary-button" onClick={() => onEdit(record)}>
+              수정
+            </button>
+            <button
+              className="secondary-button compact danger-button"
+              onClick={() => onDelete(record)}
+            >
+              삭제
+            </button>
           </div>
         </div>
       </div>
@@ -1634,6 +1669,8 @@ function HistoryView({
   petName,
   onBack,
   onSelect,
+  onEdit,
+  onDelete,
   onStart,
   onCloseEpisode,
   onOpenReport,
@@ -1648,6 +1685,8 @@ function HistoryView({
   petName: string;
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
+  onEdit: (record: HistoryRecord) => void;
+  onDelete: (record: HistoryRecord) => void;
   onStart: () => void;
   onCloseEpisode: (episodeId: string) => void;
   onOpenReport: (records: HistoryRecord[], episode?: PetEpisode) => void;
@@ -1787,28 +1826,44 @@ function HistoryView({
                 </div>
                 <div className="history-grid">
                   {group.records.map((record) => (
-                    <button
+                    <article
                       key={record.result.id}
                       className="history-card"
-                      onClick={() => onSelect(record)}
                     >
-                      <span className="history-date">
-                        {new Date(record.result.createdAt).getDate()}일
-                      </span>
-                      <span>
-                        <h3>{record.result.headline}</h3>
-                        <p>
-                          {formatDate(record.result.createdAt)} · 증상{" "}
-                          {record.input.symptoms.length}개 기록
-                          {record.media?.length
-                            ? ` · 첨부 ${record.media.length}개`
-                            : ""}
-                        </p>
-                      </span>
-                      <span className={`history-risk ${record.result.riskLevel}`}>
-                        {riskLabel[record.result.riskLevel]}
-                      </span>
-                    </button>
+                      <button
+                        className="history-card-main"
+                        onClick={() => onSelect(record)}
+                      >
+                        <span className="history-date">
+                          {new Date(record.result.createdAt).getDate()}일
+                        </span>
+                        <span>
+                          <h3>{record.result.headline}</h3>
+                          <p>
+                            {formatDate(record.result.createdAt)} · 증상{" "}
+                            {record.input.symptoms.length}개 기록
+                            {record.media?.length
+                              ? ` · 첨부 ${record.media.length}개`
+                              : ""}
+                          </p>
+                        </span>
+                        <span className={`history-risk ${record.result.riskLevel}`}>
+                          {riskLabel[record.result.riskLevel]}
+                        </span>
+                      </button>
+                      <div className="history-card-actions">
+                        <button type="button" onClick={() => onEdit(record)}>
+                          수정
+                        </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => onDelete(record)}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </article>
                   ))}
                 </div>
               </section>
@@ -2690,6 +2745,7 @@ export function PetFlowApp() {
   const [mediaError, setMediaError] = useState("");
   const [mediaUploadWarning, setMediaUploadWarning] = useState("");
   const [selected, setSelected] = useState<HistoryRecord | null>(null);
+  const [editingRecord, setEditingRecord] = useState<HistoryRecord | null>(null);
   const [selectedEpisodeReport, setSelectedEpisodeReport] =
     useState<EpisodeReportSelection | null>(null);
   const [profileReturnView, setProfileReturnView] = useState<"home" | "check" | "account">(
@@ -3203,11 +3259,73 @@ export function PetFlowApp() {
       openProfile("check");
       return;
     }
+    setEditingRecord(null);
     clearPendingMedia();
     setMediaUploadWarning("");
     setInput(profileToHealthInput(profile));
     setError("");
     setView("check");
+  }
+
+  function startEditRecord(record: HistoryRecord) {
+    setEditingRecord(record);
+    setInput({
+      ...record.input,
+      petName: profile.name || record.input.petName,
+      species: profile.species || record.input.species,
+      breed: profile.breed || record.input.breed,
+      birthDate: profile.birthDate || record.input.birthDate,
+      sex: profile.sex || record.input.sex,
+      weight: profile.weight || record.input.weight,
+    });
+    clearPendingMedia();
+    setMediaUploadWarning("");
+    setError("");
+    setView("check");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function deleteRecord(record: HistoryRecord) {
+    const confirmed = window.confirm(
+      "이 기록을 삭제할까요?\n삭제하면 병원 공유 요약에서도 빠져요.",
+    );
+    if (!confirmed) return;
+
+    try {
+      if (record.result.storage === "remote") {
+        const supabase = getSupabaseBrowserClient();
+        const { data } = supabase
+          ? await supabase.auth.getSession()
+          : { data: { session: null } };
+        if (!data.session) throw new Error("missing session");
+        const response = await fetch(`/api/reports/${record.result.id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
+        });
+        if (!response.ok) throw new Error("delete failed");
+      }
+
+      const nextHistory = history.filter(
+        (item) => item.result.id !== record.result.id,
+      );
+      persist(nextHistory);
+      setSelected((current) =>
+        current?.result.id === record.result.id ? null : current,
+      );
+      setEditingRecord((current) =>
+        current?.result.id === record.result.id ? null : current,
+      );
+      setSelectedEpisodeReport((current) => {
+        if (!current) return current;
+        const records = current.records.filter(
+          (item) => item.result.id !== record.result.id,
+        );
+        return records.length ? { ...current, records } : null;
+      });
+      if (currentView === "result") setView("history");
+    } catch {
+      window.alert("기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    }
   }
   async function submit() {
     if (!input.petName.trim()) {
@@ -3223,6 +3341,78 @@ export function PetFlowApp() {
       const { data: sessionData } = supabase
         ? await supabase.auth.getSession()
         : { data: { session: null } };
+      if (editingRecord) {
+        let media = editingRecord.media ?? [];
+        let petId = editingRecord.petId ?? selectedPetId;
+        let episodeId = editingRecord.episodeId;
+        let result: AnalysisResult;
+
+        if (editingRecord.result.storage === "remote") {
+          if (!sessionData.session?.access_token) throw new Error("missing session");
+          const response = await fetch(`/api/reports/${editingRecord.result.id}`, {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${sessionData.session.access_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(input),
+          });
+          if (!response.ok) throw new Error("update failed");
+          const payload = (await response.json()) as AnalysisResult & {
+            episodeId?: string | null;
+            media?: ReportMediaAttachment[];
+            petId?: string | null;
+          };
+          const {
+            episodeId: savedEpisodeId,
+            media: savedMedia,
+            petId: savedPetId,
+            ...updatedResult
+          } = payload;
+          result = updatedResult;
+          media = savedMedia ?? media;
+          petId = savedPetId ?? petId;
+          episodeId = savedEpisodeId ?? undefined;
+        } else {
+          const localResult = analyzeLocally(input);
+          result = {
+            ...localResult,
+            id: editingRecord.result.id,
+            createdAt: editingRecord.result.createdAt,
+            storage: editingRecord.result.storage ?? "local",
+          };
+        }
+
+        const updated: HistoryRecord = {
+          ...editingRecord,
+          input,
+          result,
+          petId,
+          episodeId,
+          media,
+        };
+        persist(
+          history.map((item) =>
+            item.result.id === updated.result.id ? updated : item,
+          ),
+        );
+        setSelected(updated);
+        setSelectedEpisodeReport((current) =>
+          current
+            ? {
+                ...current,
+                records: current.records.map((item) =>
+                  item.result.id === updated.result.id ? updated : item,
+                ),
+              }
+            : current,
+        );
+        setEditingRecord(null);
+        clearPendingMedia();
+        setView("result");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
@@ -3305,7 +3495,11 @@ export function PetFlowApp() {
       setView("result");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch {
-      setError("리포트를 만들지 못했어요. 잠시 후 다시 시도해 주세요.");
+      setError(
+        editingRecord
+          ? "기록을 수정하지 못했어요. 잠시 후 다시 시도해 주세요."
+          : "리포트를 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+      );
     } finally {
       setLoading(false);
     }
@@ -3606,6 +3800,7 @@ export function PetFlowApp() {
           <CheckView
             input={input}
             setInput={setInput}
+            isEditing={Boolean(editingRecord)}
             mediaFiles={pendingMedia}
             setMediaFiles={setPendingMedia}
             mediaEnabled={Boolean(user && selectedPetId)}
@@ -3624,6 +3819,8 @@ export function PetFlowApp() {
             mediaWarning={mediaUploadWarning}
             onHome={() => setView("home")}
             onRestart={startNew}
+            onEdit={startEditRecord}
+            onDelete={(record) => void deleteRecord(record)}
             onFeedback={updateFeedback}
           />
         )}{" "}
@@ -3637,6 +3834,8 @@ export function PetFlowApp() {
             petName={profile.name}
             onBack={() => setView("home")}
             onStart={startNew}
+            onEdit={startEditRecord}
+            onDelete={(record) => void deleteRecord(record)}
             onCloseEpisode={closeEpisode}
             closingEpisodeId={closingEpisodeId}
             episodeError={episodeError}

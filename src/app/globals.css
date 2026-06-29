@@ -2655,20 +2655,54 @@ p {
 }
 .history-card {
   width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  overflow: hidden;
+}
+.history-card:hover {
+  border-color: #b7d8c9;
+  box-shadow: 0 8px 26px rgba(47, 93, 75, 0.08);
+}
+.history-card-main {
+  width: 100%;
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 15px;
   align-items: center;
   padding: 18px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: #fff;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
   text-align: left;
 }
-.history-card:hover {
-  border-color: #b7d8c9;
-  box-shadow: 0 8px 26px rgba(47, 93, 75, 0.08);
+.history-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 18px 14px 80px;
+}
+.history-card-actions button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #71837d;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 6px 8px;
+}
+.history-card-actions button:hover {
+  background: #f0f7f3;
+  color: var(--mint-dark);
+}
+.history-card-actions button.danger {
+  color: #a94840;
+}
+.history-card-actions button.danger:hover {
+  background: #fff1ee;
 }
 .history-date {
   width: 48px;

@@ -34,6 +34,10 @@ export interface HealthReportSaveResult {
   episodeId: string | null;
 }
 
+export interface HealthReportEditResult {
+  report: DisplayHealthReport;
+}
+
 export interface EpisodeVetReviewBundle {
   episode: PetEpisode;
   pet: PetProfile;
@@ -679,6 +683,115 @@ export async function saveHealthReport(
     return { saved, episodeId: saved ? episodeId : null };
   } catch {
     return { saved: false, episodeId: null };
+  }
+}
+
+export async function updateHealthReport(
+  accessToken: string | null,
+  reportId: string | null,
+  input: HealthCheckInput,
+  result: AnalysisResult,
+): Promise<HealthReportEditResult | null> {
+  if (!isUuid(reportId)) return null;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return null;
+
+  try {
+    const reportResponse = await supabaseRequest(
+      `health_reports?id=eq.${reportId}&user_id=eq.${userId}&select=id,pet_id,episode_id,created_at&limit=1`,
+      { method: "GET" },
+    );
+    if (!reportResponse?.ok) return null;
+    const existing = (await reportResponse.json()) as Array<{
+      id: string;
+      pet_id: string | null;
+      episode_id: string | null;
+      created_at: string;
+    }>;
+    const report = existing[0];
+    if (!report) return null;
+
+    const response = await supabaseRequest(
+      `health_reports?id=eq.${report.id}&user_id=eq.${userId}&select=id,pet_id,episode_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          species: input.species,
+          breed: input.breed?.trim().slice(0, 80) || null,
+          age_group: input.ageGroup,
+          symptoms: input.symptoms,
+          appetite: input.appetite,
+          energy: input.energy,
+          duration: input.duration,
+          red_flags: input.redFlags,
+          risk_level: result.riskLevel,
+          risk_score: result.riskScore,
+          analysis_source: result.source,
+          app_version: appVersion(),
+          deployment_environment: deploymentEnvironment(),
+        }),
+      },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as DisplayHealthReport[];
+    const updated = rows[0];
+    if (!updated) return null;
+
+    const mediaResponse = await supabaseRequest(
+      `health_report_media?user_id=eq.${userId}&report_id=eq.${report.id}&select=${reportMediaSelect}&order=created_at.asc`,
+      { method: "GET" },
+    );
+    const mediaRows = mediaResponse?.ok
+      ? ((await mediaResponse.json()) as ReportMediaRow[])
+      : [];
+
+    return {
+      report: {
+        ...updated,
+        media: await signReportMediaRows(mediaRows),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteHealthReport(
+  accessToken: string | null,
+  reportId: string | null,
+): Promise<boolean> {
+  if (!isUuid(reportId)) return false;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return false;
+
+  try {
+    const mediaResponse = await supabaseRequest(
+      `health_report_media?user_id=eq.${userId}&report_id=eq.${reportId}&select=storage_path`,
+      { method: "GET" },
+    );
+    const mediaRows = mediaResponse?.ok
+      ? ((await mediaResponse.json()) as Array<{ storage_path: string }>)
+      : [];
+
+    const response = await supabaseRequest(
+      `health_reports?id=eq.${reportId}&user_id=eq.${userId}`,
+      { method: "DELETE" },
+    );
+    if (!response?.ok) return false;
+
+    const paths = mediaRows.map((row) => row.storage_path).filter(Boolean);
+    const client = getAdminClient();
+    if (client && paths.length) {
+      try {
+        await client.storage.from(reportMediaBucket).remove(paths);
+      } catch {
+        /* Storage cleanup is best-effort after the report row is deleted. */
+      }
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 

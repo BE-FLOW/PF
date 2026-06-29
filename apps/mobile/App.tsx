@@ -7,6 +7,7 @@ import type { User } from "@supabase/supabase-js";
 import type { TextInputProps, TextProps, TextStyle } from "react-native";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   KeyboardAvoidingView,
   Linking,
@@ -415,6 +416,8 @@ export default function App() {
   const [healthMessage, setHealthMessage] = useState("");
   const [latestResult, setLatestResult] = useState<AnalysisResult | null>(null);
   const [latestEpisodeId, setLatestEpisodeId] = useState<string | null>(null);
+  const [editingHealthRecord, setEditingHealthRecord] =
+    useState<HistoryRecord | null>(null);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [plans, setPlans] = useState<EpisodePlan[]>([]);
@@ -592,6 +595,7 @@ export default function App() {
       setHealthInput(null);
       setLatestResult(null);
       setLatestEpisodeId(null);
+      setEditingHealthRecord(null);
       setHistory([]);
       setEpisodes([]);
       setPlans([]);
@@ -690,6 +694,7 @@ export default function App() {
       setHealthInput(null);
       setLatestResult(null);
       setLatestEpisodeId(null);
+      setEditingHealthRecord(null);
       setHistory([]);
       setEpisodes([]);
       setPlans([]);
@@ -892,6 +897,7 @@ export default function App() {
     setHealthMessage("");
     setLatestResult(null);
     setLatestEpisodeId(null);
+    setEditingHealthRecord(null);
     setEpisodes([]);
     setPlans([]);
     setProgress([]);
@@ -1131,6 +1137,10 @@ export default function App() {
 
   async function pickMedia() {
     setMediaMessage("");
+    if (editingHealthRecord) {
+      setMediaMessage("첨부 변경은 새 기록에서 다시 추가해 주세요.");
+      return;
+    }
     if (pendingMedia.length >= maxReportMediaFiles) {
       setMediaMessage(`사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`);
       return;
@@ -1187,6 +1197,96 @@ export default function App() {
   function removePendingMedia(id: string) {
     setPendingMedia((current) => current.filter((item) => item.id !== id));
     setMediaMessage("");
+  }
+
+  function startHealthRecord() {
+    if (selectedPet) {
+      setHealthInput(profileToHealthInput(selectedPet));
+    }
+    setEditingHealthRecord(null);
+    setLatestResult(null);
+    setLatestEpisodeId(null);
+    setHealthMessage("");
+    setMediaMessage("");
+    setMediaUploadMessage("");
+    setPendingMedia([]);
+    setMainSection("record");
+  }
+
+  function startEditingHealthRecord(record: HistoryRecord) {
+    if (!selectedPet) return;
+    setEditingHealthRecord(record);
+    setHealthInput({
+      ...record.input,
+      petName: selectedPet.name,
+      species: selectedPet.species,
+      breed: selectedPet.breed || undefined,
+      birthDate: selectedPet.birthDate || undefined,
+      sex: selectedPet.sex,
+      weight: selectedPet.weight || undefined,
+    });
+    setLatestResult(record.result);
+    setLatestEpisodeId(record.episodeId ?? null);
+    setHealthMessage("수정할 부분만 바꾼 뒤 저장해 주세요.");
+    setMediaMessage("");
+    setMediaUploadMessage("");
+    setPendingMedia([]);
+    setMainSection("record");
+  }
+
+  async function deleteHealthRecord(record: HistoryRecord) {
+    try {
+      if (record.result.storage === "remote") {
+        const supabase = getSupabaseClient();
+        const { data } = supabase
+          ? await supabase.auth.getSession()
+          : { data: { session: null } };
+        const accessToken = data.session?.access_token;
+        if (!accessToken) throw new Error("missing session");
+        const response = await fetch(`${apiBaseUrl}/api/reports/${record.result.id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!response.ok) throw new Error("delete failed");
+      }
+
+      setHistory((current) =>
+        current.filter((item) => item.result.id !== record.result.id),
+      );
+      if (latestResult?.id === record.result.id) {
+        setLatestResult(null);
+        setLatestEpisodeId(null);
+      }
+      if (editingHealthRecord?.result.id === record.result.id) {
+        setEditingHealthRecord(null);
+      }
+      setHistoryMessage("기록을 삭제했어요.");
+    } catch {
+      setHistoryMessage("기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    }
+  }
+
+  function confirmDeleteHealthRecord(record: HistoryRecord) {
+    Alert.alert(
+      "기록을 삭제할까요?",
+      "삭제하면 병원 공유 요약에서도 빠져요.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: () => void deleteHealthRecord(record),
+        },
+      ],
+    );
+  }
+
+  function changeMainSection(next: MainSection) {
+    if (next === "record" && mainSection !== "record") {
+      startHealthRecord();
+      return;
+    }
+    setMainSection(next);
   }
 
   async function savePetProfile() {
@@ -1273,6 +1373,66 @@ export default function App() {
       const session = data.session;
       const accessToken = session?.access_token;
       if (!accessToken) throw new Error("missing session");
+      if (editingHealthRecord) {
+        let media = editingHealthRecord.media ?? [];
+        let petIdForRecord = editingHealthRecord.petId ?? petId;
+        let episodeId = editingHealthRecord.episodeId;
+        let result: AnalysisResult;
+
+        if (editingHealthRecord.result.storage === "remote") {
+          const response = await fetch(
+            `${apiBaseUrl}/api/reports/${editingHealthRecord.result.id}`,
+            {
+              method: "PATCH",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(input),
+            },
+          );
+          if (!response.ok) throw new Error("update failed");
+          const payload = (await response.json()) as AnalysisResult & {
+            episodeId?: string | null;
+            media?: ReportMediaAttachment[];
+            petId?: string | null;
+          };
+          const {
+            episodeId: savedEpisodeId,
+            media: savedMedia,
+            petId: savedPetId,
+            ...updatedResult
+          } = payload;
+          result = updatedResult;
+          media = savedMedia ?? media;
+          petIdForRecord = savedPetId ?? petIdForRecord;
+          episodeId = savedEpisodeId ?? undefined;
+        } else {
+          result = {
+            ...localResult,
+            id: editingHealthRecord.result.id,
+            createdAt: editingHealthRecord.result.createdAt,
+            storage: editingHealthRecord.result.storage ?? "local",
+          };
+        }
+
+        const record: HistoryRecord = {
+          ...editingHealthRecord,
+          petId: petIdForRecord,
+          episodeId,
+          input,
+          result,
+          media,
+        };
+        setLatestResult(result);
+        setLatestEpisodeId(episodeId ?? null);
+        setHistory((current) => upsertHistoryRecord(current, record));
+        setEditingHealthRecord(null);
+        setPendingMedia([]);
+        setMediaUploadMessage("");
+        setHealthMessage("기록을 수정했어요.");
+        return;
+      }
       const clientId = createUuid();
 
       const response = await fetch(`${apiBaseUrl}/api/analyze`, {
@@ -1361,18 +1521,22 @@ export default function App() {
           : "결과는 만들었지만 서버 저장은 확인하지 못했어요.",
       );
     } catch {
-      const fallbackResult: AnalysisResult = { ...localResult, storage: "local" };
-      setLatestResult(fallbackResult);
-      setHistory((current) =>
-        upsertHistoryRecord(current, {
-          petId: selectedPet.id,
-          input,
-          result: fallbackResult,
-        }),
-      );
-      setHealthMessage(
-        "서버 저장은 실패했지만, 기기에서 기본 안전 분류를 만들었어요. 네트워크를 확인한 뒤 다시 저장해 주세요.",
-      );
+      if (editingHealthRecord) {
+        setHealthMessage("기록을 수정하지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.");
+      } else {
+        const fallbackResult: AnalysisResult = { ...localResult, storage: "local" };
+        setLatestResult(fallbackResult);
+        setHistory((current) =>
+          upsertHistoryRecord(current, {
+            petId: selectedPet.id,
+            input,
+            result: fallbackResult,
+          }),
+        );
+        setHealthMessage(
+          "서버 저장은 실패했지만, 기기에서 기본 안전 분류를 만들었어요. 네트워크를 확인한 뒤 다시 저장해 주세요.",
+        );
+      }
     } finally {
       setHealthLoading(false);
     }
@@ -1871,7 +2035,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <MainSectionTabs value={mainSection} onChange={setMainSection} />
+                  <MainSectionTabs value={mainSection} onChange={changeMainSection} />
                   {mainSection === "home" ? (
                     <HomeDashboard
                       flow={healthFlow}
@@ -1880,7 +2044,7 @@ export default function App() {
                       pets={pets}
                       selectedPet={selectedPet}
                       onGoAccount={() => setMainSection("account")}
-                      onGoRecord={() => setMainSection("record")}
+                      onGoRecord={startHealthRecord}
                       onGoReports={() => setMainSection("reports")}
                     />
                   ) : null}
@@ -1908,6 +2072,7 @@ export default function App() {
                           mediaMessage={mediaMessage}
                           mediaUploadMessage={mediaUploadMessage}
                           message={healthMessage}
+                          isEditing={Boolean(editingHealthRecord)}
                           pendingMedia={pendingMedia}
                           result={latestResult}
                           episodeId={latestEpisodeId}
@@ -1946,6 +2111,8 @@ export default function App() {
                         savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
                         onRefresh={() => loadPetHistory(selectedPet)}
                         onShareReport={shareEpisodeReport}
+                        onEditRecord={startEditingHealthRecord}
+                        onDeleteRecord={confirmDeleteHealthRecord}
                         onCreateVetDraft={createVetDraft}
                         onSaveAiFeedback={saveAiFeedback}
                         onShareVetDraft={shareVetDraft}
@@ -1962,7 +2129,7 @@ export default function App() {
                         shareMessage={shareMessage}
                       />
                     ) : (
-                      <ReportsEmptyState onGoRecord={() => setMainSection("record")} />
+                      <ReportsEmptyState onGoRecord={startHealthRecord} />
                     )
                   ) : null}
                   {mainSection === "account" ? accountCard : null}
@@ -2904,6 +3071,7 @@ function HealthRecorder({
   mediaMessage,
   mediaUploadMessage,
   message,
+  isEditing,
   pendingMedia,
   result,
   episodeId,
@@ -2918,6 +3086,7 @@ function HealthRecorder({
   mediaMessage: string;
   mediaUploadMessage: string;
   message: string;
+  isEditing: boolean;
   pendingMedia: PendingMediaAsset[];
   result: AnalysisResult | null;
   episodeId: string | null;
@@ -2930,10 +3099,13 @@ function HealthRecorder({
   return (
     <View style={styles.card}>
       <Text style={styles.cardEyebrow}>TODAY CHECK</Text>
-      <Text style={styles.cardTitle}>{pet.name} 오늘 건강 기록</Text>
+      <Text style={styles.cardTitle}>
+        {isEditing ? `${pet.name} 기록 수정` : `${pet.name} 오늘 건강 기록`}
+      </Text>
       <Text style={styles.cardText}>
-        특별한 변화가 없으면 평소 상태 버튼만 눌러도 충분해요. 달라진 점이 있을 때만
-        증상과 메모를 더해 주세요.
+        {isEditing
+          ? "수정할 부분만 바꾼 뒤 저장해 주세요. 첨부 변경은 새 기록에서 다시 추가할 수 있어요."
+          : "특별한 변화가 없으면 평소 상태 버튼만 눌러도 충분해요. 달라진 점이 있을 때만 증상과 메모를 더해 주세요."}
       </Text>
 
       <TouchableOpacity
@@ -3000,6 +3172,7 @@ function HealthRecorder({
       />
 
       <MediaPickerSection
+        disabled={isEditing}
         mediaMessage={mediaMessage}
         onPickMedia={onPickMedia}
         onRemoveMedia={onRemoveMedia}
@@ -3008,7 +3181,15 @@ function HealthRecorder({
 
       <PrimaryButton
         disabled={loading}
-        label={loading ? "기록 중..." : "오늘 건강 기록 저장"}
+        label={
+          loading
+            ? isEditing
+              ? "수정 중..."
+              : "기록 중..."
+            : isEditing
+              ? "수정 완료하기"
+              : "오늘 건강 기록 저장"
+        }
         onPress={onSubmit}
       />
       <Message text={message} />
@@ -3020,11 +3201,13 @@ function HealthRecorder({
 }
 
 function MediaPickerSection({
+  disabled = false,
   mediaMessage,
   onPickMedia,
   onRemoveMedia,
   pendingMedia,
 }: {
+  disabled?: boolean;
   mediaMessage: string;
   onPickMedia: () => Promise<void>;
   onRemoveMedia: (id: string) => void;
@@ -3041,8 +3224,9 @@ function MediaPickerSection({
         </View>
         <TouchableOpacity
           activeOpacity={0.85}
+          disabled={disabled}
           onPress={() => void onPickMedia()}
-          style={styles.mediaAddButton}
+          style={[styles.mediaAddButton, disabled && styles.buttonDisabled]}
         >
           <Text style={styles.mediaAddButtonText}>추가</Text>
         </TouchableOpacity>
@@ -3194,6 +3378,8 @@ function HealthHistoryCard({
   onSavePlan,
   onSaveProgress,
   onSaveAiFeedback,
+  onEditRecord,
+  onDeleteRecord,
   onShareReport,
   onShareVetDraft,
   onStartPlanEdit,
@@ -3235,6 +3421,8 @@ function HealthHistoryCard({
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
   onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
+  onEditRecord: (record: HistoryRecord) => void;
+  onDeleteRecord: (record: HistoryRecord) => void;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
@@ -3364,7 +3552,12 @@ function HealthHistoryCard({
       {recent.length ? (
         <View style={styles.historyList}>
           {recent.map((record) => (
-            <HistoryRecordItem key={record.result.id} record={record} />
+            <HistoryRecordItem
+              key={record.result.id}
+              record={record}
+              onDelete={onDeleteRecord}
+              onEdit={onEditRecord}
+            />
           ))}
         </View>
       ) : (
@@ -4030,7 +4223,15 @@ function EpisodeReportItem({
   );
 }
 
-function HistoryRecordItem({ record }: { record: HistoryRecord }) {
+function HistoryRecordItem({
+  record,
+  onDelete,
+  onEdit,
+}: {
+  record: HistoryRecord;
+  onDelete: (record: HistoryRecord) => void;
+  onEdit: (record: HistoryRecord) => void;
+}) {
   const mediaSummary = formatReportMediaSummary(record.media ?? []);
   return (
     <View style={styles.historyItem}>
@@ -4052,6 +4253,24 @@ function HistoryRecordItem({ record }: { record: HistoryRecord }) {
         {record.episodeId ? " · 사건 연결" : ""}
         {mediaSummary ? ` · ${mediaSummary}` : ""}
       </Text>
+      <View style={styles.historyActions}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => onEdit(record)}
+          style={styles.historyActionButton}
+        >
+          <Text style={styles.historyActionText}>수정</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => onDelete(record)}
+          style={styles.historyActionButton}
+        >
+          <Text style={[styles.historyActionText, styles.historyActionDanger]}>
+            삭제
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -6003,6 +6222,25 @@ const styles = StyleSheet.create({
     color: colors.green,
     fontSize: 12,
     fontWeight: "900",
+  },
+  historyActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 10,
+  },
+  historyActionButton: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  historyActionText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  historyActionDanger: {
+    color: colors.danger,
   },
   emptyText: {
     marginTop: 10,
