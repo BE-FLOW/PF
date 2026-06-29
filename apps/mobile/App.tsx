@@ -23,6 +23,12 @@ import {
   View,
 } from "react-native";
 import { testerConsentVersion, testerPrivacySummary } from "./src/lib/privacy";
+import {
+  hasLinkedProvider,
+  oauthLinkErrorMessage,
+  oauthProviderLabels,
+  type OAuthProvider,
+} from "./src/lib/auth";
 import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
 import { getSupabaseClient, isSupabaseConfigured } from "./src/lib/supabase";
 import {
@@ -71,7 +77,6 @@ import {
 WebBrowser.maybeCompleteAuthSession();
 
 type AuthMode = "login" | "signup";
-type OAuthProvider = "google" | "apple";
 type MainSection = "home" | "record" | "reports" | "account";
 
 const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
@@ -87,42 +92,6 @@ const mainSectionDescriptions: Record<MainSection, string> = {
   reports: "기록 흐름, 3·7·14일 경과, 수의사 검토용 초안을 확인해요.",
   account: "테스터 키, GPT 권한, 계정 관리를 한곳에서 확인해요.",
 };
-
-const oauthProviderLabels: Record<OAuthProvider, string> = {
-  google: "Google",
-  apple: "Apple",
-};
-
-function hasLinkedProvider(user: User | null, provider: OAuthProvider) {
-  return Boolean(user?.identities?.some((identity) => identity.provider === provider));
-}
-
-function oauthLinkErrorMessage(provider: OAuthProvider, error: unknown) {
-  const label = oauthProviderLabels[provider];
-  const code =
-    typeof error === "object" && error && "code" in error
-      ? String((error as { code?: string }).code ?? "")
-      : "";
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-  const normalizedMessage = message.toLowerCase();
-
-  if (code === "manual_linking_disabled" || normalizedMessage.includes("manual")) {
-    return "계정 연결 설정이 아직 꺼져 있어요. 관리자 설정을 확인해 주세요.";
-  }
-  if (
-    code === "identity_already_exists" ||
-    normalizedMessage.includes("identity_already_exists") ||
-    normalizedMessage.includes("already")
-  ) {
-    return `${label} 계정이 이미 다른 펫플로우 계정에 연결되어 있어요. 기록이 섞이지 않도록 연결하지 않았어요.`;
-  }
-  return `${label} 계정을 연결하지 못했어요. 잠시 후 다시 시도해 주세요.`;
-}
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPolicy = [

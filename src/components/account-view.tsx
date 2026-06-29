@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import type { User } from "@supabase/supabase-js";
+import { hasLinkedProvider, type OAuthProvider } from "@/lib/auth-identities";
 import { formatKoreanMobile, normalizeKoreanMobile } from "@/lib/phone";
 import { testerConsentVersion, testerPrivacySummary } from "@/lib/privacy";
 import type { AiAccessStatus, PetProfile, TesterProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
-type OAuthProvider = "google" | "apple";
 type TesterDraft = Pick<TesterProfile, "nickname" | "phone">;
 
 const emptyTesterDraft: TesterDraft = {
@@ -30,10 +30,6 @@ function avatarLabel(value: string, fallback = "펫") {
 
 function isStrongPassword(value: string) {
   return passwordPolicy.every((item) => item.test(value));
-}
-
-function hasLinkedProvider(user: User | null, provider: OAuthProvider) {
-  return Boolean(user?.identities?.some((identity) => identity.provider === provider));
 }
 
 function PasswordChecklist({ password }: { password: string }) {

@@ -15,6 +15,7 @@ import { Icon, type IconName } from "./icon";
 import { analyzeLocally, deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
 import { buildEpisodeReport } from "@/lib/episode-report";
 import { summarizeHealthFlow } from "@/lib/health-flow";
+import { oauthLinkErrorMessage, oauthProviderLabels, type OAuthProvider } from "@/lib/auth-identities";
 import { normalizeKoreanMobile } from "@/lib/phone";
 import {
   storedReportToHistoryRecord,
@@ -62,39 +63,6 @@ type View =
   | "history"
   | "episode-report"
   | "account";
-type OAuthProvider = "google" | "apple";
-
-const oauthProviderLabels: Record<OAuthProvider, string> = {
-  google: "Google",
-  apple: "Apple",
-};
-
-function oauthLinkErrorMessage(provider: OAuthProvider, error: unknown) {
-  const label = oauthProviderLabels[provider];
-  const code =
-    typeof error === "object" && error && "code" in error
-      ? String((error as { code?: string }).code ?? "")
-      : "";
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-  const normalizedMessage = message.toLowerCase();
-
-  if (code === "manual_linking_disabled" || normalizedMessage.includes("manual")) {
-    return "계정 연결 설정이 아직 꺼져 있어요. 관리자 설정을 확인해 주세요.";
-  }
-  if (
-    code === "identity_already_exists" ||
-    normalizedMessage.includes("identity_already_exists") ||
-    normalizedMessage.includes("already")
-  ) {
-    return `${label} 계정이 이미 다른 펫플로우 계정에 연결되어 있어요. 기록이 섞이지 않도록 연결하지 않았어요.`;
-  }
-  return `${label} 계정을 연결하지 못했어요. 잠시 후 다시 시도해 주세요.`;
-}
 
 interface EpisodeReportSelection {
   episode?: PetEpisode;
