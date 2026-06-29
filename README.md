@@ -3,8 +3,8 @@
 보호자의 관찰을 병원 전달용으로 정리하고, 병원에서 받은 계획과 경과를 다음
 상담까지 연결하는 모바일 우선 테스트 MVP입니다.
 
-제품 방향과 우선순위는 `docs/product-direction.md`, 현재 구현 범위는
-`docs/mvp-scope.md`를 참고합니다.
+제품 방향과 우선순위는 `docs/product-direction.md`를 기준으로 합니다.
+모바일 등록 준비는 `docs/mobile-store-registration.md`를 참고합니다.
 
 ## Test environment
 

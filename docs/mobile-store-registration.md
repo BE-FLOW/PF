@@ -14,7 +14,7 @@
 | Android package name | `com.beflow.petflow` |
 | 앱 버전 | `0.1.0` |
 | iOS build number | `1` |
-| Android version code | `1` |
+| Android version code | EAS remote auto increment |
 | 개인정보 처리방침 | `https://pf-two-eta.vercel.app/privacy` |
 
 ## 빌드와 제출
@@ -27,17 +27,17 @@
 
 현재 모바일 빌드는 로그인, 테스터 정보 저장, 반려동물 등록·수정·선택, 오늘 건강
 기록 입력, 기본 안전 분류, 최근 기록 확인, 최근 14일 건강 흐름, 사진·동영상
-첨부, 사건별 병원 공유 요약, 병원에서 받은 안내 체크리스트, 3일·7일·14일
+첨부, 기록 수정·삭제, 사건별 병원 공유 요약, 병원에서 받은 안내 체크리스트, 3일·7일·14일
 경과 기록, 장기 30일·60일·90일 경과 기록, 참여코드 기반 GPT 검토용 초안 생성,
 GPT 유용성·지불의향 피드백, 계정 삭제 요청 접수까지 구현되어 있다. Apple 심사와
 Google 공개 트랙 제출 전에는 내부 테스트 빌드를 한 번 더 확인한다.
 
-첫 빌드 전 필요한 작업:
+빌드 전 확인:
 
-1. Expo 계정으로 `apps/mobile`에서 `eas init`을 실행한다.
-2. Apple Developer Program과 Google Play Console 앱을 만든다.
+1. Expo 계정 또는 자동화 환경의 `EXPO_TOKEN`을 준비한다.
+2. Apple Developer Program과 Google Play Console 앱 상태를 확인한다.
 3. App Store Connect의 앱 ID와 Google Play 앱을 같은 식별자로 연결한다.
-4. 최초 Google Play 업로드는 수동 업로드가 필요할 수 있다.
+4. Google Play 빌드 quota와 내부 테스트 트랙 상태를 확인한다.
 5. EAS 제출용 Apple App Store Connect API 키와 Google service account key는
    저장소에 커밋하지 않는다.
 
@@ -56,20 +56,20 @@ npm run submit:ios
 npm run submit:android
 ```
 
-## 2026-06-23 빌드 준비 상태
+## 2026-06-29 빌드 준비 상태
 
 완료:
 
 - `expo-doctor`: 21/21 통과
 - `expo install --check`: 권장 버전 일치
 - `npm run typecheck`: 통과
-- Expo SDK 권장 버전에 맞춰 `react-native`와 `typescript` 버전 정리
+- EAS project ID 연결
+- Google Play Console 앱 생성과 최초 업로드 진행
 
-남은 연결:
+남은 연결과 제약:
 
-- 현재 로컬 EAS CLI는 Expo 계정에 로그인되어 있지 않다.
-- `apps/mobile`에서 `npx eas-cli login` 또는 `EXPO_TOKEN` 설정이 필요하다.
-- 로그인 뒤 `npm run eas:init`으로 EAS 프로젝트를 연결하고 preview 빌드를 만든다.
+- Expo Free plan Android build quota가 소진되면 다음 reset까지 production AAB 재빌드가 막힌다.
+- 자동화 환경에서는 `EXPO_TOKEN`을 secret으로 등록하고 앱 번들에는 넣지 않는다.
 - `EXPO_PUBLIC_*` 값만 모바일 빌드에 넣고, OpenAI 키와 service role key는 서버에만 둔다.
 
 ## 스토어 개인정보 응답 초안
@@ -124,10 +124,10 @@ npm run submit:android
 
 ## 다음 작업
 
-1. Expo 계정 로그인 또는 `EXPO_TOKEN` 연결
-2. EAS 프로젝트 생성
-3. Google Play 내부 테스트용 Android preview 빌드 생성
-4. TestFlight용 iOS production 빌드 생성
+1. Android build quota reset 후 production AAB 재빌드
+2. Google Play 내부 테스트 새 버전 업로드
+3. TestFlight용 iOS production 빌드 생성
+4. 12명/14일 테스트 운영 로그 정리
 
 ## 공식 문서
 

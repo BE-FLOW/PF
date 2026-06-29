@@ -366,6 +366,22 @@ function mergePetHistory(
   return [...merged, ...otherPets].slice(0, 100);
 }
 
+function ignoreLocalStorageFailure(action: () => void) {
+  try {
+    action();
+  } catch {
+    /* Local storage can fail; in-memory state still keeps the flow usable. */
+  }
+}
+
+function setLocalStorageItem(key: string, value: string) {
+  ignoreLocalStorageFailure(() => localStorage.setItem(key, value));
+}
+
+function removeLocalStorageItem(key: string) {
+  ignoreLocalStorageFailure(() => localStorage.removeItem(key));
+}
+
 function Brand({ small = false }: { small?: boolean }) {
   return (
     <div className="brand">
@@ -2847,10 +2863,10 @@ export function PetFlowApp() {
           };
           setProfile(migrated);
           setInput(profileToHealthInput(migrated));
-          localStorage.setItem("petflow-profile", JSON.stringify(migrated));
+          setLocalStorageItem("petflow-profile", JSON.stringify(migrated));
         }
       } catch {
-        /* Ignore local persistence failures. */
+        /* Ignore invalid local snapshots and continue with the default state. */
       }
     });
     return () => window.cancelAnimationFrame(frame);
@@ -2951,11 +2967,7 @@ export function PetFlowApp() {
 
   function persist(records: HistoryRecord[]) {
     setHistory(records);
-    try {
-      localStorage.setItem("petflow-history", JSON.stringify(records));
-    } catch {
-      /* Ignore local persistence failures. */
-    }
+    setLocalStorageItem("petflow-history", JSON.stringify(records));
   }
   async function uploadPendingMediaFiles({
     reportId,
@@ -3096,11 +3108,7 @@ export function PetFlowApp() {
     }
     setProfile(savedProfile);
     if (!user) {
-      try {
-        localStorage.setItem("petflow-profile", JSON.stringify(savedProfile));
-      } catch {
-        /* Ignore local persistence failures. */
-      }
+      setLocalStorageItem("petflow-profile", JSON.stringify(savedProfile));
     }
     const nextInput = profileToHealthInput(savedProfile);
     setInput((current) =>
@@ -3247,11 +3255,7 @@ export function PetFlowApp() {
     setAiAccess(null);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
-    try {
-      localStorage.removeItem("petflow-profile");
-    } catch {
-      /* Ignore local persistence failures. */
-    }
+    removeLocalStorageItem("petflow-profile");
     setView("home");
   }
   function startNew() {

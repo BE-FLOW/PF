@@ -29,10 +29,11 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```bash
 cd apps/mobile
 npx eas-cli login
-npm run eas:init
+npm run eas:whoami
 ```
 
-자동화 환경에서는 `EXPO_TOKEN`을 설정한 뒤 같은 명령을 실행한다.
+EAS project ID는 `apps/mobile/app.config.js`에 연결되어 있다. 자동화 환경에서는
+`EXPO_TOKEN`을 secret으로 설정하고 앱 번들에는 넣지 않는다.
 
 ## Android 내부 테스트
 
@@ -43,14 +44,7 @@ cd apps/mobile
 npm run build:android:preview
 ```
 
-2026-06-23 Android preview 빌드:
-
-- 최신: https://expo.dev/accounts/beflow/projects/petflow-mobile/builds/886b35d9-d1ec-4c04-b766-5abeca5c79d2
-
-이번 빌드는 로그인 후 화면을 `오늘 기록`, `기록·보고서`, `계정` 탭으로 나누고,
-이미 반려동물이 있으면 등록 폼을 접어 긴 스크롤을 줄인다.
-
-이 빌드는 EAS preview 환경의 `EXPO_PUBLIC_SUPABASE_URL`과
+빌드는 EAS preview 환경의 `EXPO_PUBLIC_SUPABASE_URL`과
 `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 포함한다.
 
 Google Play 내부 테스트 트랙에 올릴 때는 production 빌드를 사용한다.
@@ -72,10 +66,10 @@ npm run submit:ios
 
 ## 내부 테스트 체크리스트
 
-- 회원가입과 로그인
+- Google/Apple 로그인과 기존 이메일 계정 보조 로그인
 - 닉네임, 국내 휴대전화번호, 개인정보 동의 저장
 - 반려동물 등록, 수정, 선택
-- 오늘 건강 기록과 기본 안전 분류
+- 오늘 건강 기록, 수정, 삭제와 기본 안전 분류
 - 사진과 동영상 첨부
 - 같은 사건의 3일, 7일, 14일, 30일, 60일, 90일 경과 기록
 - 병원 공유 요약과 기기 공유
