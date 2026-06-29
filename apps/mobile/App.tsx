@@ -2057,13 +2057,19 @@ export default function App() {
         style={styles.keyboard}
       >
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <View style={styles.appBrand}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setMainSection("home")}
+            style={styles.appBrand}
+            accessibilityRole="button"
+            accessibilityLabel="홈으로 이동"
+          >
             <AppBrandMark />
             <View>
               <Text style={styles.badgeText}>PETFLOW</Text>
               <Text style={styles.brandTagline}>관찰을 병원 준비로</Text>
             </View>
-          </View>
+          </TouchableOpacity>
 
           <Text style={styles.title}>{headline}</Text>
           <Text style={styles.description}>{appDescription}</Text>
@@ -2129,10 +2135,27 @@ export default function App() {
                           result={latestResult}
                           episodeId={latestEpisodeId}
                           pet={selectedPet}
+                          aiAccess={aiAccess}
+                          vetDraft={
+                            latestEpisodeId ? vetDrafts[latestEpisodeId] : undefined
+                          }
+                          vetDraftLoading={
+                            Boolean(latestEpisodeId) &&
+                            vetDraftLoadingEpisodeId === latestEpisodeId
+                          }
+                          vetDraftNotice={
+                            latestEpisodeId &&
+                            vetDraftNotice.episodeId === latestEpisodeId
+                              ? vetDraftNotice
+                              : null
+                          }
                           onPickMedia={pickMedia}
                           onRemoveMedia={removePendingMedia}
                           setInput={setHealthInput}
                           onSubmit={submitHealthCheck}
+                          onGoAccount={() => setMainSection("account")}
+                          onCreateVetDraft={createVetDraft}
+                          onShareVetDraft={shareVetDraft}
                         />
                       ) : null}
                     </>
@@ -3185,10 +3208,17 @@ function HealthRecorder({
   result,
   episodeId,
   pet,
+  aiAccess,
+  vetDraft,
+  vetDraftLoading,
+  vetDraftNotice,
   onPickMedia,
   onRemoveMedia,
   setInput,
   onSubmit,
+  onGoAccount,
+  onCreateVetDraft,
+  onShareVetDraft,
 }: {
   input: HealthCheckInput;
   loading: boolean;
@@ -3200,10 +3230,17 @@ function HealthRecorder({
   result: AnalysisResult | null;
   episodeId: string | null;
   pet: PetProfile;
+  aiAccess: AiAccessStatus | null;
+  vetDraft?: VetReviewDraft;
+  vetDraftLoading: boolean;
+  vetDraftNotice: EpisodeNotice | null;
   onPickMedia: () => Promise<void>;
   onRemoveMedia: (id: string) => void;
   setInput: (input: HealthCheckInput) => void;
   onSubmit: () => Promise<void>;
+  onGoAccount: () => void;
+  onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   return (
     <View style={styles.card}>
@@ -3304,7 +3341,19 @@ function HealthRecorder({
       <Message text={message} />
       <Message text={mediaUploadMessage} tone="success" />
 
-      {result ? <HealthResultCard episodeId={episodeId} result={result} /> : null}
+      {result ? (
+        <HealthResultCard
+          aiAccess={aiAccess}
+          episodeId={episodeId}
+          result={result}
+          vetDraft={vetDraft}
+          vetDraftLoading={vetDraftLoading}
+          vetDraftNotice={vetDraftNotice}
+          onCreateVetDraft={onCreateVetDraft}
+          onGoAccount={onGoAccount}
+          onShareVetDraft={onShareVetDraft}
+        />
+      ) : null}
     </View>
   );
 }
@@ -3422,11 +3471,25 @@ function MultiChipGroup<T extends string>({
 }
 
 function HealthResultCard({
+  aiAccess,
   episodeId,
   result,
+  vetDraft,
+  vetDraftLoading,
+  vetDraftNotice,
+  onCreateVetDraft,
+  onGoAccount,
+  onShareVetDraft,
 }: {
+  aiAccess: AiAccessStatus | null;
   episodeId: string | null;
   result: AnalysisResult;
+  vetDraft?: VetReviewDraft;
+  vetDraftLoading: boolean;
+  vetDraftNotice: EpisodeNotice | null;
+  onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onGoAccount: () => void;
+  onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   return (
     <View style={[styles.resultCard, styles[`resultCard_${result.riskLevel}`]]}>
@@ -3440,6 +3503,7 @@ function HealthResultCard({
       <Text style={styles.resultTitle}>{result.headline}</Text>
       <Text style={styles.resultSummary}>{result.summary}</Text>
       <Text style={styles.resultMeta}>
+        {recordDateLabel(result.createdAt)} ·{" "}
         {result.storage === "remote" ? "서버 저장 완료" : "기기 내 결과"} ·{" "}
         {result.source === "openai" ? "AI 정리 포함" : "기본 안전 규칙"}
         {episodeId ? ` · 사건 연결됨` : ""}
@@ -3450,7 +3514,132 @@ function HealthResultCard({
         <Text style={styles.vetBriefTitle}>병원에 보여줄 요약</Text>
         <Text style={styles.vetBriefText}>{result.vetBrief}</Text>
       </View>
+      <ResultVetDraftBox
+        aiAccess={aiAccess}
+        episodeId={episodeId}
+        vetDraft={vetDraft}
+        vetDraftLoading={vetDraftLoading}
+        vetDraftNotice={vetDraftNotice}
+        onCreateVetDraft={onCreateVetDraft}
+        onGoAccount={onGoAccount}
+        onShareVetDraft={onShareVetDraft}
+      />
       <Text style={styles.disclaimer}>{result.disclaimer}</Text>
+    </View>
+  );
+}
+
+function ResultVetDraftBox({
+  aiAccess,
+  episodeId,
+  vetDraft,
+  vetDraftLoading,
+  vetDraftNotice,
+  onCreateVetDraft,
+  onGoAccount,
+  onShareVetDraft,
+}: {
+  aiAccess: AiAccessStatus | null;
+  episodeId: string | null;
+  vetDraft?: VetReviewDraft;
+  vetDraftLoading: boolean;
+  vetDraftNotice: EpisodeNotice | null;
+  onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onGoAccount: () => void;
+  onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
+}) {
+  const canUseAiDraft = Boolean(aiAccess?.enabled);
+  return (
+    <View style={styles.resultVetDraftBox}>
+      <View style={styles.planHeader}>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.vetDraftEyebrow}>AI DRAFT · VET REVIEW</Text>
+          <Text style={styles.planTitle}>수의사 검토용 GPT 초안</Text>
+          <Text style={styles.planSubtitle}>
+            같은 사건의 기록을 수의사가 보기 좋은 제출용 문장으로 정리해요.
+          </Text>
+        </View>
+        <Text
+          style={[
+            styles.vetDraftBadge,
+            canUseAiDraft && styles.vetDraftBadgeEnabled,
+          ]}
+        >
+          {canUseAiDraft ? "키 확인됨" : "키 필요"}
+        </Text>
+      </View>
+
+      {!episodeId ? (
+        <Text style={styles.planEmptyText}>
+          서버에 저장되고 사건에 연결된 기록에서만 GPT 초안을 만들 수 있어요.
+        </Text>
+      ) : !canUseAiDraft ? (
+        <>
+          <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onGoAccount}
+            style={styles.vetDraftSecondaryButton}
+          >
+            <Text style={styles.vetDraftSecondaryButtonText}>테스터 키 확인</Text>
+          </TouchableOpacity>
+        </>
+      ) : (
+        <>
+          <View style={styles.vetDraftActions}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={vetDraftLoading}
+              onPress={() => void onCreateVetDraft(episodeId)}
+              style={[
+                styles.vetDraftPrimaryButton,
+                vetDraftLoading && styles.buttonDisabled,
+              ]}
+            >
+              <Text style={styles.vetDraftPrimaryButtonText}>
+                {vetDraftLoading
+                  ? "초안 만드는 중"
+                  : vetDraft
+                    ? "GPT 초안 다시 만들기"
+                    : "GPT 초안 만들기"}
+              </Text>
+            </TouchableOpacity>
+            {vetDraft ? (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={vetDraftLoading}
+                onPress={() => void onShareVetDraft(episodeId, vetDraft)}
+                style={styles.vetDraftSecondaryButton}
+              >
+                <Text style={styles.vetDraftSecondaryButtonText}>초안 공유</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {vetDraft ? (
+            <View style={styles.vetDraftPreview}>
+              <Text style={styles.vetDraftSource}>
+                {vetDraft.source === "openai" ? "GPT 정리 · 확인 전" : "규칙 기반 정리"}
+              </Text>
+              <Text style={styles.vetDraftOverview}>{vetDraft.overview}</Text>
+              <Text style={styles.vetDraftHandoffLabel}>다른 병원 첫 설명</Text>
+              <Text style={styles.vetDraftHandoff}>{vetDraft.handoffNote}</Text>
+              {vetDraft.questionsForVet.slice(0, 2).map((item) => (
+                <Text key={item} style={styles.vetDraftQuestion}>
+                  · {item}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+        </>
+      )}
+
+      {vetDraftNotice ? (
+        <Message text={vetDraftNotice.text} tone={vetDraftNotice.tone} />
+      ) : null}
+      <Text style={styles.planLimitText}>
+        GPT 초안은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인 전 자료로 표시됩니다.
+      </Text>
     </View>
   );
 }
@@ -4482,6 +4671,28 @@ function formatRecordedAt(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function isRecordedToday(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const formatter = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(date) === formatter.format(new Date());
+}
+
+function recordDateLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "날짜 확인 필요";
+  if (isRecordedToday(value)) return "오늘 기록";
+  return `${new Intl.DateTimeFormat("ko-KR", {
+    month: "short",
+    day: "numeric",
+  }).format(date)} 기록`;
 }
 
 function speciesLabel(species: Species) {
@@ -5667,6 +5878,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 20,
+  },
+  resultVetDraftBox: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: "#d7dff0",
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    padding: 13,
   },
   disclaimer: {
     marginTop: 12,

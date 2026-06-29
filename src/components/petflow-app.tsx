@@ -218,6 +218,28 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function isToday(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const formatter = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(date) === formatter.format(new Date());
+}
+
+function recordDateLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "기록";
+  if (isToday(value)) return "오늘 기록";
+  return `${new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+  }).format(date)} 기록`;
+}
+
 function formatFileSize(bytes: number) {
   if (bytes >= 1024 * 1024) {
     return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)}MB`;
@@ -382,13 +404,36 @@ function removeLocalStorageItem(key: string) {
   ignoreLocalStorageFailure(() => localStorage.removeItem(key));
 }
 
-function Brand({ small = false }: { small?: boolean }) {
-  return (
-    <div className="brand">
+function Brand({
+  small = false,
+  onClick,
+}: {
+  small?: boolean;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <span className={`brand-mark ${small ? "small" : ""}`} aria-hidden="true" />
       <span>
         펫플로우<small className="brand-sub">PET FLOW</small>
       </span>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className="brand brand-button"
+        onClick={onClick}
+        aria-label="홈으로 이동"
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className="brand">
+      {content}
     </div>
   );
 }
@@ -409,7 +454,7 @@ function SideNav({
   ];
   return (
     <aside className="desktop-sidebar">
-      <Brand />
+      <Brand onClick={() => setView("home")} />
       <nav className="side-nav">
         {items.map((item) => (
           <button
@@ -1440,27 +1485,45 @@ function CheckView({
 function ResultView({
   record,
   mediaWarning,
+  canUseAiReport,
+  aiAccess,
   onHome,
   onRestart,
   onEdit,
   onDelete,
   onFeedback,
+  onOpenAccount,
+  onCreateVetDraft,
 }: {
   record: HistoryRecord;
   mediaWarning: string;
+  canUseAiReport: boolean;
+  aiAccess: AiAccessStatus | null;
   onHome: () => void;
   onRestart: () => void;
   onEdit: (record: HistoryRecord) => void;
   onDelete: (record: HistoryRecord) => void;
   onFeedback: (value: HistoryRecord["feedback"]) => void;
+  onOpenAccount: () => void;
+  onCreateVetDraft: (
+    episodeId: string,
+  ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
 }) {
   const { result } = record;
   const media = record.media ?? [];
   const mediaSummary = formatReportMediaSummary(media);
+  const recordLabel = recordDateLabel(result.createdAt);
+  const todayRecord = isToday(result.createdAt);
   const [copied, setCopied] = useState(false);
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
   >("idle");
+  const [vetDraft, setVetDraft] = useState<VetReviewDraft | null>(null);
+  const [vetDraftState, setVetDraftState] = useState<
+    "idle" | "loading" | "ready" | "copied" | "failed"
+  >("idle");
+  const [vetDraftError, setVetDraftError] = useState("");
+
   async function copyBrief() {
     try {
       await copyText(result.vetBrief);
@@ -1502,6 +1565,36 @@ function ResultView({
       setShareState("failed");
     }
   }
+  async function createResultVetDraft() {
+    if (!record.episodeId) {
+      setVetDraftError("계정에 연결된 Episode 기록에서만 GPT 초안을 만들 수 있어요.");
+      return;
+    }
+    if (!canUseAiReport) {
+      setVetDraftError("참여코드를 입력한 테스터만 GPT 초안을 만들 수 있어요.");
+      return;
+    }
+    setVetDraftState("loading");
+    setVetDraftError("");
+    const payload = await onCreateVetDraft(record.episodeId);
+    if (!payload.draft) {
+      setVetDraftState("failed");
+      setVetDraftError(payload.error ?? "수의사 검토용 GPT 초안을 만들지 못했어요.");
+      return;
+    }
+    setVetDraft(payload.draft);
+    setVetDraftState("ready");
+  }
+  async function copyResultVetDraft() {
+    if (!vetDraft) return;
+    try {
+      await copyText(vetDraft.copyText);
+      setVetDraftState("copied");
+    } catch {
+      setVetDraftState("failed");
+      setVetDraftError("GPT 초안을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
+    }
+  }
   return (
     <div className="content-wrap">
       <div className="page-heading">
@@ -1509,8 +1602,8 @@ function ResultView({
           <Icon name="arrow" size={20} />
         </button>
         <div>
-          <p className="eyebrow">TODAY&apos;S RECORD</p>
-          <h1>{record.input.petName || "반려동물"}의 오늘 기록</h1>
+          <p className="eyebrow">{todayRecord ? "TODAY'S RECORD" : "HEALTH RECORD"}</p>
+          <h1>{record.input.petName || "반려동물"}의 {recordLabel}</h1>
           <p>{formatDate(result.createdAt)} 기준 기록이에요.</p>
         </div>
       </div>
@@ -1540,7 +1633,7 @@ function ResultView({
         <div className="result-stack">
           <section className="result-card">
             <h3>
-              <Icon name="activity" size={18} /> 오늘 기록에서 확인한 점
+              <Icon name="activity" size={18} /> 이 기록에서 확인한 점
             </h3>
             <ul className="bullet-list">
               {result.observations.map((item) => (
@@ -1630,12 +1723,110 @@ function ResultView({
               </p>
             )}
           </section>
+          <section className="result-card vet-draft-card result-vet-draft-card">
+            <div className="episode-plan-head">
+              <div>
+                <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
+                <h3>
+                  <Icon name="spark" size={18} /> 수의사 검토용 GPT 초안
+                </h3>
+                <p>
+                  이 기록이 연결된 같은 Episode의 관찰, 병원 안내, 경과를 수의사가 보기
+                  좋은 형태로 짧게 정리해요.
+                </p>
+              </div>
+              <span className="vet-draft-badge">
+                {canUseAiReport ? "키 확인됨" : "키 필요"}
+              </span>
+            </div>
+            {!record.episodeId ? (
+              <p className="plan-empty">
+                서버에 저장되고 Episode에 연결된 기록에서만 GPT 초안을 만들 수 있어요.
+              </p>
+            ) : !canUseAiReport ? (
+              <div className="vet-draft-locked">
+                <strong>참여코드가 있는 테스터에게만 GPT 초안을 열어두고 있어요.</strong>
+                <p>
+                  {aiAccess?.reason === "monthly_limit"
+                    ? "이번 달 GPT 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
+                    : aiAccess?.reason === "total_limit"
+                      ? "이 참여코드의 전체 GPT 사용량을 모두 사용했어요."
+                      : "계정 화면에서 관리자에게 받은 참여코드를 입력하면 수의사 검토용 초안을 만들 수 있어요."}
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button compact"
+                  onClick={onOpenAccount}
+                >
+                  참여코드 입력하기
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="vet-draft-actions">
+                  <button
+                    type="button"
+                    className="primary-button compact"
+                    onClick={createResultVetDraft}
+                    disabled={vetDraftState === "loading"}
+                  >
+                    <Icon name={vetDraft ? "check" : "spark"} size={14} />
+                    {vetDraftState === "loading"
+                      ? "초안 만드는 중..."
+                      : vetDraft
+                        ? "GPT 초안 다시 만들기"
+                        : "GPT 초안 만들기"}
+                  </button>
+                  {vetDraft && (
+                    <button
+                      type="button"
+                      className="secondary-button compact"
+                      onClick={copyResultVetDraft}
+                    >
+                      <Icon name={vetDraftState === "copied" ? "check" : "copy"} size={14} />
+                      {vetDraftState === "copied" ? "초안 복사 완료" : "초안 전체 복사"}
+                    </button>
+                  )}
+                </div>
+                {vetDraft && (
+                  <div className="vet-draft-preview">
+                    <div>
+                      <span>{vetDraft.source === "openai" ? "GPT 정리 · 확인 전" : "규칙 기반 정리"}</span>
+                      <strong>{vetDraft.overview}</strong>
+                    </div>
+                    <div className="vet-draft-handoff">
+                      <span>다른 병원 첫 설명</span>
+                      <p>{vetDraft.handoffNote}</p>
+                    </div>
+                    <ul>
+                      {vetDraft.keyObservations.slice(0, 3).map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                    <div className="vet-draft-questions">
+                      <span>수의사에게 확인할 질문</span>
+                      {vetDraft.questionsForVet.slice(0, 2).map((item) => (
+                        <p key={item}>{item}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+            {vetDraftError && (
+              <p className="share-error" role="alert">{vetDraftError}</p>
+            )}
+            <p className="plan-safety-note">
+              GPT 초안은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을
+              만들지 않으며 수의사 확인 전 자료로 표시됩니다.
+            </p>
+          </section>
           <div className="disclaimer">
             <strong>꼭 확인해 주세요.</strong> {result.disclaimer}
           </div>
           <section className="result-card">
             <div className="feedback-row">
-              <p>오늘 기록 정리가 도움이 됐나요?</p>
+              <p>이 기록 정리가 도움이 됐나요?</p>
               <div className="feedback-buttons">
                 <button
                   className={`feedback-button ${record.feedback === "helpful" ? "active" : ""}`}
@@ -3768,7 +3959,7 @@ export function PetFlowApp() {
     <div className="app-shell">
       <SideNav view={currentView} setView={setView} onStart={startNew} />
       <header className="mobile-header">
-        <Brand small />
+        <Brand small onClick={() => setView("home")} />
         <button className="mobile-account" onClick={() => setView("account")}>내 계정</button>
       </header>
       <main className="app-main">
@@ -3838,13 +4029,18 @@ export function PetFlowApp() {
         )}{" "}
         {currentView === "result" && selected && (
           <ResultView
+            key={selected.result.id}
             record={selected}
             mediaWarning={mediaUploadWarning}
+            canUseAiReport={Boolean(aiAccess?.enabled)}
+            aiAccess={aiAccess}
             onHome={() => setView("home")}
             onRestart={startNew}
             onEdit={startEditRecord}
             onDelete={(record) => void deleteRecord(record)}
             onFeedback={updateFeedback}
+            onOpenAccount={() => setView("account")}
+            onCreateVetDraft={createVetDraft}
           />
         )}{" "}
         {currentView === "history" && (

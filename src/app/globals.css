@@ -77,6 +77,18 @@ button {
   font-size: 20px;
   letter-spacing: -0.6px;
 }
+.brand-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+.brand-button:hover .brand-mark {
+  transform: translateY(-1px);
+}
 .brand-mark {
   overflow: hidden;
   width: 38px;
@@ -2011,6 +2023,9 @@ p {
 .password-auth-fallback[open] summary {
   color: var(--mint-dark);
 }
+.password-auth-fallback .auth-submit {
+  margin-top: 6px;
+}
 .privacy-page {
   min-height: 100vh;
   padding: 40px 18px;
@@ -2266,6 +2281,9 @@ p {
   margin-bottom: 16px;
   border-color: #d6cbea;
   background: linear-gradient(135deg, #fbf8ff, #ffffff);
+}
+.result-vet-draft-card {
+  margin-bottom: 0;
 }
 .vet-draft-badge {
   flex-shrink: 0;
