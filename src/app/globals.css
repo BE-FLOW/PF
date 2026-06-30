@@ -310,8 +310,8 @@ p {
 .hero-card {
   position: relative;
   overflow: hidden;
-  min-height: 218px;
-  padding: 30px 32px;
+  min-height: 176px;
+  padding: 26px 30px;
   border-radius: 28px;
   background:
     radial-gradient(circle at 89% 12%, rgba(246, 177, 84, 0.22), transparent 12rem),
@@ -327,32 +327,15 @@ p {
   z-index: 2;
   max-width: 460px;
 }
-.hero-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  color: var(--mint-dark);
-  background: rgba(255, 255, 255, 0.72);
-  font-size: 10px;
-  font-weight: 900;
-}
 .hero-card h2 {
-  margin: 14px 0 9px;
+  margin: 0;
   font-size: clamp(22px, 3vw, 32px);
   line-height: 1.25;
   letter-spacing: -1.1px;
 }
-.hero-card p {
-  margin: 0;
-  color: #60746d;
-  font-size: 13px;
-  line-height: 1.6;
-}
 .hero-card .primary-button {
   min-height: 46px;
-  margin-top: 19px;
+  margin-top: 18px;
   padding: 0 18px;
   border-radius: 14px;
 }
@@ -396,18 +379,18 @@ p {
 }
 .hero-visual {
   position: relative;
-  width: 190px;
-  height: 160px;
+  width: 168px;
+  height: 138px;
   flex: 0 0 auto;
 }
 .hero-paw-card {
   position: absolute;
   right: 8px;
-  top: 20px;
-  width: 136px;
-  height: 136px;
+  top: 14px;
+  width: 122px;
+  height: 122px;
   overflow: hidden;
-  border-radius: 25px;
+  border-radius: 23px;
   background: url("/icon-512.png") center / cover no-repeat;
   box-shadow: 0 18px 36px rgba(101, 75, 37, 0.1);
 }
@@ -2835,10 +2818,10 @@ p {
     padding: 28px 24px 100px;
   }
   .hero-card {
-    padding: 28px;
+    padding: 24px 26px;
   }
   .hero-visual {
-    width: 178px;
+    width: 158px;
   }
   .mobile-nav {
     position: fixed;
@@ -2942,7 +2925,7 @@ p {
     display: none;
   }
   .hero-card {
-    min-height: 282px;
+    min-height: 226px;
     padding: 24px;
     align-items: flex-start;
   }
@@ -2950,17 +2933,14 @@ p {
     max-width: 100%;
   }
   .hero-card h2 {
-    max-width: 250px;
-  }
-  .hero-card p {
-    max-width: 235px;
+    max-width: 238px;
   }
   .hero-visual {
     position: absolute;
     right: 14px;
-    bottom: 14px;
-    opacity: 0.78;
-    transform: scale(0.62);
+    bottom: 10px;
+    opacity: 0.72;
+    transform: scale(0.56);
     transform-origin: right bottom;
   }
   .float-badge {
@@ -3055,12 +3035,12 @@ p {
     grid-template-columns: repeat(2, 1fr);
   }
   .hero-card h2 {
-    font-size: 24px;
+    font-size: 23px;
   }
   .hero-visual {
     right: 12px;
-    bottom: 12px;
-    opacity: 0.72;
-    transform: scale(0.58);
+    bottom: 10px;
+    opacity: 0.68;
+    transform: scale(0.52);
   }
 }

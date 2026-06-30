@@ -593,18 +593,10 @@ function HomeView({
       </button>
       <section className="hero-card">
         <div className="hero-content">
-          <span className="hero-chip">
-            <Icon name="spark" size={13} /> 3분 체크
-          </span>
           <h2>
-            작게 기록하면
+            짧게 남기면
             <br />더 빠르게 알 수 있어요
           </h2>
-          <p>
-            식욕, 활력, 증상만 남기면
-            <br />
-            흐름을 정리해 드려요.
-          </p>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
             {hasProfile
