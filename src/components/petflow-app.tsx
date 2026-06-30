@@ -190,6 +190,11 @@ function levelLabel(value: Level) {
   return levels.find((option) => option.id === value)?.label ?? "평소와 같음";
 }
 
+function displayCheckScore(riskScore: number) {
+  if (!Number.isFinite(riskScore)) return 0;
+  return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
+}
+
 function avatarLabel(value: string, fallback = "펫") {
   return Array.from(value.trim() || fallback).slice(0, 2).join("");
 }
@@ -541,6 +546,7 @@ function HomeView({
   activeEpisode?: PetEpisode;
 }) {
   const recent = history[0];
+  const recentCheckScore = recent ? displayCheckScore(recent.result.riskScore) : undefined;
   const hasProfile = Boolean(profile.name.trim());
   const ageGroup = deriveAgeGroup(profile.birthDate);
   const profileDetails = [
@@ -632,10 +638,10 @@ function HomeView({
         </div>
         <div
           className="home-score-badge"
-          style={{ "--score": recent?.result.riskScore ?? 0 } as React.CSSProperties}
-          aria-label={`체크스코어 ${recent?.result.riskScore ?? 0}`}
+          style={{ "--score": recentCheckScore ?? 0 } as React.CSSProperties}
+          aria-label={`체크스코어 ${recentCheckScore ?? 0}`}
         >
-          <strong>{recent?.result.riskScore ?? "--"}</strong>
+          <strong>{recentCheckScore ?? "--"}</strong>
           <span>CHECK SCORE</span>
         </div>
       </section>
@@ -1487,6 +1493,7 @@ function ResultView({
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
 }) {
   const { result } = record;
+  const checkScore = displayCheckScore(result.riskScore);
   const media = record.media ?? [];
   const mediaSummary = formatReportMediaSummary(media);
   const recordLabel = recordDateLabel(result.createdAt);
@@ -1588,10 +1595,10 @@ function ResultView({
         <aside className={`risk-card ${result.riskLevel}`}>
           <div
             className="risk-ring"
-            style={{ "--score": result.riskScore } as React.CSSProperties}
+            style={{ "--score": checkScore } as React.CSSProperties}
           >
             <div className="risk-score">
-              <strong>{result.riskScore}</strong>
+              <strong>{checkScore}</strong>
               <span>CHECK SCORE</span>
             </div>
           </div>

@@ -454,8 +454,8 @@ p {
 }
 .home-score-card {
   --score: 0;
-  --score-bg: #1f4b3f;
-  --score-accent: var(--mint);
+  --score-bg: #1f5b55;
+  --score-accent: #78d9c8;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -467,16 +467,16 @@ p {
   background: linear-gradient(135deg, #f7fcf9, #edf8f2);
 }
 .home-score-card.soon {
-  --score-bg: #604725;
-  --score-accent: #f2a647;
+  --score-bg: #66543a;
+  --score-accent: #e8b86c;
   border-color: #f0d8b8;
   background: linear-gradient(135deg, #fffaf1, #fff3df);
 }
 .home-score-card.urgent {
-  --score-bg: #63332f;
-  --score-accent: #e27b70;
-  border-color: #e9c0bc;
-  background: linear-gradient(135deg, #fff6f5, #ffefec);
+  --score-bg: #6c4744;
+  --score-accent: #df8d80;
+  border-color: #edd0ca;
+  background: linear-gradient(135deg, #fff9f7, #fff0ed);
 }
 .home-score-card.empty {
   --score-bg: #73827d;
@@ -1382,6 +1382,8 @@ p {
   align-items: start;
 }
 .risk-card {
+  --risk-ring-accent: #78d9c8;
+  --risk-ring-inner: #1c4036;
   position: sticky;
   top: 24px;
   padding: 28px;
@@ -1392,9 +1394,13 @@ p {
   box-shadow: 0 18px 45px rgba(24, 63, 52, 0.2);
 }
 .risk-card.urgent {
-  background: linear-gradient(160deg, #783e38, #4e2926);
+  --risk-ring-accent: #df8d80;
+  --risk-ring-inner: #5f3936;
+  background: linear-gradient(160deg, #704642, #4b302d);
 }
 .risk-card.soon {
+  --risk-ring-accent: #e8b86c;
+  --risk-ring-inner: #5d4b33;
   background: linear-gradient(160deg, #73532e, #4b3b26);
 }
 .risk-ring {
@@ -1406,7 +1412,7 @@ p {
   display: grid;
   place-items: center;
   background: conic-gradient(
-    var(--lime) calc(var(--score) * 1%),
+    var(--risk-ring-accent) calc(var(--score) * 1%),
     rgba(255, 255, 255, 0.12) 0
   );
   position: relative;
@@ -1416,13 +1422,7 @@ p {
   position: absolute;
   inset: 10px;
   border-radius: 50%;
-  background: #1c4036;
-}
-.urgent .risk-ring::before {
-  background: #63332f;
-}
-.soon .risk-ring::before {
-  background: #604725;
+  background: var(--risk-ring-inner);
 }
 .risk-score {
   position: relative;
