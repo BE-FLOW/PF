@@ -2101,7 +2101,6 @@ export default function App() {
                       latestResult={latestResult}
                       pets={pets}
                       selectedPet={selectedPet}
-                      onGoAccount={() => setMainSection("account")}
                       onGoRecord={startHealthRecord}
                       onGoReports={() => setMainSection("reports")}
                     />
@@ -2291,7 +2290,6 @@ function HomeDashboard({
   latestResult,
   pets,
   selectedPet,
-  onGoAccount,
   onGoRecord,
   onGoReports,
 }: {
@@ -2300,7 +2298,6 @@ function HomeDashboard({
   latestResult: AnalysisResult | null;
   pets: PetProfile[];
   selectedPet?: PetProfile;
-  onGoAccount: () => void;
   onGoRecord: () => void;
   onGoReports: () => void;
 }) {
@@ -2335,9 +2332,7 @@ function HomeDashboard({
           <Text style={styles.cardTitle}>
             {selectedPet ? `${selectedPet.name}의 오늘을 살펴봐요` : "오늘을 살펴봐요"}
           </Text>
-          <Text style={styles.cardText}>
-            기록은 짧게 남기고, 흐름과 병원 전달 요약은 펫플로우가 정리해요.
-          </Text>
+          <Text style={styles.cardText}>짧게 남기면 흐름은 펫플로우가 정리해요.</Text>
         </View>
       </View>
 
@@ -2351,13 +2346,22 @@ function HomeDashboard({
           <Text style={styles.homeMutedText}>
             {latestAt ? `${formatRecordedAt(latestAt)} 기준` : "오늘 기록을 남기면 바로 보여요."}
           </Text>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={onGoRecord}
-            style={styles.homePrimaryAction}
-          >
-            <Text style={styles.homePrimaryActionText}>오늘 기록하기</Text>
-          </TouchableOpacity>
+          <View style={styles.homeCtaRow}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={onGoRecord}
+              style={styles.homePrimaryAction}
+            >
+              <Text style={styles.homePrimaryActionText}>오늘 기록</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={onGoReports}
+              style={styles.homeSecondaryAction}
+            >
+              <Text style={styles.homeSecondaryActionText}>전달 요약</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.homeFlowCard}>
@@ -2367,41 +2371,6 @@ function HomeDashboard({
           <Text style={styles.homeMutedText} numberOfLines={3}>
             {flow.description}
           </Text>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={onGoReports}
-            style={styles.homeSecondaryAction}
-          >
-            <Text style={styles.homeSecondaryActionText}>보고서 보기</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={styles.homeActionCard}>
-        <Text style={styles.cardEyebrow}>NEXT</Text>
-        <Text style={styles.cardTitle}>필요한 것만 이어서 해요</Text>
-        <View style={styles.homeActionRow}>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={onGoRecord}
-            style={styles.homeActionButton}
-          >
-            <Text style={styles.homeActionButtonText}>기록</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={onGoReports}
-            style={styles.homeActionButton}
-          >
-            <Text style={styles.homeActionButtonText}>보고서</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={onGoAccount}
-            style={styles.homeActionButton}
-          >
-            <Text style={styles.homeActionButtonText}>계정</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </>
@@ -4975,9 +4944,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 19,
   },
-  homePrimaryAction: {
-    alignSelf: "flex-start",
+  homeCtaRow: {
+    flexDirection: "row",
+    gap: 9,
     marginTop: 15,
+  },
+  homePrimaryAction: {
+    flex: 1,
+    alignItems: "center",
     borderRadius: 999,
     backgroundColor: colors.green,
     paddingHorizontal: 15,
@@ -5009,37 +4983,16 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   homeSecondaryAction: {
-    alignSelf: "flex-start",
-    marginTop: 15,
+    flex: 1,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#c8e4d7",
     borderRadius: 999,
     backgroundColor: "#ffffff",
     paddingHorizontal: 15,
     paddingVertical: 11,
   },
   homeSecondaryActionText: {
-    color: colors.green,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  homeActionCard: {
-    marginTop: 16,
-    borderRadius: 26,
-    backgroundColor: "#ffffff",
-    padding: 20,
-  },
-  homeActionRow: {
-    flexDirection: "row",
-    gap: 9,
-    marginTop: 14,
-  },
-  homeActionButton: {
-    flex: 1,
-    alignItems: "center",
-    borderRadius: 17,
-    backgroundColor: colors.greenSoft,
-    paddingVertical: 13,
-  },
-  homeActionButtonText: {
     color: colors.green,
     fontSize: 13,
     fontWeight: "900",
