@@ -2957,10 +2957,10 @@ p {
   }
   .hero-visual {
     position: absolute;
-    right: -6px;
-    bottom: -10px;
-    opacity: 0.82;
-    transform: scale(0.72);
+    right: 14px;
+    bottom: 14px;
+    opacity: 0.78;
+    transform: scale(0.62);
     transform-origin: right bottom;
   }
   .float-badge {
@@ -3058,9 +3058,9 @@ p {
     font-size: 24px;
   }
   .hero-visual {
-    right: -12px;
-    bottom: -18px;
+    right: 12px;
+    bottom: 12px;
     opacity: 0.72;
-    transform: scale(0.64);
+    transform: scale(0.58);
   }
 }
