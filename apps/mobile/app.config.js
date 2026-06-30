@@ -29,8 +29,10 @@ module.exports = {
     ],
     ios: {
       bundleIdentifier: "com.beflow.petflow",
-      buildNumber: "1",
       supportsTablet: false,
+      infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
+      },
     },
     android: {
       package: "com.beflow.petflow",
