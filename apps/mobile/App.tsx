@@ -2124,6 +2124,7 @@ export default function App() {
                       />
                       {selectedPet && healthInput ? (
                         <HealthRecorder
+                          key={`${selectedPet.id ?? "pet"}:${editingHealthRecord?.result.id ?? "new"}`}
                           input={healthInput}
                           loading={healthLoading}
                           mediaMessage={mediaMessage}
@@ -3210,6 +3211,14 @@ function HealthRecorder({
   onCreateVetDraft: (episodeId: string) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(isEditing);
+  const showDetails = isEditing || detailsOpen;
+
+  function markAsNormal() {
+    setInput(resetToNormal(input));
+    if (!isEditing) setDetailsOpen(false);
+  }
+
   return (
     <View style={styles.card}>
       <Text style={styles.cardEyebrow}>TODAY CHECK</Text>
@@ -3224,7 +3233,7 @@ function HealthRecorder({
 
       <TouchableOpacity
         activeOpacity={0.85}
-        onPress={() => setInput(resetToNormal(input))}
+        onPress={markAsNormal}
         style={styles.normalButton}
       >
         <Text style={styles.normalButtonTitle}>오늘은 평소와 같아요</Text>
@@ -3233,65 +3242,84 @@ function HealthRecorder({
         </Text>
       </TouchableOpacity>
 
-      <FieldLabel label="보이는 증상 (선택)" />
-      <MultiChipGroup
-        options={symptomOptions}
-        selected={input.symptoms}
-        onToggle={(symptom) =>
-          setInput({ ...input, symptoms: toggleItem(input.symptoms, symptom) })
-        }
-      />
+      {!isEditing ? (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => setDetailsOpen((current) => !current)}
+          style={styles.detailToggleButton}
+        >
+          <Text style={styles.detailToggleTitle}>
+            {showDetails ? "상세 입력 접기" : "달라진 점 추가하기"}
+          </Text>
+          <Text style={styles.detailToggleText}>
+            증상, 메모, 사진이 있을 때만 열어서 남겨요.
+          </Text>
+        </TouchableOpacity>
+      ) : null}
 
-      <FieldLabel label="식욕" />
-      <ChipGroup
-        options={levelOptions}
-        selected={input.appetite}
-        onSelect={(appetite) => setInput({ ...input, appetite })}
-      />
+      {showDetails ? (
+        <View style={styles.healthDetailFields}>
+          <FieldLabel label="보이는 증상" />
+          <MultiChipGroup
+            options={symptomOptions}
+            selected={input.symptoms}
+            onToggle={(symptom) =>
+              setInput({ ...input, symptoms: toggleItem(input.symptoms, symptom) })
+            }
+          />
 
-      <FieldLabel label="활력" />
-      <ChipGroup
-        options={levelOptions}
-        selected={input.energy}
-        onSelect={(energy) => setInput({ ...input, energy })}
-      />
+          <FieldLabel label="식욕" />
+          <ChipGroup
+            options={levelOptions}
+            selected={input.appetite}
+            onSelect={(appetite) => setInput({ ...input, appetite })}
+          />
 
-      <FieldLabel label="언제부터 이어졌나요?" />
-      <ChipGroup
-        options={durationOptions}
-        selected={input.duration}
-        onSelect={(duration) => setInput({ ...input, duration })}
-      />
+          <FieldLabel label="활력" />
+          <ChipGroup
+            options={levelOptions}
+            selected={input.energy}
+            onSelect={(energy) => setInput({ ...input, energy })}
+          />
 
-      <FieldLabel label="바로 확인이 필요한 신호 (해당 시 선택)" />
-      <MultiChipGroup
-        danger
-        options={redFlagOptions}
-        selected={input.redFlags}
-        onToggle={(flag) =>
-          setInput({ ...input, redFlags: toggleItem(input.redFlags, flag) })
-        }
-      />
+          <FieldLabel label="언제부터 이어졌나요?" />
+          <ChipGroup
+            options={durationOptions}
+            selected={input.duration}
+            onSelect={(duration) => setInput({ ...input, duration })}
+          />
 
-      <FieldLabel label="추가 메모 (선택)" />
-      <TextInput
-        maxLength={1000}
-        multiline
-        onChangeText={(note) => setInput({ ...input, note })}
-        placeholder="언제, 어떤 상황에서 달라졌는지만 짧게 적어도 충분해요."
-        placeholderTextColor={colors.placeholder}
-        style={[styles.input, styles.textarea]}
-        textAlignVertical="top"
-        value={input.note}
-      />
+          <FieldLabel label="바로 확인이 필요한 신호" />
+          <MultiChipGroup
+            danger
+            options={redFlagOptions}
+            selected={input.redFlags}
+            onToggle={(flag) =>
+              setInput({ ...input, redFlags: toggleItem(input.redFlags, flag) })
+            }
+          />
 
-      <MediaPickerSection
-        disabled={isEditing}
-        mediaMessage={mediaMessage}
-        onPickMedia={onPickMedia}
-        onRemoveMedia={onRemoveMedia}
-        pendingMedia={pendingMedia}
-      />
+          <FieldLabel label="추가 메모" />
+          <TextInput
+            maxLength={1000}
+            multiline
+            onChangeText={(note) => setInput({ ...input, note })}
+            placeholder="언제, 어떤 상황에서 달라졌는지만 짧게 적어도 충분해요."
+            placeholderTextColor={colors.placeholder}
+            style={[styles.input, styles.textarea]}
+            textAlignVertical="top"
+            value={input.note}
+          />
+
+          <MediaPickerSection
+            disabled={isEditing}
+            mediaMessage={mediaMessage}
+            onPickMedia={onPickMedia}
+            onRemoveMedia={onRemoveMedia}
+            pendingMedia={pendingMedia}
+          />
+        </View>
+      ) : null}
 
       <PrimaryButton
         disabled={loading}
@@ -3343,7 +3371,7 @@ function MediaPickerSection({
     <View style={styles.mediaBox}>
       <View style={styles.mediaHeader}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.mediaTitle}>사진·영상 첨부 (선택)</Text>
+          <Text style={styles.mediaTitle}>사진·영상 첨부</Text>
           <Text style={styles.mediaText}>
             병원에 보여줄 참고 자료만 골라주세요. PetFlow가 내용을 판독하지는 않아요.
           </Text>
@@ -5630,6 +5658,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 19,
+  },
+  detailToggleButton: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: "#fbfefd",
+    padding: 14,
+  },
+  detailToggleTitle: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  detailToggleText: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  healthDetailFields: {
+    marginTop: 8,
   },
   textarea: {
     minHeight: 94,
