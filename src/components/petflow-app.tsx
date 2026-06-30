@@ -631,9 +631,9 @@ function HomeView({
           )}
         </div>
         <div
-          className="home-score-ring"
+          className="home-score-badge"
           style={{ "--score": recent?.result.riskScore ?? 0 } as React.CSSProperties}
-          aria-label={`CHECK SCORE ${recent?.result.riskScore ?? 0}`}
+          aria-label={`체크스코어 ${recent?.result.riskScore ?? 0}`}
         >
           <strong>{recent?.result.riskScore ?? "--"}</strong>
           <span>CHECK SCORE</span>

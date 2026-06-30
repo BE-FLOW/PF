@@ -454,6 +454,8 @@ p {
 }
 .home-score-card {
   --score: 0;
+  --score-bg: #1f4b3f;
+  --score-accent: var(--mint);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -465,14 +467,20 @@ p {
   background: linear-gradient(135deg, #f7fcf9, #edf8f2);
 }
 .home-score-card.soon {
+  --score-bg: #604725;
+  --score-accent: #f2a647;
   border-color: #f0d8b8;
   background: linear-gradient(135deg, #fffaf1, #fff3df);
 }
 .home-score-card.urgent {
+  --score-bg: #63332f;
+  --score-accent: #e27b70;
   border-color: #e9c0bc;
   background: linear-gradient(135deg, #fff6f5, #ffefec);
 }
 .home-score-card.empty {
+  --score-bg: #73827d;
+  --score-accent: #aab8b2;
   border-style: dashed;
 }
 .home-score-copy h2 {
@@ -486,49 +494,50 @@ p {
   font-size: 12px;
   line-height: 1.7;
 }
-.home-score-ring {
-  width: 128px;
-  height: 128px;
-  border-radius: 50%;
+.home-score-badge {
+  width: 136px;
+  min-height: 104px;
+  border-radius: 24px;
+  padding: 15px 16px 18px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 3px;
   position: relative;
+  overflow: hidden;
   color: #fff;
-  background: conic-gradient(
-    var(--mint) calc(var(--score) * 1%),
-    rgba(37, 79, 66, 0.12) 0
-  );
+  background:
+    radial-gradient(circle at 90% 18%, rgba(255, 255, 255, 0.18), transparent 3rem),
+    var(--score-bg);
+  box-shadow: 0 14px 30px rgba(31, 75, 63, 0.18);
 }
-.home-score-ring::before {
+.home-score-badge::before {
   content: "";
   position: absolute;
-  inset: 10px;
-  border-radius: 50%;
-  background: #1f4b3f;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--score-accent) calc(var(--score) * 1%),
+    rgba(255, 255, 255, 0.18) 0
+  );
 }
-.home-score-card.soon .home-score-ring::before {
-  background: #604725;
-}
-.home-score-card.urgent .home-score-ring::before {
-  background: #63332f;
-}
-.home-score-card.empty .home-score-ring::before {
-  background: #73827d;
-}
-.home-score-ring strong,
-.home-score-ring span {
+.home-score-badge strong,
+.home-score-badge span {
   position: relative;
   z-index: 1;
 }
-.home-score-ring strong {
+.home-score-badge strong {
   display: block;
-  font-size: 34px;
+  font-size: 42px;
   line-height: 1;
+  letter-spacing: -1px;
 }
-.home-score-ring span {
+.home-score-badge span {
   margin-top: 0;
   color: rgba(255, 255, 255, 0.66);
   font-size: 9px;
@@ -2909,23 +2918,28 @@ p {
   }
   .home-score-card {
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 14px;
+    gap: 16px;
     padding: 20px;
     align-items: center;
   }
-  .home-score-ring {
-    width: 82px;
-    height: 82px;
+  .home-score-badge {
+    width: 104px;
+    min-height: 82px;
+    padding: 12px 13px 16px;
+    border-radius: 20px;
     justify-self: end;
   }
-  .home-score-ring::before {
-    inset: 7px;
+  .home-score-badge::before {
+    left: 13px;
+    right: 13px;
+    bottom: 11px;
+    height: 5px;
   }
-  .home-score-ring strong {
-    font-size: 25px;
+  .home-score-badge strong {
+    font-size: 35px;
   }
-  .home-score-ring span {
-    font-size: 7px;
+  .home-score-badge span {
+    font-size: 8px;
   }
   .home-score-copy h2 {
     font-size: 18px;
