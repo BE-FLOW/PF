@@ -594,23 +594,23 @@ function HomeView({
       <section className="hero-card">
         <div className="hero-content">
           <span className="hero-chip">
-            <Icon name="spark" size={13} /> 3분 건강 체크
+            <Icon name="spark" size={13} /> 3분 체크
           </span>
           <h2>
-            작은 변화를 기록하면
+            작게 기록하면
             <br />더 빠르게 알 수 있어요
           </h2>
           <p>
-            오늘의 식욕과 활력, 증상을 남기면
+            식욕, 활력, 증상만 남기면
             <br />
-            기록이 쌓이고 흐름을 정리해 드려요.
+            흐름을 정리해 드려요.
           </p>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
             {hasProfile
               ? activeEpisode
-                ? "이어서 기록하기"
-                : "오늘 건강 기록하기"
+                ? "이어서 기록"
+                : "오늘 기록하기"
               : "등록하고 시작하기"}
           </button>
         </div>
