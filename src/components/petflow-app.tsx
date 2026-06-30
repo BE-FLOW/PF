@@ -606,21 +606,6 @@ function HomeView({
               : "등록하고 시작하기"}
           </button>
         </div>
-        <div className="hero-visual" aria-hidden="true">
-          <div className="hero-paw-card" />
-          <div className="float-badge top">
-            <span className="badge-icon">
-              <Icon name="heart" size={14} />
-            </span>
-            매일 한 번 체크
-          </div>
-          <div className="float-badge bottom">
-            <span className="badge-icon">
-              <Icon name="check" size={14} />
-            </span>
-            병원 준비 완료
-          </div>
-        </div>
       </section>
       <section className={`home-score-card ${recent?.result.riskLevel ?? "empty"}`}>
         <div className="home-score-copy">
