@@ -594,7 +594,7 @@ function HomeView({
       <section className="hero-card">
         <div className="hero-content">
           <h2>
-            짧게 남기면
+            흐름을 남기면
             <br />더 빠르게 알 수 있어요
           </h2>
           <button className="primary-button" onClick={onStart}>
