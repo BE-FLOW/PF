@@ -104,18 +104,18 @@ function PrivacyNotice() {
 
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access || access.reason === "no_code") {
-    return "참여코드를 입력하면 GPT 기반 수의사 검토용 리포트를 만들 수 있어요.";
+    return "참여코드를 입력하면 수의사 검토용 GPT 초안을 만들 수 있어요.";
   }
   if (access.reason === "monthly_limit") {
-    return "이번 달 GPT 리포트 사용량을 모두 사용했어요.";
+    return "이번 달 GPT 초안 사용량을 모두 사용했어요.";
   }
   if (access.reason === "total_limit") {
-    return "이 참여코드의 전체 GPT 리포트 사용량을 모두 사용했어요.";
+    return "이 참여코드의 전체 GPT 초안 사용량을 모두 사용했어요.";
   }
   if (access.reason === "revoked") {
     return "이 참여코드는 현재 사용할 수 없어요.";
   }
-  return "GPT 기반 수의사 검토용 리포트를 만들 수 있어요.";
+  return "수의사 검토용 GPT 초안을 만들 수 있어요.";
 }
 
 export function AccountView({
@@ -285,8 +285,8 @@ export function AccountView({
         </button>
         <div>
           <p className="eyebrow">MY PETFLOW</p>
-          <h1>{user ? "내 반려동물" : "계정으로 이어서 관리"}</h1>
-          <p>{user ? "오늘 기록할 반려동물을 골라주세요." : "로그인하면 여러 반려동물을 한곳에서 관리할 수 있어요."}</p>
+          <h1>{user ? "함께하는 아이들" : "계정으로 이어서 관리"}</h1>
+          <p>{user ? "오늘 함께 볼 아이를 골라주세요." : "로그인하면 기록을 이어서 관리할 수 있어요."}</p>
         </div>
       </div>
 
@@ -311,7 +311,7 @@ export function AccountView({
               <div>
                 <h3>로그인 연결</h3>
                 <p>
-                  기존 이메일 계정에 Google을 연결하면 반려동물, 기록, GPT 권한이
+                  기존 이메일 계정에 Google을 연결하면 아이들, 기록, GPT 초안 권한이
                   그대로 이어져요.
                 </p>
               </div>
@@ -352,7 +352,7 @@ export function AccountView({
           <section className={`panel ai-access-panel ${aiAccess?.enabled ? "enabled" : ""}`}>
             <div className="panel-head">
               <div>
-                <h3>GPT AI 리포트 권한</h3>
+                <h3>GPT 초안 권한</h3>
                 <p>{aiAccessCopy(aiAccess)}</p>
               </div>
               <span className={`ai-access-state ${aiAccess?.enabled ? "enabled" : ""}`}>
@@ -411,7 +411,7 @@ export function AccountView({
               <h3>계정 삭제 요청</h3>
               <p>
                 테스트를 중단하려면 요청을 남겨주세요. 운영자가 확인 후 계정과
-                연결된 반려동물, 건강 기록, GPT 사용 권한을 삭제합니다.
+                연결된 아이들, 건강 기록, GPT 초안 권한을 삭제합니다.
               </p>
             </div>
             <button
@@ -455,7 +455,7 @@ export function AccountView({
           {!needsTesterProfile && (
             <section className="panel">
               <div className="panel-head">
-                <h3>반려동물 {pets.length}마리</h3>
+                <h3>함께하는 아이들</h3>
                 <button className="text-button" onClick={onAddPet}>+ 추가</button>
               </div>
               {pets.length ? (
@@ -476,8 +476,8 @@ export function AccountView({
                 </div>
               ) : (
                 <div className="empty-state account-empty">
-                  <p>아직 등록된 반려동물이 없어요.</p>
-                  <button className="primary-button" onClick={onAddPet}><Icon name="plus" size={17} /> 첫 반려동물 등록</button>
+                  <p>아직 등록된 아이가 없어요.</p>
+                  <button className="primary-button" onClick={onAddPet}><Icon name="plus" size={17} /> 첫 아이 등록</button>
                 </div>
               )}
             </section>
@@ -488,8 +488,7 @@ export function AccountView({
           <div className="auth-intro">
             <h2>Google 또는 Apple로 시작하기</h2>
             <p>
-              이메일 확인과 비밀번호 관리는 각 계정에서 맡기고, 펫플로우는 로그인 후
-              닉네임과 테스트 연락처만 한 번 확인해요.
+              펫플로우는 로그인 후 닉네임과 테스트 연락처만 한 번 확인해요.
             </p>
           </div>
           <div className="oauth-button-group">

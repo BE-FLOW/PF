@@ -941,7 +941,7 @@ function ProfileView({
           </div>
           <div className="form-grid">
             <div className="field breed-field">
-              <label htmlFor="breed">품종 (선택)</label>
+              <label htmlFor="breed">품종</label>
               <div
                 className={`breed-combobox ${breedPickerOpen ? "open" : ""}`}
                 onBlur={closeBreedPickerOnBlur}
@@ -1034,7 +1034,7 @@ function ProfileView({
               </small>
             </div>
             <div className="field">
-              <label htmlFor="birthDate">생일 (선택)</label>
+              <label htmlFor="birthDate">생일</label>
               <input
                 id="birthDate"
                 type="date"
@@ -1046,7 +1046,7 @@ function ProfileView({
               />
             </div>
             <div className="field">
-              <label htmlFor="sex">성별 (선택)</label>
+              <label htmlFor="sex">성별</label>
               <select
                 id="sex"
                 value={draft.sex}
@@ -1065,7 +1065,7 @@ function ProfileView({
               </select>
             </div>
             <div className="field">
-              <label htmlFor="profileWeight">최근 체중 (선택)</label>
+              <label htmlFor="profileWeight">최근 체중</label>
               <input
                 id="profileWeight"
                 inputMode="decimal"
@@ -1751,7 +1751,7 @@ function ResultView({
                     ? "이번 달 GPT 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
                     : aiAccess?.reason === "total_limit"
                       ? "이 참여코드의 전체 GPT 사용량을 모두 사용했어요."
-                      : "계정 화면에서 관리자에게 받은 참여코드를 입력하면 수의사 검토용 초안을 만들 수 있어요."}
+                      : "계정 화면에서 참여코드를 입력하면 수의사 검토용 초안을 만들 수 있어요."}
                 </p>
                 <button
                   type="button"
@@ -2273,7 +2273,7 @@ function EpisodeReportView({
       return;
     }
     if (!canUseAiReport) {
-      setVetDraftError("참여코드를 입력한 테스터만 GPT AI 리포트를 만들 수 있어요.");
+      setVetDraftError("참여코드를 입력한 테스터만 GPT 초안을 만들 수 있어요.");
       return;
     }
     setVetDraftState("loading");
@@ -2383,7 +2383,7 @@ function EpisodeReportView({
           <div>
             <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
             <h3>
-              <Icon name="spark" size={18} /> 수의사 검토용 GPT 리포트
+              <Icon name="spark" size={18} /> 수의사 검토용 GPT 초안
             </h3>
             <p>
               기록해 둔 관찰, 병원 계획, 초기·장기 경과를 자동으로 묶어 다른 병원에도 바로 전달해요.
@@ -2392,7 +2392,7 @@ function EpisodeReportView({
           <span className="vet-draft-badge">GPT 작성 · 확인 전</span>
         </div>
 
-        <div className="vet-draft-includes" aria-label="GPT 리포트 자동 포함 자료">
+        <div className="vet-draft-includes" aria-label="GPT 초안 자동 포함 자료">
           <span>자동 포함</span>
           <strong>관찰 {report.recordCount}회</strong>
           <strong>계획 {completedPlanTaskCount}/{totalPlanTaskCount}개</strong>
@@ -2408,13 +2408,13 @@ function EpisodeReportView({
           </p>
         ) : !canUseAiReport ? (
           <div className="vet-draft-locked">
-            <strong>참여코드가 있는 테스터에게만 GPT 리포트를 열어두고 있어요.</strong>
+            <strong>참여코드가 있는 테스터에게만 GPT 초안을 열어두고 있어요.</strong>
             <p>
               {aiAccess?.reason === "monthly_limit"
                 ? "이번 달 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
                 : aiAccess?.reason === "total_limit"
                   ? "이 참여코드의 전체 사용량을 모두 사용했어요."
-                  : "계정 화면에서 관리자에게 받은 참여코드를 입력하면 수의사 검토용 AI 보고서를 만들 수 있어요."}
+                  : "계정 화면에서 참여코드를 입력하면 수의사 검토용 GPT 초안을 만들 수 있어요."}
             </p>
             <button
               type="button"
@@ -2437,8 +2437,8 @@ function EpisodeReportView({
                 {vetDraftState === "loading"
                   ? "초안 만드는 중..."
                   : vetDraft
-                    ? "GPT 리포트 다시 만들기"
-                    : "GPT 리포트 만들기"}
+                    ? "GPT 초안 다시 만들기"
+                    : "GPT 초안 만들기"}
               </button>
               {vetDraft && (
                 <button
@@ -2557,7 +2557,7 @@ function EpisodeReportView({
           <p className="share-error" role="alert">{vetDraftError}</p>
         )}
         <p className="plan-safety-note">
-          GPT 리포트는 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
+          GPT 초안은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
           수의사 확인 전 정보로 표시합니다.
         </p>
       </section>
@@ -3500,7 +3500,7 @@ export function PetFlowApp() {
 
   async function deleteRecord(record: HistoryRecord) {
     const confirmed = window.confirm(
-      "이 기록을 삭제할까요?\n삭제하면 병원 공유 요약에서도 빠져요.",
+      "이 기록을 삭제할까요?\n삭제하면 병원 전달 요약에서도 빠져요.",
     );
     if (!confirmed) return;
 

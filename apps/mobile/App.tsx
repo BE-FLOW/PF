@@ -87,10 +87,10 @@ const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
 ];
 
 const mainSectionDescriptions: Record<MainSection, string> = {
-  home: "오늘 상태, 최근 기록, 병원 공유 준비를 한눈에 확인해요.",
+  home: "오늘 상태와 다음 할 일을 한눈에 봐요.",
   record: "오늘 관찰한 변화만 빠르게 남겨요.",
-  reports: "기록 흐름, 3·7·14일 경과, 수의사 검토용 초안을 확인해요.",
-  account: "테스터 키, GPT 권한, 계정 관리를 한곳에서 확인해요.",
+  reports: "건강 흐름과 병원 전달 요약을 확인해요.",
+  account: "로그인과 참여코드만 확인해요.",
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -567,11 +567,11 @@ export default function App() {
     if (!authReady) return "계정 확인 중";
     if (!user) return "계정으로 이어서 관리";
     if (needsTesterProfile) return "테스터 정보를 확인해요";
-    if (!pets.length) return "첫 반려동물을 등록해요";
+    if (!pets.length) return "함께할 아이를 알려주세요";
     if (mainSection === "record") return "오늘의 건강 기록";
-    if (mainSection === "reports") return "기록과 보고서";
+    if (mainSection === "reports") return "건강 흐름";
     if (mainSection === "account") return "내 계정";
-    return `${selectedPet?.name ?? "반려동물"}와 좋은 하루 보내고 있나요?`;
+    return `${selectedPet?.name ?? "아이"}의 오늘을 살펴볼까요?`;
   }, [
     authReady,
     configured,
@@ -1318,7 +1318,7 @@ export default function App() {
   function confirmDeleteHealthRecord(record: HistoryRecord) {
     Alert.alert(
       "기록을 삭제할까요?",
-      "삭제하면 병원 공유 요약에서도 빠져요.",
+      "삭제하면 병원 전달 요약에서도 빠져요.",
       [
         { text: "취소", style: "cancel" },
         {
@@ -1828,7 +1828,7 @@ export default function App() {
   async function redeemAiCode() {
     const code = aiCodeDraft.trim();
     if (!code) {
-      setAiCodeMessage("관리자에게 받은 테스터 키를 입력해 주세요.");
+      setAiCodeMessage("참여코드를 입력해 주세요.");
       return;
     }
 
@@ -1917,7 +1917,7 @@ export default function App() {
     } catch {
       setVetDraftNotice({
         episodeId,
-        text: "GPT 초안을 만들지 못했어요. 테스터 키 사용량과 관리자 설정을 확인해 주세요.",
+        text: "GPT 초안을 만들지 못했어요. 참여코드 사용량을 확인해 주세요.",
         tone: "error",
       });
     } finally {
@@ -2066,7 +2066,7 @@ export default function App() {
           >
             <AppBrandMark />
             <View>
-              <Text style={styles.badgeText}>PETFLOW</Text>
+              <Text style={styles.badgeText}>PET FLOW</Text>
               <Text style={styles.brandTagline}>관찰을 병원 준비로</Text>
             </View>
           </TouchableOpacity>
@@ -2230,7 +2230,7 @@ export default function App() {
           )}
 
           <Text style={styles.notice}>
-            AI 리포트와 비밀키는 앱이 아니라 서버에서만 관리합니다.
+            GPT 초안과 비밀키는 앱이 아니라 서버에서만 관리합니다.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -2315,10 +2315,9 @@ function HomeDashboard({
         <Text style={styles.cardEyebrow}>WELCOME</Text>
         <Text style={styles.cardTitle}>함께할 아이를 먼저 알려주세요</Text>
         <Text style={styles.cardText}>
-          이름과 종류만 저장하면 오늘 기록, 건강 흐름, 병원 공유 요약을 이어서
-          관리할 수 있어요.
+          이름과 종류만 저장하면 바로 기록할 수 있어요.
         </Text>
-        <SecondaryButton label="첫 반려동물 등록" onPress={onGoRecord} />
+        <SecondaryButton label="첫 아이 등록" onPress={onGoRecord} />
       </View>
     );
   }
@@ -2337,7 +2336,7 @@ function HomeDashboard({
             {selectedPet ? `${selectedPet.name}의 오늘을 살펴봐요` : "오늘을 살펴봐요"}
           </Text>
           <Text style={styles.cardText}>
-            기록은 짧게 남기고, 흐름과 병원 공유 준비는 PetFlow가 정리해요.
+            기록은 짧게 남기고, 흐름과 병원 전달 요약은 펫플로우가 정리해요.
           </Text>
         </View>
       </View>
@@ -2380,7 +2379,7 @@ function HomeDashboard({
 
       <View style={styles.homeActionCard}>
         <Text style={styles.cardEyebrow}>NEXT</Text>
-        <Text style={styles.cardTitle}>한눈에 보고 이어서 관리해요</Text>
+        <Text style={styles.cardTitle}>필요한 것만 이어서 해요</Text>
         <View style={styles.homeActionRow}>
           <TouchableOpacity
             activeOpacity={0.85}
@@ -2443,11 +2442,11 @@ function ReportsEmptyState({ onGoRecord }: { onGoRecord: () => void }) {
   return (
     <View style={styles.card}>
       <Text style={styles.cardEyebrow}>REPORTS</Text>
-      <Text style={styles.cardTitle}>먼저 반려동물을 등록해 주세요</Text>
+      <Text style={styles.cardTitle}>함께할 아이를 먼저 알려주세요</Text>
       <Text style={styles.cardText}>
-        기록과 수의사 검토용 보고서는 반려동물별로 모아서 보여드려요.
+        아이별 기록과 병원 전달 요약을 모아서 볼 수 있어요.
       </Text>
-      <SecondaryButton label="오늘 기록으로 이동" onPress={onGoRecord} />
+      <SecondaryButton label="아이 등록하기" onPress={onGoRecord} />
     </View>
   );
 }
@@ -2773,7 +2772,7 @@ function AccountCard({
           <View style={styles.cardHeaderText}>
             <Text style={styles.identityLinkTitle}>로그인 연결</Text>
             <Text style={styles.identityLinkText}>
-              기존 이메일 계정에 Google을 연결하면 반려동물, 기록, GPT 권한이
+              기존 이메일 계정에 Google을 연결하면 아이들, 기록, GPT 초안 권한이
               그대로 이어져요.
             </Text>
           </View>
@@ -2964,7 +2963,7 @@ function PetManager({
           <Text style={styles.cardTitle}>함께하는 아이들</Text>
           {pets.length ? (
             <Text style={styles.cardText}>
-              {selectedPet ? `${selectedPet.name} 중심으로 오늘 기록을 이어갈게요.` : "오늘 기록할 아이를 선택해 주세요."}
+              {selectedPet ? `${selectedPet.name} 중심으로 기록해요.` : "함께 볼 아이를 골라주세요."}
             </Text>
           ) : null}
         </View>
@@ -3103,7 +3102,7 @@ function PetForm({
         onSelect={chooseSpecies}
       />
 
-      <FieldLabel label="품종 (선택)" />
+      <FieldLabel label="품종" />
       {breedSuggestions.length ? (
         <View style={styles.choicePanel}>
           <Text style={styles.choicePanelText}>자주 쓰는 품종을 먼저 골라요.</Text>
@@ -3125,7 +3124,7 @@ function PetForm({
         value={draft.breed}
       />
 
-      <FieldLabel label="생일 (선택)" />
+      <FieldLabel label="생일" />
       <View style={styles.choicePanel}>
         <Text style={styles.choicePanelText}>정확하지 않으면 비워둬도 돼요.</Text>
         <ChipGroup
@@ -3144,14 +3143,14 @@ function PetForm({
         value={draft.birthDate}
       />
 
-      <FieldLabel label="성별·중성화 (선택)" />
+      <FieldLabel label="성별·중성화" />
       <ChipGroup
         options={sexOptions}
         selected={draft.sex}
         onSelect={(sex) => setDraft({ ...draft, sex })}
       />
 
-      <FieldLabel label="체중 (선택)" />
+      <FieldLabel label="체중" />
       <TextInput
         maxLength={20}
         onChangeText={(weight) => setDraft({ ...draft, weight })}
@@ -3794,7 +3793,7 @@ function HealthHistoryCard({
 
       <Message text={message} />
 
-      <Text style={styles.historyTitle}>병원 공유 요약</Text>
+      <Text style={styles.historyTitle}>병원 전달 요약</Text>
       <Text style={styles.sectionHint}>
         같은 사건에 연결된 기록을 수의사가 보기 좋은 제출용 텍스트로 정리해요.
       </Text>
@@ -4328,7 +4327,7 @@ function EpisodeReportItem({
 
           {!canUseAiDraft ? (
             <Text style={styles.planEmptyText}>
-              로그인 카드에서 관리자에게 받은 테스터 키를 등록하면 GPT 초안을 만들 수
+              로그인 카드에서 참여코드를 등록하면 GPT 초안을 만들 수
               있어요. 키별 월간·전체 사용량은 서버에서 관리됩니다.
             </Text>
           ) : (
@@ -4641,7 +4640,7 @@ function formatIsoDate(date: Date) {
 
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access || access.reason === "no_code") {
-    return "관리자가 발급한 테스터 키를 입력하면 GPT 초안을 만들 수 있어요.";
+    return "참여코드를 입력하면 GPT 초안을 만들 수 있어요.";
   }
   if (access.reason === "monthly_limit") {
     return "이번 달 GPT 초안 사용량을 모두 사용했어요.";
