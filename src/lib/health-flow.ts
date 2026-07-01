@@ -31,7 +31,7 @@ export function summarizeHealthFlow(
     return {
       trend: "stable",
       headline: "아직 건강 흐름을 만들 기록이 없어요",
-      description: "오늘 상태를 기록하면 작은 변화가 쌓이기 시작해요.",
+      description: "",
       recordCount: 0,
       repeatedSymptoms: [],
       highestRisk: null,

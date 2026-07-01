@@ -2703,9 +2703,11 @@ function HomeDashboard({
           <Text style={styles.cardEyebrow}>HEALTH FLOW</Text>
           <Text style={styles.homeFlowTitle}>{flow.recordCount}회 기록</Text>
           <Text style={styles.homeFlowHeadline}>{flow.headline}</Text>
-          <Text style={styles.homeMutedText} numberOfLines={3}>
-            {flow.description}
-          </Text>
+          {flow.description ? (
+            <Text style={styles.homeMutedText} numberOfLines={3}>
+              {flow.description}
+            </Text>
+          ) : null}
         </View>
       </View>
     </>
@@ -4145,7 +4147,9 @@ function HealthHistoryCard({
           <Text style={styles.flowWindow}>최근 14일</Text>
         </View>
         <Text style={styles.flowTitle}>{flow.headline}</Text>
-        <Text style={styles.flowDescription}>{flow.description}</Text>
+        {flow.description ? (
+          <Text style={styles.flowDescription}>{flow.description}</Text>
+        ) : null}
         <View style={styles.flowMetaRow}>
           <Text style={styles.flowMeta}>
             최고 단계 {flow.highestRisk ? riskLabels[flow.highestRisk] : "없음"}

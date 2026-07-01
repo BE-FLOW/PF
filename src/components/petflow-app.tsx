@@ -707,11 +707,9 @@ function HomeView({
               ? `${profile.name || "반려동물"}의 최신 체크스코어`
               : "첫 기록을 남기면 체크스코어가 보여요"}
           </h2>
-          <p>
-            {recent
-              ? `${formatDate(recent.result.createdAt)} 기록 기준 · ${riskLabel[recent.result.riskLevel]}`
-              : "복잡한 수치보다 오늘 상태를 한눈에 볼 수 있게 정리해 드릴게요."}
-          </p>
+          {recent && (
+            <p>{`${formatDate(recent.result.createdAt)} 기록 기준 · ${riskLabel[recent.result.riskLevel]}`}</p>
+          )}
           {recent ? (
             <button className="secondary-button compact" onClick={() => onSelectLatest(recent)}>
               최근 기록 자세히 보기
@@ -742,7 +740,7 @@ function HomeView({
           </div>
           {!flowLoading && (
             <>
-              <p>{flow.description}</p>
+              {flow.description && <p>{flow.description}</p>}
               {flow.repeatedSymptoms.length > 0 && (
                 <div className="flow-tags">
                   {flow.repeatedSymptoms.map((item) => <span key={item}>{item}</span>)}
@@ -2100,7 +2098,7 @@ function HistoryView({
         <div>
           <span>최근 14일 · {flow.recordCount}회 기록</span>
           <h2>{flow.headline}</h2>
-          <p>{flow.description}</p>
+          {flow.description && <p>{flow.description}</p>}
         </div>
         {flow.recordCount > 0 && <pre>{flow.vetBrief}</pre>}
       </section>
