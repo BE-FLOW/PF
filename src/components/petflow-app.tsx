@@ -3490,6 +3490,9 @@ export function PetFlowApp() {
         ? saveResult.error
         : null;
       if (saveError || !data) return "저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
+      if (!photoColumnReady && (photo.file || photo.remove)) {
+        return "사진 저장 준비가 아직 완료되지 않았어요. 잠시 후 다시 시도해 주세요.";
+      }
       let photoPath =
         photoColumnReady && "photo_path" in data
           ? (data.photo_path ?? nextProfile.photoPath ?? "")
@@ -3544,6 +3547,8 @@ export function PetFlowApp() {
           : [...current, savedProfile];
       });
       setSelectedPetId(savedProfile.id);
+    } else if (photo.file || photo.remove) {
+      return "사진은 로그인한 계정에 저장할 수 있어요. 먼저 로그인해 주세요.";
     }
     setProfile(savedProfile);
     if (!user) {
