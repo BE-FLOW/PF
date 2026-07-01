@@ -312,7 +312,7 @@ p {
   overflow: hidden;
   isolation: isolate;
   min-height: 148px;
-  padding: 22px 24px;
+  padding: 22px;
   border-radius: 28px;
   background:
     radial-gradient(circle at 88% 52%, rgba(246, 177, 84, 0.2), transparent 9rem),
@@ -325,15 +325,7 @@ p {
   gap: 18px;
 }
 .hero-card::after {
-  content: "";
-  position: absolute;
-  inset: 18px 20px 18px auto;
-  z-index: 1;
-  width: min(32%, 150px);
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.46), rgba(246, 177, 84, 0.18));
-  opacity: 0.7;
-  pointer-events: none;
+  content: none;
 }
 .hero-content {
   position: relative;
@@ -346,7 +338,7 @@ p {
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
-  width: clamp(76px, 15vw, 94px);
+  width: clamp(76px, 14vw, 88px);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
@@ -487,7 +479,7 @@ p {
   --score-bg: #1f5b55;
   --score-accent: #78d9c8;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 118px;
+  grid-template-columns: minmax(0, 1fr) 108px;
   align-items: center;
   gap: 18px;
   margin-top: 22px;
@@ -527,8 +519,8 @@ p {
 .home-score-badge {
   justify-self: center;
   align-self: center;
-  width: 112px;
-  min-height: 92px;
+  width: 104px;
+  min-height: 88px;
   border-radius: 24px;
   padding: 14px 15px 17px;
   display: flex;
@@ -565,7 +557,7 @@ p {
 }
 .home-score-badge strong {
   display: block;
-  font-size: 39px;
+  font-size: 37px;
   line-height: 1;
   letter-spacing: -1px;
 }
@@ -2932,34 +2924,32 @@ p {
   }
   .hero-card {
     min-height: 148px;
-    padding: 20px 22px;
+    padding: 20px;
   }
   .hero-content {
-    max-width: calc(100% - 96px);
+    max-width: calc(100% - 90px);
   }
   .hero-card h2 {
     max-width: 238px;
   }
   .hero-pet-photo-slot {
-    width: 78px;
+    width: 74px;
     border-radius: 24px;
   }
   .hero-card::after {
-    inset: 18px 18px 18px auto;
-    width: 112px;
-    opacity: 0.45;
+    content: none;
   }
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
   .home-score-card {
-    grid-template-columns: minmax(0, 1fr) 104px;
+    grid-template-columns: minmax(0, 1fr) 98px;
     gap: 14px;
     padding: 20px;
     align-items: center;
   }
   .home-score-badge {
-    width: 96px;
+    width: 92px;
     min-height: 82px;
     padding: 12px 13px 16px;
     border-radius: 20px;
@@ -3065,11 +3055,10 @@ p {
     font-size: 22px;
   }
   .hero-pet-photo-slot {
-    width: 68px;
+    width: 66px;
     border-radius: 22px;
   }
   .hero-card::after {
-    width: 88px;
-    opacity: 0.34;
+    content: none;
   }
 }
