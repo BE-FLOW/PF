@@ -39,8 +39,12 @@ import {
   formatFileSize,
   formatReportMediaSummary,
   levelOptions,
+  isAllowedPetPhotoMimeType,
   maxReportMediaFiles,
   maxReportMediaSizeBytes,
+  maxPetPhotoSizeBytes,
+  petPhotoBucket,
+  petPhotoExtensionFromMimeType,
   profileToHealthInput,
   reportMediaBucket,
   reportMediaExtensionFromMimeType,
@@ -115,7 +119,13 @@ interface TesterDraft {
   consented: boolean;
 }
 
-type PetDraft = Omit<PetProfile, "id">;
+interface PetDraft extends Omit<PetProfile, "id"> {
+  photoLocalUri?: string;
+  photoMimeType?: string;
+  photoFileName?: string;
+  photoSizeBytes?: number;
+  photoRemoved?: boolean;
+}
 
 interface PendingMediaAsset {
   id: string;
@@ -176,6 +186,8 @@ const emptyPetDraft: PetDraft = {
   birthDate: "",
   sex: "unknown",
   weight: "",
+  photoPath: "",
+  photoUrl: "",
 };
 
 const defaultAiFeedbackDraft: AiFeedbackDraft = {
@@ -338,6 +350,35 @@ function fileNameFromAsset(asset: ImagePicker.ImagePickerAsset, mimeType: string
   if (asset.fileName?.trim()) return cleanFileName(asset.fileName);
   const extension = reportMediaExtensionFromMimeType(mimeType);
   return cleanFileName(`petflow-media-${Date.now()}.${extension}`);
+}
+
+function petPhotoFileNameFromAsset(asset: ImagePicker.ImagePickerAsset, mimeType: string) {
+  if (asset.fileName?.trim()) return cleanFileName(asset.fileName);
+  const extension = petPhotoExtensionFromMimeType(mimeType);
+  return cleanFileName(`petflow-photo-${Date.now()}.${extension}`);
+}
+
+async function createPetPhotoSignedUrl(photoPath?: string | null) {
+  if (!photoPath) return "";
+  const supabase = getSupabaseClient();
+  if (!supabase) return "";
+  const { data, error } = await supabase.storage
+    .from(petPhotoBucket)
+    .createSignedUrl(photoPath, 60 * 60);
+  if (error) return "";
+  return data.signedUrl ?? "";
+}
+
+function isMissingPetPhotoColumnError(error: unknown) {
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as { message?: unknown }).message)
+      : "";
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+  return code === "42703" || message.includes("photo_path");
 }
 
 const petFlowFontAssets = {
@@ -652,7 +693,7 @@ export default function App() {
         .maybeSingle(),
       supabase
         .from("pets")
-        .select("id,name,species,breed,birth_date,sex,weight,created_at")
+        .select("id,name,species,breed,birth_date,sex,weight,photo_path,created_at")
         .eq("user_id", nextUser.id)
         .order("created_at", { ascending: true }),
     ]);
@@ -660,7 +701,26 @@ export default function App() {
     if (error) {
       setMessage("테스터 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
-    if (petsError) {
+    let effectivePetRows: Array<{
+      id: string;
+      name: string;
+      species: Species;
+      breed: string | null;
+      birth_date: string | null;
+      sex: PetSex;
+      weight: string | null;
+      photo_path?: string | null;
+    }> = petRows ?? [];
+    let photoColumnReady = !petsError;
+    if (isMissingPetPhotoColumnError(petsError)) {
+      const { data: fallbackPets } = await supabase
+        .from("pets")
+        .select("id,name,species,breed,birth_date,sex,weight,created_at")
+        .eq("user_id", nextUser.id)
+        .order("created_at", { ascending: true });
+      effectivePetRows = fallbackPets ?? [];
+      photoColumnReady = false;
+    } else if (petsError) {
       setPetMessage("반려동물 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
 
@@ -675,15 +735,23 @@ export default function App() {
       : null;
 
     setTesterProfile(profile);
-    const loadedPets: PetProfile[] = (petRows ?? []).map((pet) => ({
-      id: pet.id,
-      name: pet.name,
-      species: pet.species,
-      breed: pet.breed ?? "",
-      birthDate: pet.birth_date ?? "",
-      sex: pet.sex,
-      weight: pet.weight ?? "",
-    }));
+    const loadedPets: PetProfile[] = await Promise.all(
+      effectivePetRows.map(async (pet) => {
+        const photoPath =
+          photoColumnReady && "photo_path" in pet ? (pet.photo_path ?? "") : "";
+        return {
+          id: pet.id,
+          name: pet.name,
+          species: pet.species,
+          breed: pet.breed ?? "",
+          birthDate: pet.birth_date ?? "",
+          sex: pet.sex,
+          weight: pet.weight ?? "",
+          photoPath,
+          photoUrl: await createPetPhotoSignedUrl(photoPath),
+        };
+      }),
+    );
     setPets(loadedPets);
     setSelectedPetId((current) =>
       current && loadedPets.some((pet) => pet.id === current)
@@ -856,6 +924,42 @@ export default function App() {
       }
       throw error;
     }
+  }
+
+  async function uploadPetPhoto({
+    petId,
+    userId,
+  }: {
+    petId: string;
+    userId: string;
+  }) {
+    const supabase = getSupabaseClient();
+    if (
+      !supabase ||
+      !petDraft.photoLocalUri ||
+      !petDraft.photoMimeType ||
+      !isAllowedPetPhotoMimeType(petDraft.photoMimeType)
+    ) {
+      return "";
+    }
+
+    const uploadFile = new File(petDraft.photoLocalUri);
+    const body = await uploadFile.arrayBuffer();
+    if (body.byteLength <= 0 || body.byteLength > maxPetPhotoSizeBytes) {
+      throw new Error("invalid pet photo size");
+    }
+
+    const extension = petPhotoExtensionFromMimeType(petDraft.photoMimeType);
+    const storagePath = `${userId}/${petId}/${Date.now()}-${createUuid()}.${extension}`;
+    const { error } = await supabase.storage
+      .from(petPhotoBucket)
+      .upload(storagePath, body, {
+        cacheControl: "3600",
+        contentType: petDraft.photoMimeType,
+        upsert: false,
+      });
+    if (error) throw error;
+    return storagePath;
   }
 
   useEffect(() => {
@@ -1174,6 +1278,9 @@ export default function App() {
       birthDate: pet.birthDate,
       sex: pet.sex,
       weight: pet.weight,
+      photoPath: pet.photoPath ?? "",
+      photoUrl: pet.photoUrl ?? "",
+      photoRemoved: false,
     });
     setPetMessage("");
   }
@@ -1182,6 +1289,57 @@ export default function App() {
     setEditingPetId(null);
     setPetDraft(emptyPetDraft);
     setPetFormExpanded(false);
+    setPetMessage("");
+  }
+
+  async function pickPetPhoto() {
+    setPetMessage("");
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setPetMessage("프로필 사진을 고르려면 사진 접근 권한이 필요해요.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: true,
+      aspect: [1, 1],
+      mediaTypes: ["images"],
+      quality: 0.82,
+    });
+    if (result.canceled) return;
+
+    const asset = result.assets[0];
+    const mimeType = mimeTypeFromAsset(asset);
+    if (!isAllowedPetPhotoMimeType(mimeType)) {
+      setPetMessage("프로필 사진은 JPG, PNG, WEBP, HEIC 이미지만 사용할 수 있어요.");
+      return;
+    }
+    if ((asset.fileSize ?? 0) > maxPetPhotoSizeBytes) {
+      setPetMessage("프로필 사진은 5MB 이하로 올려 주세요.");
+      return;
+    }
+
+    setPetDraft((current) => ({
+      ...current,
+      photoLocalUri: asset.uri,
+      photoMimeType: mimeType,
+      photoFileName: petPhotoFileNameFromAsset(asset, mimeType),
+      photoSizeBytes: asset.fileSize ?? 0,
+      photoUrl: asset.uri,
+      photoRemoved: false,
+    }));
+  }
+
+  function removePetPhoto() {
+    setPetDraft((current) => ({
+      ...current,
+      photoLocalUri: undefined,
+      photoMimeType: undefined,
+      photoFileName: undefined,
+      photoSizeBytes: undefined,
+      photoUrl: "",
+      photoRemoved: Boolean(current.photoPath),
+    }));
     setPetMessage("");
   }
 
@@ -1367,19 +1525,95 @@ export default function App() {
       weight: petDraft.weight.trim() || null,
       updated_at: new Date().toISOString(),
     };
-    const { data, error } = await supabase
+    const saveResult = await supabase
       .from("pets")
       .upsert(payload)
-      .select("id")
+      .select("id,photo_path")
       .single();
-    setPetLoading(false);
+    let data: { id: string; photo_path?: string | null } | null = saveResult.data;
+    let photoColumnReady = !saveResult.error;
+    if (isMissingPetPhotoColumnError(saveResult.error)) {
+      const fallbackResult = await supabase
+        .from("pets")
+        .upsert(payload)
+        .select("id")
+        .single();
+      data = fallbackResult.data;
+      photoColumnReady = false;
+      if (fallbackResult.error) {
+        setPetLoading(false);
+        setPetMessage("반려동물 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
+        return;
+      }
+    }
+    const error =
+      saveResult.error && !isMissingPetPhotoColumnError(saveResult.error)
+        ? saveResult.error
+        : null;
 
     if (error || !data) {
+      setPetLoading(false);
       setPetMessage("반려동물 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
       return;
     }
 
-    const savedPet: PetProfile = { ...petDraft, name: petDraft.name.trim(), id: data.id };
+    let photoPath =
+      photoColumnReady && "photo_path" in data
+        ? (data.photo_path ?? petDraft.photoPath ?? "")
+        : "";
+    let photoUrl = photoColumnReady ? (petDraft.photoUrl ?? "") : "";
+    const previousPhotoPath = photoPath;
+    try {
+      if (photoColumnReady && petDraft.photoRemoved && previousPhotoPath) {
+        const { error: updateError } = await supabase
+          .from("pets")
+          .update({ photo_path: null, updated_at: new Date().toISOString() })
+          .eq("id", data.id);
+        if (updateError) throw updateError;
+        await supabase.storage.from(petPhotoBucket).remove([previousPhotoPath]);
+        photoPath = "";
+        photoUrl = "";
+      }
+
+      if (photoColumnReady && petDraft.photoLocalUri) {
+        const nextPhotoPath = await uploadPetPhoto({
+          petId: data.id,
+          userId: user.id,
+        });
+        const { error: updateError } = await supabase
+          .from("pets")
+          .update({ photo_path: nextPhotoPath, updated_at: new Date().toISOString() })
+          .eq("id", data.id);
+        if (updateError) {
+          await supabase.storage.from(petPhotoBucket).remove([nextPhotoPath]);
+          throw updateError;
+        }
+        if (previousPhotoPath) {
+          await supabase.storage.from(petPhotoBucket).remove([previousPhotoPath]);
+        }
+        photoPath = nextPhotoPath;
+        photoUrl = await createPetPhotoSignedUrl(nextPhotoPath);
+      } else if (photoColumnReady && photoPath && !petDraft.photoRemoved) {
+        photoUrl = await createPetPhotoSignedUrl(photoPath);
+      }
+    } catch {
+      setPetLoading(false);
+      setPetMessage("기본 정보는 저장했지만 사진은 저장하지 못했어요. 다시 시도해 주세요.");
+      return;
+    }
+
+    setPetLoading(false);
+    const savedPet: PetProfile = {
+      id: data.id,
+      name: petDraft.name.trim(),
+      species: petDraft.species,
+      breed: petDraft.breed.trim(),
+      birthDate: petDraft.birthDate.trim(),
+      sex: petDraft.sex,
+      weight: petDraft.weight.trim(),
+      photoPath,
+      photoUrl,
+    };
     setPets((current) => {
       const exists = current.some((pet) => pet.id === data.id);
       return exists
@@ -2114,6 +2348,8 @@ export default function App() {
                         formExpanded={petFormExpanded}
                         loading={petLoading}
                         message={petMessage}
+                        onPickPhoto={pickPetPhoto}
+                        onRemovePhoto={removePetPhoto}
                         pets={pets}
                         selectedPetId={selectedPetId}
                         setDraft={setPetDraft}
@@ -2334,9 +2570,13 @@ function HomeDashboard({
           <Text style={styles.cardText}>기록은 짧게, 정리는 펫플로우가 도와드려요.</Text>
         </View>
         <View style={styles.petPhotoSlot}>
-          <Text style={styles.petPhotoSlotText}>
-            {avatarLabel(selectedPet?.name ?? "펫")}
-          </Text>
+          {selectedPet?.photoUrl ? (
+            <Image source={{ uri: selectedPet.photoUrl }} style={styles.petPhotoSlotImage} />
+          ) : (
+            <Text style={styles.petPhotoSlotText}>
+              {avatarLabel(selectedPet?.name ?? "펫")}
+            </Text>
+          )}
         </View>
       </View>
 
@@ -2961,6 +3201,8 @@ function PetManager({
   formExpanded,
   loading,
   message,
+  onPickPhoto,
+  onRemovePhoto,
   pets,
   selectedPetId,
   setDraft,
@@ -2975,6 +3217,8 @@ function PetManager({
   formExpanded: boolean;
   loading: boolean;
   message: string;
+  onPickPhoto: () => Promise<void>;
+  onRemovePhoto: () => void;
   pets: PetProfile[];
   selectedPetId?: string;
   setDraft: (draft: PetDraft) => void;
@@ -3020,9 +3264,16 @@ function PetManager({
                 style={styles.petSelectArea}
               >
                 <View style={styles.petAvatar}>
-                  <Text style={styles.petAvatarText}>
-                    {avatarLabel(pet.name)}
-                  </Text>
+                  {pet.photoUrl ? (
+                    <Image
+                      source={{ uri: pet.photoUrl }}
+                      style={styles.petAvatarImage}
+                    />
+                  ) : (
+                    <Text style={styles.petAvatarText}>
+                      {avatarLabel(pet.name)}
+                    </Text>
+                  )}
                 </View>
                 <View style={styles.petListText}>
                   <Text style={styles.petName}>{pet.name}</Text>
@@ -3064,6 +3315,8 @@ function PetManager({
           draft={draft}
           editing={Boolean(editingPetId)}
           loading={loading}
+          onPickPhoto={onPickPhoto}
+          onRemovePhoto={onRemovePhoto}
           setDraft={setDraft}
           onCancel={pets.length ? onCancelForm : undefined}
           onSave={onSave}
@@ -3078,6 +3331,8 @@ function PetForm({
   draft,
   editing,
   loading,
+  onPickPhoto,
+  onRemovePhoto,
   setDraft,
   onCancel,
   onSave,
@@ -3085,6 +3340,8 @@ function PetForm({
   draft: PetDraft;
   editing: boolean;
   loading: boolean;
+  onPickPhoto: () => Promise<void>;
+  onRemovePhoto: () => void;
   setDraft: (draft: PetDraft) => void;
   onCancel?: () => void;
   onSave: () => Promise<void>;
@@ -3116,6 +3373,33 @@ function PetForm({
             <Text style={styles.formCloseButtonText}>접기</Text>
           </TouchableOpacity>
         ) : null}
+      </View>
+      <View style={styles.petPhotoEditor}>
+        <View style={styles.petPhotoPreview}>
+          {draft.photoUrl ? (
+            <Image source={{ uri: draft.photoUrl }} style={styles.petPhotoPreviewImage} />
+          ) : (
+            <Text style={styles.petPhotoPreviewText}>
+              {draft.name ? avatarLabel(draft.name) : "펫"}
+            </Text>
+          )}
+        </View>
+        <View style={styles.petPhotoCopy}>
+          <Text style={styles.petPhotoTitle}>프로필 사진</Text>
+          <Text style={styles.petPhotoText}>
+            선택 사항이에요. 홈에서 아이를 더 빨리 알아볼 수 있어요.
+          </Text>
+          <View style={styles.petPhotoActions}>
+            <TouchableOpacity activeOpacity={0.85} onPress={onPickPhoto} style={styles.photoButton}>
+              <Text style={styles.photoButtonText}>사진 선택</Text>
+            </TouchableOpacity>
+            {draft.photoUrl || draft.photoPath ? (
+              <TouchableOpacity activeOpacity={0.85} onPress={onRemovePhoto}>
+                <Text style={styles.photoRemoveText}>사진 지우기</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
       </View>
       <FieldLabel label="이름" />
       <TextInput
@@ -5035,6 +5319,7 @@ const styles = StyleSheet.create({
   petPhotoSlot: {
     width: 72,
     height: 72,
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
@@ -5048,6 +5333,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: -0.6,
     textAlign: "center",
+  },
+  petPhotoSlotImage: {
+    width: "100%",
+    height: "100%",
   },
   homeGrid: {
     gap: 14,
@@ -5704,10 +5993,20 @@ const styles = StyleSheet.create({
   petAvatar: {
     width: 38,
     height: 38,
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 19,
     backgroundColor: colors.greenSoft,
+  },
+  petAvatarImage: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
   },
   petAvatarText: {
     color: colors.green,
@@ -5781,6 +6080,78 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
     marginTop: 12,
+  },
+  petPhotoEditor: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: "#fbfefd",
+    padding: 12,
+  },
+  petPhotoPreview: {
+    width: 72,
+    height: 72,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.78)",
+    borderRadius: 24,
+    backgroundColor: "#fff4d6",
+  },
+  petPhotoPreviewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  petPhotoPreviewText: {
+    color: colors.green,
+    fontSize: 20,
+    fontWeight: "900",
+    letterSpacing: -0.6,
+  },
+  petPhotoCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  petPhotoTitle: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  petPhotoText: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  petPhotoActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 9,
+  },
+  photoButton: {
+    borderRadius: 999,
+    backgroundColor: "#edf5f0",
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  photoButtonText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  photoRemoveText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
   },
   formTitle: {
     flex: 1,

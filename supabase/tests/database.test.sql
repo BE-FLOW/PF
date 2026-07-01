@@ -1,6 +1,6 @@
 begin;
 
-select plan(70);
+select plan(71);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -72,6 +72,7 @@ select is(
   4,
   'pets has owner-only CRUD policies'
 );
+select has_column('public', 'pets', 'photo_path', 'pet profile photo path exists');
 select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'episodes'),
   4,

@@ -273,6 +273,7 @@ p {
   background: #f9fcfa;
 }
 .pet-profile-avatar {
+  overflow: hidden;
   width: 38px;
   height: 38px;
   border-radius: 13px;
@@ -284,6 +285,17 @@ p {
   font-weight: 900;
   letter-spacing: -0.6px;
   white-space: nowrap;
+}
+.pet-profile-avatar.has-photo {
+  background: #fff8df;
+}
+.pet-profile-avatar img,
+.profile-photo-preview img,
+.hero-pet-photo {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 .pet-profile-copy {
   min-width: 0;
@@ -335,6 +347,7 @@ p {
 .hero-pet-photo-slot {
   position: relative;
   z-index: 2;
+  overflow: hidden;
   justify-self: center;
   width: clamp(76px, 15vw, 88px);
   aspect-ratio: 1;
@@ -357,6 +370,9 @@ p {
   font-size: clamp(18px, 4vw, 24px);
   font-weight: 900;
   letter-spacing: -0.7px;
+}
+.hero-pet-photo-slot.has-photo {
+  background: #fff8df;
 }
 .hero-card h2 {
   margin: 0;
@@ -1250,6 +1266,66 @@ p {
 }
 .profile-panel {
   padding-top: 8px;
+}
+.profile-photo-editor {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 0 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fbfefd;
+}
+.profile-photo-preview {
+  overflow: hidden;
+  width: 72px;
+  height: 72px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--mint-dark);
+  background:
+    radial-gradient(circle at 60% 32%, rgba(255, 255, 255, 0.54), transparent 3.1rem),
+    linear-gradient(145deg, rgba(255, 250, 230, 0.74), rgba(246, 177, 84, 0.3));
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.7px;
+}
+.profile-photo-preview.has-photo {
+  background: #fff8df;
+}
+.profile-photo-copy {
+  min-width: 0;
+}
+.profile-photo-copy strong {
+  display: block;
+  font-size: 14px;
+}
+.profile-photo-copy p {
+  margin: 4px 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.profile-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.photo-file-button {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+.photo-file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .optional-section {
   background: #fafcfb;

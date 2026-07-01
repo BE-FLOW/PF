@@ -25,6 +25,8 @@ export interface PetProfile {
   birthDate: string;
   sex: PetSex;
   weight: string;
+  photoPath?: string;
+  photoUrl?: string;
 }
 
 export interface HealthCheckInput {
@@ -273,8 +275,10 @@ export const riskLabels: Record<RiskLevel, string> = {
 };
 
 export const reportMediaBucket = "petflow-report-media";
+export const petPhotoBucket = "petflow-pet-photos";
 export const maxReportMediaFiles = 4;
 export const maxReportMediaSizeBytes = 50 * 1024 * 1024;
+export const maxPetPhotoSizeBytes = 5 * 1024 * 1024;
 export const allowedReportMediaMimeTypes = [
   "image/jpeg",
   "image/png",
@@ -285,10 +289,22 @@ export const allowedReportMediaMimeTypes = [
   "video/quicktime",
   "video/webm",
 ] as const;
+export const allowedPetPhotoMimeTypes = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+] as const;
 
 const allowedReportMediaMimeTypeSet = new Set<string>(
   allowedReportMediaMimeTypes,
 );
+const allowedPetPhotoMimeTypeSet = new Set<string>(allowedPetPhotoMimeTypes);
+
+export function isAllowedPetPhotoMimeType(mimeType: string) {
+  return allowedPetPhotoMimeTypeSet.has(mimeType);
+}
 
 export function reportMediaKindFromMimeType(
   mimeType: string,
@@ -303,6 +319,11 @@ export function reportMediaExtensionFromMimeType(mimeType: string) {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "video/quicktime") return "mov";
   return mimeType.split("/")[1]?.replace(/[^a-z0-9]/g, "") || "bin";
+}
+
+export function petPhotoExtensionFromMimeType(mimeType: string) {
+  if (mimeType === "image/jpeg") return "jpg";
+  return mimeType.split("/")[1]?.replace(/[^a-z0-9]/g, "") || "jpg";
 }
 
 export function formatFileSize(bytes: number) {

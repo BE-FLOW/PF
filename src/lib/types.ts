@@ -29,6 +29,8 @@ export interface PetProfile {
   birthDate: string;
   sex: PetSex;
   weight: string;
+  photoPath?: string;
+  photoUrl?: string;
 }
 
 export interface TesterProfile {

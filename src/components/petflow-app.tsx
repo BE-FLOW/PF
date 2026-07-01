@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import {
   useCallback,
   useEffect,
@@ -31,6 +33,13 @@ import {
   reportMediaExtensionFromMimeType,
   reportMediaKindFromMimeType,
 } from "@/lib/report-media";
+import {
+  isAllowedPetPhotoMimeType,
+  maxPetPhotoSizeBytes,
+  petPhotoAccept,
+  petPhotoBucket,
+  petPhotoExtensionFromMimeType,
+} from "@/lib/pet-photo";
 import { testerConsentVersion } from "@/lib/privacy";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -76,6 +85,11 @@ interface PendingMediaFile {
   previewUrl: string;
 }
 
+interface PetPhotoChange {
+  file: File | null;
+  remove: boolean;
+}
+
 const views: View[] = [
   "home",
   "profile",
@@ -97,6 +111,8 @@ const initialProfile: PetProfile = {
   birthDate: "",
   sex: "unknown",
   weight: "",
+  photoPath: "",
+  photoUrl: "",
 };
 
 const initialInput = profileToHealthInput(initialProfile);
@@ -199,6 +215,44 @@ function avatarLabel(value: string, fallback = "펫") {
   return Array.from(value.trim() || fallback).slice(0, 2).join("");
 }
 
+function PetProfileAvatar({
+  className = "pet-profile-avatar",
+  iconSize = 18,
+  pet,
+}: {
+  className?: string;
+  iconSize?: number;
+  pet: Pick<PetProfile, "name" | "photoUrl">;
+}) {
+  if (pet.photoUrl) {
+    return (
+      <span className={`${className} has-photo`}>
+        <img src={pet.photoUrl} alt={`${pet.name || "반려동물"} 사진`} />
+      </span>
+    );
+  }
+
+  return (
+    <span className={className}>
+      {pet.name ? avatarLabel(pet.name) : <Icon name="paw" size={iconSize} />}
+    </span>
+  );
+}
+
+function HeroPetPhoto({ pet }: { pet: PetProfile }) {
+  if (pet.photoUrl) {
+    return (
+      <img
+        src={pet.photoUrl}
+        alt={`${pet.name || "반려동물"} 사진`}
+        className="hero-pet-photo"
+      />
+    );
+  }
+
+  return <span>{pet.name ? avatarLabel(pet.name) : <Icon name="paw" size={24} />}</span>;
+}
+
 function followUpDate(startedAt: string, day: FollowUpDay) {
   const date = new Date(startedAt);
   date.setDate(date.getDate() + day);
@@ -261,6 +315,43 @@ function mediaExtension(file: File) {
     .slice(0, 8);
   if (extensionFromName) return extensionFromName;
   return reportMediaExtensionFromMimeType(file.type);
+}
+
+function petPhotoExtension(file: File) {
+  const extensionFromName = file.name
+    .split(".")
+    .pop()
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 8);
+  if (extensionFromName && ["jpg", "jpeg", "png", "webp", "heic", "heif"].includes(extensionFromName)) {
+    return extensionFromName === "jpeg" ? "jpg" : extensionFromName;
+  }
+  return petPhotoExtensionFromMimeType(file.type);
+}
+
+async function createPetPhotoSignedUrl(
+  supabase: NonNullable<ReturnType<typeof getSupabaseBrowserClient>>,
+  photoPath?: string | null,
+) {
+  if (!photoPath) return "";
+  const { data, error } = await supabase.storage
+    .from(petPhotoBucket)
+    .createSignedUrl(photoPath, 60 * 60);
+  if (error) return "";
+  return data.signedUrl ?? "";
+}
+
+function isMissingPetPhotoColumnError(error: unknown) {
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as { message?: unknown }).message)
+      : "";
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+  return code === "42703" || message.includes("photo_path");
 }
 
 function MediaThumbnail({
@@ -582,9 +673,7 @@ function HomeView({
         className={`pet-profile-strip ${hasProfile ? "" : "empty"}`}
         onClick={onProfile}
       >
-        <span className="pet-profile-avatar">
-          {hasProfile ? avatarLabel(profile.name) : <Icon name="paw" size={18} />}
-        </span>
+        <PetProfileAvatar pet={profile} />
         <span className="pet-profile-copy">
           <strong>
             {hasProfile ? profile.name : "반려동물을 먼저 알려주세요"}
@@ -614,11 +703,9 @@ function HomeView({
         </div>
         <div
           aria-label={hasProfile ? `${profile.name} 사진 자리` : "반려동물 사진 자리"}
-          className="hero-pet-photo-slot"
+          className={`hero-pet-photo-slot ${profile.photoUrl ? "has-photo" : ""}`}
         >
-          <span>
-            {hasProfile ? avatarLabel(profile.name) : <Icon name="paw" size={24} />}
-          </span>
+          <HeroPetPhoto pet={profile} />
         </div>
       </section>
       <section className={`home-score-card ${recent?.result.riskLevel ?? "empty"}`}>
@@ -767,11 +854,14 @@ function ProfileView({
 }: {
   profile: PetProfile;
   onCancel: () => void;
-  onSave: (profile: PetProfile) => Promise<string | null>;
+  onSave: (profile: PetProfile, photo: PetPhotoChange) => Promise<string | null>;
 }) {
   const [draft, setDraft] = useState(profile);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState(profile.photoUrl ?? "");
+  const [removePhoto, setRemovePhoto] = useState(false);
   const [breedPickerOpen, setBreedPickerOpen] = useState(false);
   const [highlightedBreedIndex, setHighlightedBreedIndex] = useState(0);
   const maxDate = new Date().toISOString().slice(0, 10);
@@ -785,6 +875,43 @@ function ProfileView({
     Math.max(visibleBreedOptions.length - 1, 0),
   );
   const selectedBreed = draft.breed.trim();
+
+  useEffect(() => {
+    return () => {
+      if (photoPreviewUrl.startsWith("blob:")) URL.revokeObjectURL(photoPreviewUrl);
+    };
+  }, [photoPreviewUrl]);
+
+  function setNextPhotoPreview(nextUrl: string) {
+    setPhotoPreviewUrl((current) => {
+      if (current.startsWith("blob:")) URL.revokeObjectURL(current);
+      return nextUrl;
+    });
+  }
+
+  function changePhoto(fileList: FileList | null) {
+    const file = fileList?.[0];
+    if (!file) return;
+    if (!isAllowedPetPhotoMimeType(file.type)) {
+      setError("프로필 사진은 JPG, PNG, WEBP, HEIC 이미지만 사용할 수 있어요.");
+      return;
+    }
+    if (file.size > maxPetPhotoSizeBytes) {
+      setError("프로필 사진은 5MB 이하로 올려 주세요.");
+      return;
+    }
+    setError("");
+    setPhotoFile(file);
+    setRemovePhoto(false);
+    setNextPhotoPreview(URL.createObjectURL(file));
+  }
+
+  function clearPhoto() {
+    setPhotoFile(null);
+    setRemovePhoto(Boolean(draft.photoPath));
+    setNextPhotoPreview("");
+    setDraft((current) => ({ ...current, photoUrl: "", photoPath: current.photoPath }));
+  }
 
   function chooseBreed(breed: string) {
     setDraft((current) => ({ ...current, breed }));
@@ -848,6 +975,11 @@ function ProfileView({
       ...draft,
       name: draft.name.trim(),
       breed: draft.breed.trim(),
+      photoUrl: removePhoto ? "" : draft.photoUrl,
+      photoPath: removePhoto ? "" : draft.photoPath,
+    }, {
+      file: photoFile,
+      remove: removePhoto,
     });
     setSaving(false);
     if (saveError) setError(saveError);
@@ -872,6 +1004,34 @@ function ProfileView({
             <div>
               <h2>이름과 종류</h2>
               <p>이 두 가지만 입력해도 시작할 수 있어요.</p>
+            </div>
+          </div>
+          <div className="profile-photo-editor">
+            <div className={`profile-photo-preview ${photoPreviewUrl ? "has-photo" : ""}`}>
+              {photoPreviewUrl ? (
+                <img src={photoPreviewUrl} alt={`${draft.name || "반려동물"} 프로필 사진`} />
+              ) : (
+                <span>{draft.name ? avatarLabel(draft.name) : <Icon name="paw" size={24} />}</span>
+              )}
+            </div>
+            <div className="profile-photo-copy">
+              <strong>프로필 사진</strong>
+              <p>선택 사항이에요. 넣으면 홈에서 아이를 더 빨리 알아볼 수 있어요.</p>
+              <div className="profile-photo-actions">
+                <label className="secondary-button compact photo-file-button">
+                  사진 선택
+                  <input
+                    type="file"
+                    accept={petPhotoAccept}
+                    onChange={(event) => changePhoto(event.target.files)}
+                  />
+                </label>
+                {(photoPreviewUrl || draft.photoPath) && (
+                  <button type="button" className="text-button" onClick={clearPhoto}>
+                    사진 지우기
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <div className="form-grid">
@@ -1089,6 +1249,7 @@ function ProfileView({
 
 function CheckView({
   input,
+  profile,
   setInput,
   isEditing,
   mediaFiles,
@@ -1103,6 +1264,7 @@ function CheckView({
   error,
 }: {
   input: HealthCheckInput;
+  profile: PetProfile;
   setInput: (value: HealthCheckInput) => void;
   isEditing: boolean;
   mediaFiles: PendingMediaFile[];
@@ -1215,9 +1377,10 @@ function CheckView({
       </div>
       <div className="form-panel">
         <button className="check-profile-summary" onClick={onEditProfile}>
-          <span className="pet-profile-avatar">
-            {input.petName ? avatarLabel(input.petName) : <Icon name="paw" size={17} />}
-          </span>
+          <PetProfileAvatar
+            iconSize={17}
+            pet={{ name: input.petName, photoUrl: profile.photoUrl }}
+          />
           <span>
             <strong>{input.petName}</strong>
             <small>{profileDetails || "기본 정보"}</small>
@@ -3078,25 +3241,52 @@ export function PetFlowApp() {
         setAuthReady(true);
         return;
       }
-      const [{ data }, { data: tester }] = await Promise.all([
+      const [petResult, { data: tester }] = await Promise.all([
         supabase
           .from("pets")
-          .select("id,name,species,breed,birth_date,sex,weight,created_at")
+          .select("id,name,species,breed,birth_date,sex,weight,photo_path,created_at")
           .order("created_at", { ascending: true }),
         supabase
           .from("tester_profiles")
           .select("nickname,phone,consent_version,consented_at,phone_consented_at")
           .maybeSingle(),
       ]);
-      const loadedPets: PetProfile[] = (data ?? []).map((pet) => ({
-        id: pet.id,
-        name: pet.name,
-        species: pet.species,
-        breed: pet.breed ?? "",
-        birthDate: pet.birth_date ?? "",
-        sex: pet.sex,
-        weight: pet.weight ?? "",
-      }));
+      let petRows: Array<{
+        id: string;
+        name: string;
+        species: PetProfile["species"];
+        breed: string | null;
+        birth_date: string | null;
+        sex: PetProfile["sex"];
+        weight: string | null;
+        photo_path?: string | null;
+      }> = petResult.data ?? [];
+      let photoColumnReady = !petResult.error;
+      if (isMissingPetPhotoColumnError(petResult.error)) {
+        const { data: fallbackPets } = await supabase
+          .from("pets")
+          .select("id,name,species,breed,birth_date,sex,weight,created_at")
+          .order("created_at", { ascending: true });
+        petRows = fallbackPets ?? [];
+        photoColumnReady = false;
+      }
+      const loadedPets: PetProfile[] = await Promise.all(
+        petRows.map(async (pet) => {
+          const photoPath =
+            photoColumnReady && "photo_path" in pet ? (pet.photo_path ?? "") : "";
+          return {
+            id: pet.id,
+            name: pet.name,
+            species: pet.species,
+            breed: pet.breed ?? "",
+            birthDate: pet.birth_date ?? "",
+            sex: pet.sex,
+            weight: pet.weight ?? "",
+            photoPath,
+            photoUrl: await createPetPhotoSignedUrl(supabase, photoPath),
+          };
+        }),
+      );
       setPets(loadedPets);
       setTesterProfile(
         tester
@@ -3259,7 +3449,10 @@ export function PetFlowApp() {
     setEditingProfile(target);
     setView("profile");
   }
-  async function saveProfile(nextProfile: PetProfile): Promise<string | null> {
+  async function saveProfile(
+    nextProfile: PetProfile,
+    photo: PetPhotoChange,
+  ): Promise<string | null> {
     const supabase = getSupabaseBrowserClient();
     let savedProfile = nextProfile;
     if (user && supabase) {
@@ -3274,13 +3467,76 @@ export function PetFlowApp() {
         weight: nextProfile.weight || null,
         updated_at: new Date().toISOString(),
       };
-      const { data, error: saveError } = await supabase
+      const saveResult = await supabase
         .from("pets")
         .upsert(payload)
-        .select("id")
+        .select("id,photo_path")
         .single();
+      let data: { id: string; photo_path?: string | null } | null = saveResult.data;
+      let photoColumnReady = !saveResult.error;
+      if (isMissingPetPhotoColumnError(saveResult.error)) {
+        const fallbackResult = await supabase
+          .from("pets")
+          .upsert(payload)
+          .select("id")
+          .single();
+        data = fallbackResult.data;
+        photoColumnReady = false;
+        if (fallbackResult.error) {
+          return "저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
+        }
+      }
+      const saveError = saveResult.error && !isMissingPetPhotoColumnError(saveResult.error)
+        ? saveResult.error
+        : null;
       if (saveError || !data) return "저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
-      savedProfile = { ...nextProfile, id: data.id };
+      let photoPath =
+        photoColumnReady && "photo_path" in data
+          ? (data.photo_path ?? nextProfile.photoPath ?? "")
+          : "";
+      let photoUrl = nextProfile.photoUrl ?? "";
+      const previousPhotoPath = photoPath;
+
+      if (photoColumnReady && photo.remove && previousPhotoPath) {
+        const { error: photoUpdateError } = await supabase
+          .from("pets")
+          .update({ photo_path: null, updated_at: new Date().toISOString() })
+          .eq("id", data.id);
+        if (photoUpdateError) return "사진을 지우지 못했어요. 잠시 후 다시 시도해 주세요.";
+        await supabase.storage.from(petPhotoBucket).remove([previousPhotoPath]);
+        photoPath = "";
+        photoUrl = "";
+      }
+
+      if (photoColumnReady && photo.file) {
+        const nextPhotoPath = `${user.id}/${data.id}/${Date.now()}-${crypto.randomUUID()}.${petPhotoExtension(photo.file)}`;
+        const { error: uploadError } = await supabase.storage
+          .from(petPhotoBucket)
+          .upload(nextPhotoPath, photo.file, {
+            cacheControl: "3600",
+            contentType: photo.file.type,
+            upsert: false,
+          });
+        if (uploadError) return "사진을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
+
+        const { error: photoUpdateError } = await supabase
+          .from("pets")
+          .update({ photo_path: nextPhotoPath, updated_at: new Date().toISOString() })
+          .eq("id", data.id);
+        if (photoUpdateError) {
+          await supabase.storage.from(petPhotoBucket).remove([nextPhotoPath]);
+          return "사진을 연결하지 못했어요. 잠시 후 다시 시도해 주세요.";
+        }
+        if (previousPhotoPath) {
+          await supabase.storage.from(petPhotoBucket).remove([previousPhotoPath]);
+        }
+        photoPath = nextPhotoPath;
+        photoUrl = await createPetPhotoSignedUrl(supabase, nextPhotoPath);
+      } else if (photoColumnReady && photoPath && !photo.remove) {
+        photoUrl = await createPetPhotoSignedUrl(supabase, photoPath);
+      }
+
+      savedProfile = { ...nextProfile, id: data.id, photoPath, photoUrl };
       setPets((current) => {
         const exists = current.some((pet) => pet.id === savedProfile.id);
         return exists
@@ -3975,6 +4231,7 @@ export function PetFlowApp() {
         )}{" "}
         {currentView === "profile" && (
           <ProfileView
+            key={editingProfile.id ?? "new-pet"}
             profile={editingProfile}
             onCancel={() => setView(profileReturnView)}
             onSave={saveProfile}
@@ -4005,6 +4262,7 @@ export function PetFlowApp() {
         {currentView === "check" && (
           <CheckView
             input={input}
+            profile={profile}
             setInput={setInput}
             isEditing={Boolean(editingRecord)}
             mediaFiles={pendingMedia}
