@@ -601,7 +601,7 @@ function HomeView({
         <div className="hero-content">
           <h2>
             흐름을 남기면
-            <br />더 빠르게 알 수 있어요
+            <br />빠르게 알 수 있어요
           </h2>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
@@ -611,6 +611,14 @@ function HomeView({
                 : "오늘 기록하기"
               : "등록하고 시작하기"}
           </button>
+        </div>
+        <div
+          aria-label={hasProfile ? `${profile.name} 사진 자리` : "반려동물 사진 자리"}
+          className="hero-pet-photo-slot"
+        >
+          <span>
+            {hasProfile ? avatarLabel(profile.name) : <Icon name="paw" size={24} />}
+          </span>
         </div>
       </section>
       <section className={`home-score-card ${recent?.result.riskLevel ?? "empty"}`}>

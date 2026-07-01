@@ -321,7 +321,8 @@ p {
   box-shadow: var(--shadow);
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
+  gap: 18px;
 }
 .hero-card::after {
   content: "";
@@ -338,6 +339,33 @@ p {
   position: relative;
   z-index: 2;
   max-width: 460px;
+}
+.hero-pet-photo-slot {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  width: clamp(78px, 18vw, 112px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 64% 28%, rgba(255, 255, 255, 0.62), transparent 3.5rem),
+    linear-gradient(145deg, rgba(255, 250, 230, 0.76), rgba(246, 177, 84, 0.28));
+  box-shadow: 0 16px 34px rgba(103, 84, 45, 0.12);
+}
+.hero-pet-photo-slot span {
+  width: 48%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--mint-dark);
+  font-size: clamp(18px, 4vw, 24px);
+  font-weight: 900;
+  letter-spacing: -0.7px;
 }
 .hero-card h2 {
   margin: 0;
@@ -2903,10 +2931,14 @@ p {
     padding: 20px 22px;
   }
   .hero-content {
-    max-width: 100%;
+    max-width: calc(100% - 108px);
   }
   .hero-card h2 {
     max-width: 238px;
+  }
+  .hero-pet-photo-slot {
+    width: 86px;
+    border-radius: 24px;
   }
   .hero-card::after {
     inset: 18px 18px 18px auto;
@@ -3027,6 +3059,10 @@ p {
   }
   .hero-card h2 {
     font-size: 22px;
+  }
+  .hero-pet-photo-slot {
+    width: 72px;
+    border-radius: 22px;
   }
   .hero-card::after {
     width: 88px;
