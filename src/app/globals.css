@@ -312,7 +312,7 @@ p {
   overflow: hidden;
   isolation: isolate;
   min-height: 148px;
-  padding: 22px 26px;
+  padding: 22px 24px;
   border-radius: 28px;
   background:
     radial-gradient(circle at 88% 52%, rgba(246, 177, 84, 0.2), transparent 9rem),
@@ -338,13 +338,15 @@ p {
 .hero-content {
   position: relative;
   z-index: 2;
+  flex: 1 1 auto;
   max-width: 460px;
+  min-width: 0;
 }
 .hero-pet-photo-slot {
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
-  width: clamp(78px, 18vw, 112px);
+  width: clamp(76px, 15vw, 94px);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
@@ -485,11 +487,11 @@ p {
   --score-bg: #1f5b55;
   --score-accent: #78d9c8;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 118px;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
   margin-top: 22px;
-  padding: 24px;
+  padding: 22px;
   border: 1px solid #cfe3d9;
   border-radius: 24px;
   background: linear-gradient(135deg, #f7fcf9, #edf8f2);
@@ -523,14 +525,16 @@ p {
   line-height: 1.7;
 }
 .home-score-badge {
-  width: 136px;
-  min-height: 104px;
+  justify-self: center;
+  align-self: center;
+  width: 112px;
+  min-height: 92px;
   border-radius: 24px;
-  padding: 15px 16px 18px;
+  padding: 14px 15px 17px;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: center;
   gap: 3px;
   position: relative;
   overflow: hidden;
@@ -543,9 +547,9 @@ p {
 .home-score-badge::before {
   content: "";
   position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 14px;
+  left: 15px;
+  right: 15px;
+  bottom: 13px;
   height: 6px;
   border-radius: 999px;
   background: linear-gradient(
@@ -561,7 +565,7 @@ p {
 }
 .home-score-badge strong {
   display: block;
-  font-size: 42px;
+  font-size: 39px;
   line-height: 1;
   letter-spacing: -1px;
 }
@@ -2931,13 +2935,13 @@ p {
     padding: 20px 22px;
   }
   .hero-content {
-    max-width: calc(100% - 108px);
+    max-width: calc(100% - 96px);
   }
   .hero-card h2 {
     max-width: 238px;
   }
   .hero-pet-photo-slot {
-    width: 86px;
+    width: 78px;
     border-radius: 24px;
   }
   .hero-card::after {
@@ -2949,17 +2953,17 @@ p {
     grid-template-columns: 1fr;
   }
   .home-score-card {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) 104px;
+    gap: 14px;
     padding: 20px;
     align-items: center;
   }
   .home-score-badge {
-    width: 104px;
+    width: 96px;
     min-height: 82px;
     padding: 12px 13px 16px;
     border-radius: 20px;
-    justify-self: end;
+    justify-self: center;
   }
   .home-score-badge::before {
     left: 13px;
@@ -3061,7 +3065,7 @@ p {
     font-size: 22px;
   }
   .hero-pet-photo-slot {
-    width: 72px;
+    width: 68px;
     border-radius: 22px;
   }
   .hero-card::after {
