@@ -249,29 +249,6 @@ p {
 .narrow-wrap {
   max-width: 820px;
 }
-.pet-profile-strip {
-  width: 100%;
-  margin: 0 0 18px;
-  padding: 13px 15px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.86);
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 12px;
-  cursor: pointer;
-  text-align: left;
-  box-shadow: 0 7px 22px rgba(54, 87, 75, 0.04);
-}
-.pet-profile-strip:hover {
-  border-color: #b8d7c9;
-  background: #fff;
-}
-.pet-profile-strip.empty {
-  border-style: dashed;
-  background: #f9fcfa;
-}
 .pet-profile-avatar {
   overflow: hidden;
   width: 38px;
@@ -297,34 +274,12 @@ p {
   display: block;
   object-fit: cover;
 }
-.pet-profile-copy {
-  min-width: 0;
-}
-.pet-profile-copy strong {
-  display: block;
-  font-size: 13px;
-}
-.pet-profile-copy small {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  color: #83928d;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pet-profile-edit {
-  color: var(--mint-dark);
-  font-size: 11px;
-  font-weight: 900;
-}
-
 .hero-card {
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  min-height: 148px;
-  padding: 22px;
+  min-height: 172px;
+  padding: 18px 20px;
   border-radius: 28px;
   background:
     radial-gradient(circle at 88% 52%, rgba(246, 177, 84, 0.2), transparent 9rem),
@@ -344,6 +299,56 @@ p {
   z-index: 2;
   min-width: 0;
 }
+.hero-profile-chip {
+  max-width: min(100%, 360px);
+  min-height: 38px;
+  margin: 0 0 15px;
+  padding: 6px 7px 6px 12px;
+  border: 1px solid rgba(207, 227, 217, 0.92);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  box-shadow: 0 8px 18px rgba(52, 95, 78, 0.06);
+}
+.hero-profile-chip.empty {
+  border-style: dashed;
+}
+.hero-profile-copy {
+  min-width: 0;
+}
+.hero-profile-copy strong {
+  display: block;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hero-profile-copy small {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #72847e;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hero-profile-action {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: var(--mint-dark);
+  background: var(--mint-soft);
+  font-size: 10px;
+  font-weight: 900;
+}
 .hero-pet-photo-slot {
   position: relative;
   z-index: 2;
@@ -355,10 +360,13 @@ p {
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 24px;
+  padding: 0;
   background:
     radial-gradient(circle at 60% 32%, rgba(255, 255, 255, 0.54), transparent 3.2rem),
     linear-gradient(145deg, rgba(255, 250, 230, 0.72), rgba(246, 177, 84, 0.3));
   box-shadow: 0 14px 28px rgba(103, 84, 45, 0.1);
+  cursor: pointer;
+  font: inherit;
 }
 .hero-pet-photo-slot span {
   width: 100%;
@@ -2996,16 +3004,20 @@ p {
     display: none;
   }
   .hero-card {
-    min-height: 148px;
+    min-height: 166px;
     grid-template-columns: minmax(0, 1fr) 90px;
     gap: 10px;
-    padding: 20px;
+    padding: 18px;
   }
   .hero-content {
     max-width: none;
   }
   .hero-card h2 {
     max-width: 238px;
+  }
+  .hero-profile-chip {
+    max-width: 100%;
+    margin-bottom: 13px;
   }
   .hero-pet-photo-slot {
     width: 76px;
@@ -3096,12 +3108,6 @@ p {
   .form-footer button {
     width: 100%;
   }
-  .pet-profile-strip {
-    padding: 12px;
-  }
-  .pet-profile-copy small {
-    max-width: 220px;
-  }
   .optional-section {
     margin-inline: -6px;
     padding-inline: 6px;
@@ -3134,6 +3140,9 @@ p {
   }
   .hero-card {
     grid-template-columns: minmax(0, 1fr) 78px;
+  }
+  .hero-profile-copy small {
+    max-width: 150px;
   }
   .hero-pet-photo-slot {
     width: 66px;

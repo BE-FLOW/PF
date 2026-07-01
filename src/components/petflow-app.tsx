@@ -669,25 +669,26 @@ function HomeView({
           </button>
         </div>
       </header>
-      <button
-        className={`pet-profile-strip ${hasProfile ? "" : "empty"}`}
-        onClick={onProfile}
-      >
-        <PetProfileAvatar pet={profile} />
-        <span className="pet-profile-copy">
-          <strong>
-            {hasProfile ? profile.name : "반려동물을 먼저 알려주세요"}
-          </strong>
-          <small>
-            {hasProfile
-              ? profileDetails.join(" · ")
-              : "한 번만 등록하면 다음부터 바로 기록할 수 있어요."}
-          </small>
-        </span>
-        <span className="pet-profile-edit">{hasProfile ? "수정" : "등록"}</span>
-      </button>
       <section className="hero-card">
         <div className="hero-content">
+          <button
+            className={`hero-profile-chip ${hasProfile ? "" : "empty"}`}
+            onClick={onProfile}
+          >
+            <span className="hero-profile-copy">
+              <strong>
+                {hasProfile ? profile.name : "반려동물을 먼저 알려주세요"}
+              </strong>
+              <small>
+                {hasProfile
+                  ? profileDetails.join(" · ")
+                  : "한 번만 등록하면 바로 기록할 수 있어요."}
+              </small>
+            </span>
+            <span className="hero-profile-action">
+              {hasProfile ? "수정" : "등록"}
+            </span>
+          </button>
           <h2>
             흐름을 남기면
             <br />빠르게 알 수 있어요
@@ -701,12 +702,14 @@ function HomeView({
               : "등록하고 시작하기"}
           </button>
         </div>
-        <div
+        <button
+          type="button"
+          onClick={onProfile}
           aria-label={hasProfile ? `${profile.name} 사진 자리` : "반려동물 사진 자리"}
           className={`hero-pet-photo-slot ${profile.photoUrl ? "has-photo" : ""}`}
         >
           <HeroPetPhoto pet={profile} />
-        </div>
+        </button>
       </section>
       <section className={`home-score-card ${recent?.result.riskLevel ?? "empty"}`}>
         <div className="home-score-copy">

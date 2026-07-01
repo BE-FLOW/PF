@@ -2341,6 +2341,14 @@ export default function App() {
                       latestResult={latestResult}
                       pets={pets}
                       selectedPet={selectedPet}
+                      onEditPet={() => {
+                        if (selectedPet) {
+                          startEditingPet(selectedPet);
+                        } else {
+                          startNewPet();
+                        }
+                        setMainSection("record");
+                      }}
                       onGoRecord={startHealthRecord}
                       onGoReports={() => setMainSection("reports")}
                     />
@@ -2533,6 +2541,7 @@ function HomeDashboard({
   latestResult,
   pets,
   selectedPet,
+  onEditPet,
   onGoRecord,
   onGoReports,
 }: {
@@ -2541,6 +2550,7 @@ function HomeDashboard({
   latestResult: AnalysisResult | null;
   pets: PetProfile[];
   selectedPet?: PetProfile;
+  onEditPet: () => void;
   onGoRecord: () => void;
   onGoReports: () => void;
 }) {
@@ -2550,6 +2560,9 @@ function HomeDashboard({
   const scoreTone = getCheckScoreTone(checkScore);
   const riskLevel = latestResult?.riskLevel ?? latestRecord?.result.riskLevel;
   const latestAt = latestResult?.createdAt ?? latestRecord?.result.createdAt;
+  const petSummary = selectedPet
+    ? [speciesLabel(selectedPet.species), selectedPet.breed].filter(Boolean).join(" · ")
+    : "함께 볼 아이를 골라주세요";
 
   if (!pets.length) {
     return (
@@ -2568,7 +2581,21 @@ function HomeDashboard({
     <>
       <View style={styles.homePetCard}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardEyebrow}>PETFLOW</Text>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onEditPet}
+            style={styles.homePetIdentity}
+          >
+            <View style={styles.homePetIdentityText}>
+              <Text style={styles.homePetName}>
+                {selectedPet ? selectedPet.name : "반려동물 선택"}
+              </Text>
+              <Text style={styles.homePetMeta} numberOfLines={1}>
+                {petSummary || "정보를 조금 더 알려주세요"}
+              </Text>
+            </View>
+            <Text style={styles.homePetEdit}>{selectedPet ? "수정" : "등록"}</Text>
+          </TouchableOpacity>
           <Text style={styles.cardTitle}>
             흐름을 남기면 빠르게 알 수 있어요
           </Text>
@@ -5320,6 +5347,46 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.07,
     shadowRadius: 20,
     elevation: 3,
+  },
+  homePetIdentity: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#d8eadf",
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.78)",
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  homePetIdentityText: {
+    minWidth: 0,
+  },
+  homePetName: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  homePetMeta: {
+    marginTop: 2,
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  homePetEdit: {
+    flexShrink: 0,
+    overflow: "hidden",
+    borderRadius: 999,
+    color: colors.green,
+    backgroundColor: "#e6f6ee",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 10,
+    fontWeight: "900",
   },
   petPhotoSlot: {
     width: 72,
