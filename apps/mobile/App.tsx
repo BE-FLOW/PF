@@ -4892,7 +4892,7 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    padding: 24,
+    padding: 20,
     paddingTop: 40,
   },
   appBrand: {
@@ -5033,13 +5033,13 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   petPhotoSlot: {
-    width: 68,
-    height: 68,
+    width: 72,
+    height: 72,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.78)",
-    borderRadius: 22,
+    borderRadius: 24,
     backgroundColor: "#fff4d6",
   },
   petPhotoSlotText: {
@@ -5047,6 +5047,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "900",
     letterSpacing: -0.6,
+    textAlign: "center",
   },
   homeGrid: {
     gap: 14,
@@ -5089,7 +5090,7 @@ const styles = StyleSheet.create({
     lineHeight: 25,
   },
   homeScoreBadge: {
-    width: 92,
+    width: 90,
     minHeight: 82,
     alignItems: "center",
     justifyContent: "center",
