@@ -73,6 +73,12 @@ type View =
   | "episode-report"
   | "account";
 
+type ViewNavigationMode = "push" | "replace" | "none";
+type SetView = (
+  view: View,
+  options?: { history?: ViewNavigationMode },
+) => void;
+
 interface EpisodeReportSelection {
   episode?: PetEpisode;
   records: HistoryRecord[];
@@ -102,6 +108,17 @@ const views: View[] = [
 
 function isView(value: unknown): value is View {
   return typeof value === "string" && views.includes(value as View);
+}
+
+function hasObservationDraft(input: HealthCheckInput) {
+  return Boolean(
+    input.symptoms.length ||
+      input.redFlags.length ||
+      input.appetite !== "normal" ||
+      input.energy !== "normal" ||
+      input.duration !== "today" ||
+      input.note.trim(),
+  );
 }
 
 const initialProfile: PetProfile = {
@@ -540,7 +557,7 @@ function SideNav({
   onStart,
 }: {
   view: View;
-  setView: (view: View) => void;
+  setView: SetView;
   onStart: () => void;
 }) {
   const items: Array<{ id: View; label: string; icon: IconName }> = [
@@ -550,13 +567,17 @@ function SideNav({
   ];
   return (
     <aside className="desktop-sidebar">
-      <Brand onClick={() => setView("home")} />
+      <Brand onClick={() => setView("home", { history: "replace" })} />
       <nav className="side-nav">
         {items.map((item) => (
           <button
             key={item.id}
             className={`nav-item ${view === item.id || (["result", "episode-report"].includes(view) && item.id === "history") ? "active" : ""}`}
-            onClick={() => (item.id === "check" ? onStart() : setView(item.id))}
+            onClick={() =>
+              item.id === "check"
+                ? onStart()
+                : setView(item.id, { history: "replace" })
+            }
           >
             <Icon name={item.icon} size={19} />
             {item.label}
@@ -583,14 +604,14 @@ function MobileNav({
   onStart,
 }: {
   view: View;
-  setView: (view: View) => void;
+  setView: SetView;
   onStart: () => void;
 }) {
   return (
     <nav className="mobile-nav" aria-label="주요 메뉴">
       <button
         className={view === "home" ? "active" : ""}
-        onClick={() => setView("home")}
+        onClick={() => setView("home", { history: "replace" })}
       >
         <Icon name="home" size={20} />홈
       </button>
@@ -604,7 +625,7 @@ function MobileNav({
             ? "active"
             : ""
         }
-        onClick={() => setView("history")}
+        onClick={() => setView("history", { history: "replace" })}
       >
         <Icon name="history" size={20} />
         건강 흐름
@@ -3077,6 +3098,7 @@ function EpisodeReportView({
 
 export function PetFlowApp() {
   const [view, setViewState] = useState<View>("home");
+  const currentViewRef = useRef<View>("home");
   const applyingPopState = useRef(false);
   const [profile, setProfile] = useState<PetProfile>(initialProfile);
   const [editingProfile, setEditingProfile] = useState<PetProfile>(initialProfile);
@@ -3107,15 +3129,23 @@ export function PetFlowApp() {
   const [closingEpisodeId, setClosingEpisodeId] = useState<string>();
   const [episodeError, setEpisodeError] = useState("");
   const [error, setError] = useState("");
-  const setView = useCallback((nextView: View) => {
+  const setView = useCallback<SetView>((nextView, options) => {
+    const mode = options?.history ?? "push";
+    if (currentViewRef.current === nextView) return;
     if (
       typeof window !== "undefined" &&
       !applyingPopState.current &&
-      window.history.state?.petflowView !== nextView
+      mode !== "none"
     ) {
-      window.history.pushState({ petflowView: nextView }, "", window.location.href);
+      const state = { petflowView: nextView };
+      if (mode === "replace") {
+        window.history.replaceState(state, "", window.location.href);
+      } else if (window.history.state?.petflowView !== nextView) {
+        window.history.pushState(state, "", window.location.href);
+      }
     }
-    setViewState((current) => (current === nextView ? current : nextView));
+    currentViewRef.current = nextView;
+    setViewState(nextView);
   }, []);
   const currentView = useMemo(
     () =>
@@ -3126,10 +3156,28 @@ export function PetFlowApp() {
           : view,
     [selected, selectedEpisodeReport, view],
   );
+  const hasCheckDraft = useMemo(
+    () =>
+      currentView === "check" &&
+      (Boolean(editingRecord) ||
+        pendingMedia.length > 0 ||
+        hasObservationDraft(input)),
+    [currentView, editingRecord, input, pendingMedia.length],
+  );
 
   useEffect(() => {
     pendingMediaRef.current = pendingMedia;
   }, [pendingMedia]);
+
+  useEffect(() => {
+    if (!hasCheckDraft) return;
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasCheckDraft]);
 
   useEffect(
     () => () => {
@@ -3141,10 +3189,18 @@ export function PetFlowApp() {
   );
 
   useEffect(() => {
-    window.history.replaceState({ petflowView: "home" }, "", window.location.href);
+    if (isView(window.history.state?.petflowView)) {
+      currentViewRef.current = window.history.state.petflowView;
+    } else {
+      window.history.replaceState({ petflowView: "home" }, "", window.location.href);
+    }
     function handlePopState(event: PopStateEvent) {
       applyingPopState.current = true;
-      setViewState(isView(event.state?.petflowView) ? event.state.petflowView : "home");
+      const nextView = isView(event.state?.petflowView)
+        ? event.state.petflowView
+        : "home";
+      currentViewRef.current = nextView;
+      setViewState(nextView);
       window.requestAnimationFrame(() => {
         applyingPopState.current = false;
       });
@@ -3559,7 +3615,7 @@ export function PetFlowApp() {
         : nextInput,
     );
     setError("");
-    setView(profileReturnView);
+    setView(profileReturnView, { history: "replace" });
     return null;
   }
   async function handleAuth(
@@ -3707,7 +3763,7 @@ export function PetFlowApp() {
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
     removeLocalStorageItem("petflow-profile");
-    setView("home");
+    setView("home", { history: "replace" });
   }
   function startNew() {
     if (!profile.name.trim()) {
@@ -3777,7 +3833,7 @@ export function PetFlowApp() {
         );
         return records.length ? { ...current, records } : null;
       });
-      if (currentView === "result") setView("history");
+      if (currentView === "result") setView("history", { history: "replace" });
     } catch {
       window.alert("기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
@@ -3864,7 +3920,7 @@ export function PetFlowApp() {
         );
         setEditingRecord(null);
         clearPendingMedia();
-        setView("result");
+        setView("result", { history: "replace" });
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
@@ -3947,7 +4003,7 @@ export function PetFlowApp() {
         });
       }
       setSelected(record);
-      setView("result");
+      setView("result", { history: "replace" });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch {
       setError(
@@ -4201,8 +4257,13 @@ export function PetFlowApp() {
     <div className="app-shell">
       <SideNav view={currentView} setView={setView} onStart={startNew} />
       <header className="mobile-header">
-        <Brand small onClick={() => setView("home")} />
-        <button className="mobile-account" onClick={() => setView("account")}>내 계정</button>
+        <Brand small onClick={() => setView("home", { history: "replace" })} />
+        <button
+          className="mobile-account"
+          onClick={() => setView("account", { history: "replace" })}
+        >
+          내 계정
+        </button>
       </header>
       <main className="app-main">
         {currentView === "home" && (
@@ -4210,7 +4271,7 @@ export function PetFlowApp() {
             profile={profile}
             history={visibleHistory}
             onStart={startNew}
-            onHistory={() => setView("history")}
+            onHistory={() => setView("history", { history: "replace" })}
             onProfile={() => openProfile("home")}
             onSelectLatest={(record) => {
               setMediaUploadWarning("");
@@ -4226,7 +4287,7 @@ export function PetFlowApp() {
           <ProfileView
             key={editingProfile.id ?? "new-pet"}
             profile={editingProfile}
-            onCancel={() => setView(profileReturnView)}
+            onCancel={() => setView(profileReturnView, { history: "replace" })}
             onSave={saveProfile}
           />
         )}{" "}
@@ -4239,7 +4300,7 @@ export function PetFlowApp() {
             pets={pets}
             selectedPetId={selectedPetId}
             authReady={authReady}
-            onBack={() => setView("home")}
+            onBack={() => setView("home", { history: "replace" })}
             onAuth={handleAuth}
             onOAuth={handleOAuth}
             onLinkOAuth={handleLinkOAuth}
@@ -4249,7 +4310,10 @@ export function PetFlowApp() {
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
             onEditPet={(pet) => openProfile("account", pet)}
-            onSelectPet={(pet) => { selectPet(pet); setView("home"); }}
+            onSelectPet={(pet) => {
+              selectPet(pet);
+              setView("home", { history: "replace" });
+            }}
           />
         )}{" "}
         {currentView === "check" && (
@@ -4263,7 +4327,7 @@ export function PetFlowApp() {
             mediaEnabled={Boolean(user && selectedPetId)}
             mediaError={mediaError}
             setMediaError={setMediaError}
-            onBack={() => setView("home")}
+            onBack={() => setView("home", { history: "replace" })}
             onEditProfile={() => openProfile("check")}
             onSubmit={submit}
             loading={loading}
@@ -4277,7 +4341,7 @@ export function PetFlowApp() {
             mediaWarning={mediaUploadWarning}
             canUseAiReport={Boolean(aiAccess?.enabled)}
             aiAccess={aiAccess}
-            onHome={() => setView("home")}
+            onHome={() => setView("home", { history: "replace" })}
             onRestart={startNew}
             onEdit={startEditRecord}
             onDelete={(record) => void deleteRecord(record)}
@@ -4294,7 +4358,7 @@ export function PetFlowApp() {
             plans={plans}
             progress={progress}
             petName={profile.name}
-            onBack={() => setView("home")}
+            onBack={() => setView("home", { history: "replace" })}
             onStart={startNew}
             onEdit={startEditRecord}
             onDelete={(record) => void deleteRecord(record)}
@@ -4337,7 +4401,7 @@ export function PetFlowApp() {
                   )
                 : []
             }
-            onBack={() => setView("history")}
+            onBack={() => setView("history", { history: "replace" })}
             onSavePlan={savePlan}
             onTogglePlanTask={togglePlanTask}
             onSaveProgress={saveProgress}

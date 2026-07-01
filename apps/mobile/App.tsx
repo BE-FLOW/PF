@@ -8,6 +8,7 @@ import type { TextInputProps, TextProps, TextStyle } from "react-native";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Image,
   KeyboardAvoidingView,
   Linking,
@@ -536,6 +537,37 @@ export default function App() {
     () => summarizeHealthFlow(selectedPetHistory, selectedPet?.name),
     [selectedPet?.name, selectedPetHistory],
   );
+  const hasHealthDraft = useMemo(() => {
+    if (!healthInput) return false;
+    if (editingHealthRecord) return true;
+    if (latestResult) return false;
+    return Boolean(
+      pendingMedia.length ||
+        healthInput.symptoms.length ||
+        healthInput.redFlags.length ||
+        healthInput.appetite !== "normal" ||
+        healthInput.energy !== "normal" ||
+        healthInput.duration !== "today" ||
+        healthInput.note.trim(),
+    );
+  }, [editingHealthRecord, healthInput, latestResult, pendingMedia.length]);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return undefined;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (petFormExpanded) {
+        setPetFormExpanded(false);
+        return true;
+      }
+      if (mainSection !== "home") {
+        setMainSection("home");
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [mainSection, petFormExpanded]);
+
   const episodeReportGroups = useMemo<EpisodeReportGroup[]>(() => {
     const episodeById = new Map(
       episodes
@@ -1491,6 +1523,10 @@ export default function App() {
 
   function changeMainSection(next: MainSection) {
     if (next === "record" && mainSection !== "record") {
+      if (hasHealthDraft) {
+        setMainSection("record");
+        return;
+      }
       startHealthRecord();
       return;
     }
