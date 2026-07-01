@@ -44,6 +44,11 @@ function sortRecords(records: HistoryRecord[]) {
   );
 }
 
+function displayCheckScore(riskScore: number) {
+  if (!Number.isFinite(riskScore)) return 0;
+  return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
+}
+
 export function formatVetReviewDraft(
   draft: Omit<VetReviewDraft, "copyText">,
 ) {
@@ -116,7 +121,7 @@ export function buildVetReviewDraft(
           `식욕 ${levelLabels[record.input.appetite]}`,
           `활력 ${levelLabels[record.input.energy]}`,
           `기간 ${durationLabels[record.input.duration]}`,
-          `CHECK SCORE ${record.result.riskScore}`,
+          `CHECK SCORE ${displayCheckScore(record.result.riskScore)}`,
           `앱 안내 ${riskLabels[record.result.riskLevel]}`,
           mediaLabel ? `첨부 ${mediaLabel}` : "",
         ]
@@ -170,7 +175,7 @@ export function buildVetReviewDraft(
         ? `위험 신호 입력 ${redFlagCount}회가 있어 병원에 먼저 공유가 필요합니다.`
         : "입력된 위험 신호는 없습니다.",
       latest
-        ? `가장 최근 CHECK SCORE는 ${latest.result.riskScore}점입니다.`
+        ? `가장 최근 CHECK SCORE는 ${displayCheckScore(latest.result.riskScore)}점입니다.`
         : "아직 CHECK SCORE 기록이 없습니다.",
       `기록된 경과 시점: ${completedProgressDays}`,
       report.mediaCount

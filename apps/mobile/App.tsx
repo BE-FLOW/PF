@@ -87,10 +87,10 @@ const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
 ];
 
 const mainSectionDescriptions: Record<MainSection, string> = {
-  home: "오늘 상태와 다음 할 일을 한눈에 봐요.",
-  record: "오늘 관찰한 변화만 빠르게 남겨요.",
+  home: "최신 흐름과 다음 행동을 한눈에 봐요.",
+  record: "관찰한 변화만 빠르게 남겨요.",
   reports: "건강 흐름과 병원 전달 요약을 확인해요.",
-  account: "로그인과 참여코드만 확인해요.",
+  account: "로그인과 테스트 권한을 관리해요.",
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -137,6 +137,7 @@ interface EpisodeReportGroup {
 }
 
 type NoticeTone = "error" | "success";
+type CheckScoreTone = "good" | "watch" | "alert" | "empty";
 
 interface EpisodeNotice {
   episodeId: string | null;
@@ -2303,7 +2304,9 @@ function HomeDashboard({
   onGoReports: () => void;
 }) {
   const latestRecord = history[0];
-  const score = latestResult?.riskScore ?? latestRecord?.result.riskScore;
+  const riskScore = latestResult?.riskScore ?? latestRecord?.result.riskScore;
+  const checkScore = riskScore === undefined ? undefined : displayCheckScore(riskScore);
+  const scoreTone = getCheckScoreTone(checkScore);
   const riskLevel = latestResult?.riskLevel ?? latestRecord?.result.riskLevel;
   const latestAt = latestResult?.createdAt ?? latestRecord?.result.createdAt;
 
@@ -2329,38 +2332,97 @@ function HomeDashboard({
           </Text>
         </View>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardEyebrow}>TODAY</Text>
+          <Text style={styles.cardEyebrow}>PETFLOW</Text>
           <Text style={styles.cardTitle}>
-            {selectedPet ? `${selectedPet.name}의 오늘을 살펴봐요` : "오늘을 살펴봐요"}
+            흐름을 남기면 더 빠르게 알 수 있어요
           </Text>
-          <Text style={styles.cardText}>짧게 남기면 흐름은 펫플로우가 정리해요.</Text>
+          <Text style={styles.cardText}>기록은 짧게, 정리는 펫플로우가 도와드려요.</Text>
         </View>
       </View>
 
       <View style={styles.homeGrid}>
-        <View style={styles.homeScoreCard}>
-          <Text style={styles.cardEyebrow}>CHECK SCORE</Text>
-          <Text style={styles.homeScoreValue}>{score ?? "--"}</Text>
-          <Text style={styles.homeScoreLabel}>
-            {riskLevel ? riskLabels[riskLevel] : "첫 기록을 기다려요"}
-          </Text>
-          <Text style={styles.homeMutedText}>
-            {latestAt ? `${formatRecordedAt(latestAt)} 기준` : "오늘 기록을 남기면 바로 보여요."}
-          </Text>
+        <View
+          style={[
+            styles.homeScoreCard,
+            scoreTone.tone === "good" && styles.homeScoreCardGood,
+            scoreTone.tone === "watch" && styles.homeScoreCardWatch,
+            scoreTone.tone === "alert" && styles.homeScoreCardAlert,
+          ]}
+        >
+          <View style={styles.homeScoreTop}>
+            <View style={styles.homeScoreCopy}>
+              <Text style={styles.cardEyebrow}>CHECK SCORE</Text>
+              <Text style={styles.homeScoreTitle}>
+                {selectedPet
+                  ? `${selectedPet.name}의 최신 체크스코어`
+                  : "최신 체크스코어"}
+              </Text>
+              <Text style={styles.homeMutedText}>
+                {latestAt
+                  ? `${formatRecordedAt(latestAt)} 기준${riskLevel ? ` · ${riskLabels[riskLevel]}` : ""}`
+                  : "기록을 남기면 바로 보여요."}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.homeScoreBadge,
+                scoreTone.tone === "good" && styles.homeScoreBadgeGood,
+                scoreTone.tone === "watch" && styles.homeScoreBadgeWatch,
+                scoreTone.tone === "alert" && styles.homeScoreBadgeAlert,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.homeScoreValue,
+                  scoreTone.tone === "watch" && styles.homeScoreValueWatch,
+                  scoreTone.tone === "alert" && styles.homeScoreValueAlert,
+                ]}
+              >
+                {checkScore ?? "--"}
+              </Text>
+              <Text
+                style={[
+                  styles.homeScoreCaption,
+                  (scoreTone.tone === "watch" || scoreTone.tone === "alert") &&
+                    styles.homeScoreCaptionDark,
+                ]}
+              >
+                CHECK
+              </Text>
+            </View>
+          </View>
+          <View
+            style={[
+              styles.homeScoreStatus,
+              scoreTone.tone === "watch" && styles.homeScoreStatusWatch,
+              scoreTone.tone === "alert" && styles.homeScoreStatusAlert,
+            ]}
+          >
+            <Text
+              style={[
+                styles.homeScoreLabel,
+                scoreTone.tone === "watch" && styles.homeScoreLabelWatch,
+                scoreTone.tone === "alert" && styles.homeScoreLabelAlert,
+              ]}
+            >
+              {scoreTone.title}
+            </Text>
+            <Text style={styles.homeScoreStatusText}>{scoreTone.description}</Text>
+          </View>
           <View style={styles.homeCtaRow}>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={onGoRecord}
               style={styles.homePrimaryAction}
             >
-              <Text style={styles.homePrimaryActionText}>오늘 기록</Text>
+              <Text style={styles.homePrimaryActionText}>기록하기</Text>
             </TouchableOpacity>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={onGoReports}
               style={styles.homeSecondaryAction}
             >
-              <Text style={styles.homeSecondaryActionText}>전달 요약</Text>
+              <Text style={styles.homeSecondaryActionText}>요약 보기</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -3075,7 +3137,7 @@ function PetForm({
       <FieldLabel label="품종" />
       {breedSuggestions.length ? (
         <View style={styles.choicePanel}>
-          <Text style={styles.choicePanelText}>자주 쓰는 품종을 먼저 골라요.</Text>
+          <Text style={styles.choicePanelText}>자주 쓰는 품종</Text>
           <ChipGroup
             options={breedSuggestions.map((breed) => ({ id: breed, label: breed }))}
             selected={selectedBreed}
@@ -3096,7 +3158,7 @@ function PetForm({
 
       <FieldLabel label="생일" />
       <View style={styles.choicePanel}>
-        <Text style={styles.choicePanelText}>정확하지 않으면 비워둬도 돼요.</Text>
+        <Text style={styles.choicePanelText}>빠른 선택</Text>
         <ChipGroup
           options={birthDateShortcuts}
           selected={draft.birthDate}
@@ -3487,12 +3549,13 @@ function HealthResultCard({
   onGoAccount: () => void;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
+  const checkScore = displayCheckScore(result.riskScore);
   return (
     <View style={[styles.resultCard, styles[`resultCard_${result.riskLevel}`]]}>
       <View style={styles.resultHeader}>
         <View>
           <Text style={styles.resultEyebrow}>CHECK SCORE</Text>
-          <Text style={styles.resultScore}>{result.riskScore}</Text>
+          <Text style={styles.resultScore}>{checkScore}</Text>
         </View>
         <Text style={styles.resultRisk}>{riskLabels[result.riskLevel]}</Text>
       </View>
@@ -4527,6 +4590,7 @@ function HistoryRecordItem({
   onEdit: (record: HistoryRecord) => void;
 }) {
   const mediaSummary = formatReportMediaSummary(record.media ?? []);
+  const checkScore = displayCheckScore(record.result.riskScore);
   return (
     <View style={styles.historyItem}>
       <View style={styles.historyItemHeader}>
@@ -4535,7 +4599,7 @@ function HistoryRecordItem({
       </View>
       <Text style={styles.historySummary}>{record.result.summary}</Text>
       <Text style={styles.historyMeta}>
-        CHECK {record.result.riskScore} · {recordSymptomText(record)}
+        CHECK {checkScore} · {recordSymptomText(record)}
       </Text>
       <Text style={styles.historyMeta}>
         식욕 {optionLabel(levelOptions, record.input.appetite)} · 활력{" "}
@@ -4689,6 +4753,44 @@ function recordDateLabel(value: string) {
     month: "short",
     day: "numeric",
   }).format(date)} 기록`;
+}
+
+function displayCheckScore(riskScore: number) {
+  if (!Number.isFinite(riskScore)) return 0;
+  return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
+}
+
+function getCheckScoreTone(checkScore?: number): {
+  tone: CheckScoreTone;
+  title: string;
+  description: string;
+} {
+  if (checkScore === undefined) {
+    return {
+      tone: "empty",
+      title: "첫 기록을 기다려요",
+      description: "기록을 남기면 흐름이 보여요.",
+    };
+  }
+  if (checkScore >= 70) {
+    return {
+      tone: "good",
+      title: "안정적으로 보여요",
+      description: "평소 흐름을 이어서 확인해요.",
+    };
+  }
+  if (checkScore >= 45) {
+    return {
+      tone: "watch",
+      title: "조금 지켜봐요",
+      description: "같은 변화가 이어지는지 확인해요.",
+    };
+  }
+  return {
+    tone: "alert",
+    title: "상담을 고려해요",
+    description: "기록을 챙겨 병원 상담을 준비해요.",
+  };
 }
 
 function speciesLabel(species: Species) {
@@ -4953,17 +5055,104 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5fcf8",
     padding: 20,
   },
-  homeScoreValue: {
-    marginTop: 8,
+  homeScoreCardGood: {
+    borderColor: "#b8decf",
+    backgroundColor: "#f1fbf5",
+  },
+  homeScoreCardWatch: {
+    borderColor: "#efd79d",
+    backgroundColor: "#fff9ec",
+  },
+  homeScoreCardAlert: {
+    borderColor: "#e6b5a8",
+    backgroundColor: "#fff4ef",
+  },
+  homeScoreTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 14,
+  },
+  homeScoreCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  homeScoreTitle: {
+    marginTop: 7,
     color: colors.ink,
-    fontSize: 52,
+    fontSize: 19,
     fontWeight: "900",
-    lineHeight: 58,
+    lineHeight: 25,
+  },
+  homeScoreBadge: {
+    width: 92,
+    minHeight: 82,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 24,
+    backgroundColor: colors.ink,
+    paddingVertical: 9,
+  },
+  homeScoreBadgeGood: {
+    backgroundColor: "#164d42",
+  },
+  homeScoreBadgeWatch: {
+    backgroundColor: "#fff4d6",
+  },
+  homeScoreBadgeAlert: {
+    backgroundColor: "#fff0ea",
+  },
+  homeScoreValue: {
+    color: "#ffffff",
+    fontSize: 34,
+    fontWeight: "900",
+    lineHeight: 38,
+  },
+  homeScoreValueWatch: {
+    color: "#8b6220",
+  },
+  homeScoreValueAlert: {
+    color: colors.danger,
+  },
+  homeScoreCaption: {
+    marginTop: 1,
+    color: "rgba(255, 255, 255, 0.82)",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
+  homeScoreCaptionDark: {
+    color: colors.muted,
+  },
+  homeScoreStatus: {
+    marginTop: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    padding: 12,
   },
   homeScoreLabel: {
     color: colors.green,
     fontSize: 15,
     fontWeight: "900",
+  },
+  homeScoreLabelWatch: {
+    color: "#8b6220",
+  },
+  homeScoreLabelAlert: {
+    color: colors.danger,
+  },
+  homeScoreStatusWatch: {
+    backgroundColor: "#fff4d6",
+  },
+  homeScoreStatusAlert: {
+    backgroundColor: "#fff0ea",
+  },
+  homeScoreStatusText: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
   },
   homeMutedText: {
     marginTop: 7,
@@ -5196,17 +5385,12 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   choicePanel: {
-    gap: 9,
-    borderWidth: 1,
-    borderColor: "#e0eee6",
-    borderRadius: 18,
-    backgroundColor: "#f7fcf9",
-    padding: 12,
+    gap: 8,
   },
   choicePanelText: {
     color: colors.muted,
-    fontSize: 12,
-    fontWeight: "800",
+    fontSize: 11,
+    fontWeight: "900",
     lineHeight: 17,
   },
   privacyBox: {
