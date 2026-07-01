@@ -682,18 +682,20 @@ function HomeView({
           <span className={`hero-pet-photo-slot ${profile.photoUrl ? "has-photo" : ""}`}>
             <HeroPetPhoto pet={profile} />
           </span>
-          <span className="hero-profile-copy">
-            <strong>
-              {hasProfile ? profile.name : "반려동물 등록"}
-            </strong>
-            <small>
-              {hasProfile
-                ? profileDetails.join(" · ")
-                : "사진과 정보를 한 번만 알려주세요."}
-            </small>
-          </span>
-          <span className="hero-profile-action">
-            {hasProfile ? "수정" : "등록"}
+          <span className="hero-profile-row">
+            <span className="hero-profile-copy">
+              <strong>
+                {hasProfile ? profile.name : "반려동물 등록"}
+              </strong>
+              <small>
+                {hasProfile
+                  ? profileDetails.join(" · ")
+                  : "사진과 정보를 한 번만 알려주세요."}
+              </small>
+            </span>
+            <span className="hero-profile-action">
+              {hasProfile ? "수정" : "등록"}
+            </span>
           </span>
         </button>
       </section>
