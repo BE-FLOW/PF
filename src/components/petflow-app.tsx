@@ -619,7 +619,6 @@ function HomeView({
   onStart,
   onHistory,
   onProfile,
-  onAccount,
   onSelectLatest,
   flow,
   flowLoading,
@@ -630,7 +629,6 @@ function HomeView({
   onStart: () => void;
   onHistory: () => void;
   onProfile: () => void;
-  onAccount: () => void;
   onSelectLatest: (record: HistoryRecord) => void;
   flow: HealthFlowSummary;
   flowLoading: boolean;
@@ -657,38 +655,11 @@ function HomeView({
   ].filter(Boolean);
   return (
     <div className="content-wrap">
-      <header className="top-row">
-        <div>
-          <h1>
-            {profile.name ? `${profile.name}와` : "반려동물과"} 좋은 하루 보내고 있나요?
-          </h1>
-        </div>
-        <div className="top-actions">
-          <button className="profile-dot" onClick={onAccount} aria-label="내 계정">
-            {avatarLabel(profile.name)}
-          </button>
-        </div>
-      </header>
       <section className="hero-card">
         <div className="hero-content">
-          <button
-            className={`hero-profile-chip ${hasProfile ? "" : "empty"}`}
-            onClick={onProfile}
-          >
-            <span className="hero-profile-copy">
-              <strong>
-                {hasProfile ? profile.name : "반려동물을 먼저 알려주세요"}
-              </strong>
-              <small>
-                {hasProfile
-                  ? profileDetails.join(" · ")
-                  : "한 번만 등록하면 바로 기록할 수 있어요."}
-              </small>
-            </span>
-            <span className="hero-profile-action">
-              {hasProfile ? "수정" : "등록"}
-            </span>
-          </button>
+          <p className="hero-greeting">
+            {profile.name ? `${profile.name}와` : "반려동물과"} 좋은 하루 보내고 있나요?
+          </p>
           <h2>
             흐름을 남기면
             <br />빠르게 알 수 있어요
@@ -705,10 +676,25 @@ function HomeView({
         <button
           type="button"
           onClick={onProfile}
-          aria-label={hasProfile ? `${profile.name} 사진 자리` : "반려동물 사진 자리"}
-          className={`hero-pet-photo-slot ${profile.photoUrl ? "has-photo" : ""}`}
+          aria-label={hasProfile ? `${profile.name} 프로필 수정` : "반려동물 등록"}
+          className={`hero-profile-panel ${hasProfile ? "" : "empty"}`}
         >
-          <HeroPetPhoto pet={profile} />
+          <span className={`hero-pet-photo-slot ${profile.photoUrl ? "has-photo" : ""}`}>
+            <HeroPetPhoto pet={profile} />
+          </span>
+          <span className="hero-profile-copy">
+            <strong>
+              {hasProfile ? profile.name : "반려동물 등록"}
+            </strong>
+            <small>
+              {hasProfile
+                ? profileDetails.join(" · ")
+                : "사진과 정보를 한 번만 알려주세요."}
+            </small>
+          </span>
+          <span className="hero-profile-action">
+            {hasProfile ? "수정" : "등록"}
+          </span>
         </button>
       </section>
       <section className={`home-score-card ${recent?.result.riskLevel ?? "empty"}`}>
@@ -4226,7 +4212,6 @@ export function PetFlowApp() {
             onStart={startNew}
             onHistory={() => setView("history")}
             onProfile={() => openProfile("home")}
-            onAccount={() => setView("account")}
             onSelectLatest={(record) => {
               setMediaUploadWarning("");
               setSelected(record);
