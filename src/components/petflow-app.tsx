@@ -70,6 +70,12 @@ import {
   vaccinationReminder,
   type VaccinationDraft,
 } from "@/lib/vaccinations";
+import {
+  isMissingVaccinationTableError,
+  toVaccinationRecord,
+  vaccinationSelectColumns,
+  type VaccinationRow,
+} from "@/lib/vaccination-storage";
 
 type View =
   | "home"
@@ -103,18 +109,6 @@ interface PetPhotoChange {
   remove: boolean;
 }
 
-interface VaccinationRow {
-  id: string;
-  pet_id: string;
-  vaccine_name: string;
-  administered_at: string | null;
-  due_at: string | null;
-  status: VaccinationRecord["status"];
-  note: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 const views: View[] = [
   "home",
   "profile",
@@ -138,30 +132,6 @@ function hasObservationDraft(input: HealthCheckInput) {
       input.duration !== "today" ||
       input.note.trim(),
   );
-}
-
-function isMissingVaccinationTableError(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const maybeError = error as { code?: string; message?: string };
-  return (
-    maybeError.code === "42P01" ||
-    maybeError.code === "PGRST205" ||
-    Boolean(maybeError.message?.includes("pet_vaccinations"))
-  );
-}
-
-function toVaccinationRecord(row: VaccinationRow): VaccinationRecord {
-  return {
-    id: row.id,
-    petId: row.pet_id,
-    name: row.vaccine_name,
-    administeredAt: row.administered_at,
-    dueAt: row.due_at,
-    status: row.status,
-    note: row.note ?? "",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
 }
 
 const initialProfile: PetProfile = {
@@ -3651,9 +3621,7 @@ export function PetFlowApp() {
     }
     const { data, error } = await supabase
       .from("pet_vaccinations")
-      .select(
-        "id,pet_id,vaccine_name,administered_at,due_at,status,note,created_at,updated_at",
-      )
+      .select(vaccinationSelectColumns)
       .in("pet_id", petIds)
       .order("due_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false });
@@ -3700,9 +3668,7 @@ export function PetFlowApp() {
     const { data, error } = await supabase
       .from("pet_vaccinations")
       .upsert(payload)
-      .select(
-        "id,pet_id,vaccine_name,administered_at,due_at,status,note,created_at,updated_at",
-      )
+      .select(vaccinationSelectColumns)
       .single();
     if (isMissingVaccinationTableError(error)) {
       return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };

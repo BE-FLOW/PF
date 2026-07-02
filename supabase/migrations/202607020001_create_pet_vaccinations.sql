@@ -27,6 +27,23 @@ create index if not exists pet_vaccinations_user_pet_due_idx
 create index if not exists pet_vaccinations_user_pet_administered_idx
   on public.pet_vaccinations (user_id, pet_id, administered_at desc nulls last);
 
+create or replace function public.set_pet_vaccination_updated_at()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists set_pet_vaccination_updated_at on public.pet_vaccinations;
+create trigger set_pet_vaccination_updated_at
+  before update on public.pet_vaccinations
+  for each row
+  execute function public.set_pet_vaccination_updated_at();
+
 alter table public.pet_vaccinations enable row level security;
 
 grant select, insert, update, delete on table public.pet_vaccinations to authenticated;
