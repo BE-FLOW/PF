@@ -383,6 +383,42 @@ p {
   padding: 0 17px;
   border-radius: 14px;
 }
+.hero-vaccination {
+  width: fit-content;
+  max-width: min(100%, 360px);
+  margin-top: 14px;
+  padding: 9px 12px;
+  border: 1px solid rgba(34, 132, 102, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.64);
+  display: grid;
+  gap: 2px;
+  box-shadow: 0 10px 24px rgba(14, 69, 57, 0.06);
+}
+.hero-vaccination span {
+  color: var(--mint-dark);
+  font-size: 10px;
+  font-weight: 900;
+}
+.hero-vaccination strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+}
+.hero-vaccination small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+.hero-vaccination.due {
+  border-color: rgba(246, 177, 84, 0.42);
+  background: rgba(255, 248, 223, 0.76);
+}
+.hero-vaccination.overdue {
+  border-color: rgba(206, 108, 91, 0.28);
+  background: rgba(255, 244, 239, 0.78);
+}
 .primary-button,
 .secondary-button {
   min-height: 49px;
@@ -1329,6 +1365,45 @@ p {
   margin-inline: -12px;
   padding-inline: 12px;
   border-radius: 18px;
+}
+.vaccination-inline {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid #dbece4;
+  border-radius: 18px;
+  background: #fff;
+}
+.vaccination-inline-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.vaccination-inline-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 900;
+}
+.vaccination-inline-head span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.vaccination-inline-badge {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: var(--mint-dark);
+  background: var(--mint-soft);
+  font-size: 10px !important;
+  font-weight: 900;
+}
+.vaccination-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .check-profile-summary {
   width: 100%;

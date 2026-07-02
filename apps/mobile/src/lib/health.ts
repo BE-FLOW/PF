@@ -29,6 +29,20 @@ export interface PetProfile {
   photoUrl?: string;
 }
 
+export type VaccinationStatus = "scheduled" | "done";
+
+export interface VaccinationRecord {
+  id: string;
+  petId: string;
+  name: string;
+  administeredAt: string | null;
+  dueAt: string | null;
+  status: VaccinationStatus;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HealthCheckInput {
   petName: string;
   species: Species;

@@ -1,6 +1,6 @@
 begin;
 
-select plan(71);
+select plan(77);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -28,6 +28,11 @@ select has_table(
   'public',
   'account_deletion_requests',
   'account deletion request table exists'
+);
+select has_table(
+  'public',
+  'pet_vaccinations',
+  'pet vaccination schedule table exists'
 );
 select has_view(
   'public',
@@ -73,6 +78,34 @@ select is(
   'pets has owner-only CRUD policies'
 );
 select has_column('public', 'pets', 'photo_path', 'pet profile photo path exists');
+select has_column(
+  'public',
+  'pet_vaccinations',
+  'due_at',
+  'vaccination due date is stored'
+);
+select has_column(
+  'public',
+  'pet_vaccinations',
+  'administered_at',
+  'vaccination administered date is stored'
+);
+select has_column(
+  'public',
+  'pet_vaccinations',
+  'review_status',
+  'vaccination review status is stored'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.pet_vaccinations'::regclass),
+  true,
+  'RLS is enabled for pet vaccinations'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'pet_vaccinations'),
+  4,
+  'pet vaccinations has owner-only CRUD policies'
+);
 select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'episodes'),
   4,

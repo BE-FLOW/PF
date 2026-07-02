@@ -61,8 +61,15 @@ import type {
   ReportMediaKind,
   SymptomId,
   TesterProfile,
+  VaccinationRecord,
   VetReviewDraft,
 } from "@/lib/types";
+import {
+  hasVaccinationDraft,
+  vaccinationDraftFromRecords,
+  vaccinationReminder,
+  type VaccinationDraft,
+} from "@/lib/vaccinations";
 
 type View =
   | "home"
@@ -96,6 +103,18 @@ interface PetPhotoChange {
   remove: boolean;
 }
 
+interface VaccinationRow {
+  id: string;
+  pet_id: string;
+  vaccine_name: string;
+  administered_at: string | null;
+  due_at: string | null;
+  status: VaccinationRecord["status"];
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 const views: View[] = [
   "home",
   "profile",
@@ -119,6 +138,30 @@ function hasObservationDraft(input: HealthCheckInput) {
       input.duration !== "today" ||
       input.note.trim(),
   );
+}
+
+function isMissingVaccinationTableError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; message?: string };
+  return (
+    maybeError.code === "42P01" ||
+    maybeError.code === "PGRST205" ||
+    Boolean(maybeError.message?.includes("pet_vaccinations"))
+  );
+}
+
+function toVaccinationRecord(row: VaccinationRow): VaccinationRecord {
+  return {
+    id: row.id,
+    petId: row.pet_id,
+    name: row.vaccine_name,
+    administeredAt: row.administered_at,
+    dueAt: row.due_at,
+    status: row.status,
+    note: row.note ?? "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 const initialProfile: PetProfile = {
@@ -644,6 +687,7 @@ function HomeView({
   flow,
   flowLoading,
   activeEpisode,
+  vaccinations,
 }: {
   profile: PetProfile;
   history: HistoryRecord[];
@@ -654,10 +698,12 @@ function HomeView({
   flow: HealthFlowSummary;
   flowLoading: boolean;
   activeEpisode?: PetEpisode;
+  vaccinations: VaccinationRecord[];
 }) {
   const recent = history[0];
   const recentCheckScore = recent ? displayCheckScore(recent.result.riskScore) : undefined;
   const hasProfile = Boolean(profile.name.trim());
+  const vaccination = vaccinationReminder(vaccinations);
   const ageGroup = deriveAgeGroup(profile.birthDate);
   const profileDetails = [
     profile.species === "dog"
@@ -685,6 +731,13 @@ function HomeView({
             흐름을 남기면
             <br />빠르게 알 수 있어요
           </h2>
+          {hasProfile && vaccination.record && (
+            <div className={`hero-vaccination ${vaccination.tone}`}>
+              <span>{vaccination.label}</span>
+              <strong>{vaccination.title}</strong>
+              <small>{vaccination.description}</small>
+            </div>
+          )}
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
             {hasProfile
@@ -859,14 +912,23 @@ function HomeView({
 
 function ProfileView({
   profile,
+  vaccinations,
   onCancel,
   onSave,
 }: {
   profile: PetProfile;
+  vaccinations: VaccinationRecord[];
   onCancel: () => void;
-  onSave: (profile: PetProfile, photo: PetPhotoChange) => Promise<string | null>;
+  onSave: (
+    profile: PetProfile,
+    photo: PetPhotoChange,
+    vaccination: VaccinationDraft,
+  ) => Promise<string | null>;
 }) {
   const [draft, setDraft] = useState(profile);
+  const [vaccinationDraft, setVaccinationDraft] = useState(
+    vaccinationDraftFromRecords(vaccinations),
+  );
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -980,6 +1042,16 @@ function ProfileView({
       setError("생일은 오늘보다 이전 날짜로 입력해 주세요.");
       return;
     }
+    if (hasVaccinationDraft(vaccinationDraft)) {
+      if (!vaccinationDraft.name.trim()) {
+        setError("예방접종 이름을 입력해 주세요.");
+        return;
+      }
+      if (!vaccinationDraft.administeredAt && !vaccinationDraft.dueAt) {
+        setError("접종일 또는 다음 예정일 중 하나는 입력해 주세요.");
+        return;
+      }
+    }
     setSaving(true);
     const saveError = await onSave({
       ...draft,
@@ -990,7 +1062,7 @@ function ProfileView({
     }, {
       file: photoFile,
       remove: removePhoto,
-    });
+    }, vaccinationDraft);
     setSaving(false);
     if (saveError) setError(saveError);
   }
@@ -1236,6 +1308,77 @@ function ProfileView({
                 }
                 placeholder="예: 5.2kg"
               />
+            </div>
+          </div>
+          <div className="vaccination-inline">
+            <div className="vaccination-inline-head">
+              <div>
+                <strong>예방접종</strong>
+                <span>접종 기록과 다음 병원 예정일을 함께 남겨요.</span>
+              </div>
+              <span className="vaccination-inline-badge">
+                {vaccinationDraft.dueAt ? "일정 있음" : "선택"}
+              </span>
+            </div>
+            <div className="form-grid vaccination-grid">
+              <div className="field">
+                <label htmlFor="vaccineName">접종명</label>
+                <input
+                  id="vaccineName"
+                  value={vaccinationDraft.name}
+                  maxLength={80}
+                  onChange={(event) =>
+                    setVaccinationDraft({
+                      ...vaccinationDraft,
+                      name: event.target.value,
+                    })
+                  }
+                  placeholder="예: 종합백신, 광견병"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="vaccineDoneAt">맞은 날</label>
+                <input
+                  id="vaccineDoneAt"
+                  type="date"
+                  value={vaccinationDraft.administeredAt}
+                  onChange={(event) =>
+                    setVaccinationDraft({
+                      ...vaccinationDraft,
+                      administeredAt: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="vaccineDueAt">다음 예정일</label>
+                <input
+                  id="vaccineDueAt"
+                  type="date"
+                  value={vaccinationDraft.dueAt}
+                  onChange={(event) =>
+                    setVaccinationDraft({
+                      ...vaccinationDraft,
+                      dueAt: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="vaccineNote">메모</label>
+                <input
+                  id="vaccineNote"
+                  value={vaccinationDraft.note}
+                  maxLength={120}
+                  onChange={(event) =>
+                    setVaccinationDraft({
+                      ...vaccinationDraft,
+                      note: event.target.value,
+                    })
+                  }
+                  placeholder="병원명이나 특이사항"
+                />
+              </div>
             </div>
           </div>
         </section>
@@ -3113,6 +3256,7 @@ export function PetFlowApp() {
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [plans, setPlans] = useState<EpisodePlan[]>([]);
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
+  const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
   const [pendingMedia, setPendingMedia] = useState<PendingMediaFile[]>([]);
   const pendingMediaRef = useRef<PendingMediaFile[]>([]);
   const [mediaError, setMediaError] = useState("");
@@ -3213,6 +3357,23 @@ export function PetFlowApp() {
     if (!selectedPetId) return [];
     return history.filter((record) => record.petId === selectedPetId);
   }, [history, selectedPetId, user]);
+  const selectedPetVaccinations = useMemo(
+    () =>
+      selectedPetId
+        ? vaccinations.filter((record) => record.petId === selectedPetId)
+        : [],
+    [selectedPetId, vaccinations],
+  );
+  const editingProfileVaccinations = useMemo(
+    () =>
+      editingProfile.id
+        ? vaccinations.filter((record) => record.petId === editingProfile.id)
+        : [],
+    [editingProfile.id, vaccinations],
+  );
+  const editingProfileVaccinationKey = editingProfileVaccinations
+    .map((record) => `${record.id}:${record.updatedAt}`)
+    .join("|");
   const healthFlow = useMemo(
     () => summarizeHealthFlow(visibleHistory, profile.name || "반려동물"),
     [profile.name, visibleHistory],
@@ -3277,6 +3438,7 @@ export function PetFlowApp() {
         setEpisodes([]);
         setPlans([]);
         setProgress([]);
+        setVaccinations([]);
         clearPendingMedia();
         setMediaUploadWarning("");
         setTesterProfile(null);
@@ -3333,6 +3495,9 @@ export function PetFlowApp() {
         }),
       );
       setPets(loadedPets);
+      await loadVaccinationsForPets(
+        loadedPets.map((pet) => pet.id).filter((id): id is string => Boolean(id)),
+      );
       setTesterProfile(
         tester
           ? {
@@ -3370,6 +3535,7 @@ export function PetFlowApp() {
       } else {
         setPlans([]);
         setProgress([]);
+        setVaccinations([]);
         setProfile(initialProfile);
         setInput(initialInput);
       }
@@ -3477,6 +3643,73 @@ export function PetFlowApp() {
       setFlowLoading(false);
     }
   }
+  async function loadVaccinationsForPets(petIds: string[]) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !petIds.length) {
+      setVaccinations([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("pet_vaccinations")
+      .select(
+        "id,pet_id,vaccine_name,administered_at,due_at,status,note,created_at,updated_at",
+      )
+      .in("pet_id", petIds)
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
+    if (isMissingVaccinationTableError(error)) {
+      setVaccinations([]);
+      return;
+    }
+    if (error) return;
+    setVaccinations(((data ?? []) as VaccinationRow[]).map(toVaccinationRecord));
+  }
+  async function saveVaccinationForPet(
+    userId: string,
+    petId: string,
+    draft: VaccinationDraft,
+  ): Promise<{ deletedId?: string; record?: VaccinationRecord; error?: string }> {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return {};
+
+    if (!hasVaccinationDraft(draft)) {
+      if (!draft.id) return {};
+      const { error } = await supabase
+        .from("pet_vaccinations")
+        .delete()
+        .eq("id", draft.id)
+        .eq("pet_id", petId);
+      if (isMissingVaccinationTableError(error)) {
+        return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
+      }
+      if (error) return { error: "예방접종 일정을 지우지 못했어요." };
+      return { deletedId: draft.id };
+    }
+
+    const payload = {
+      ...(draft.id ? { id: draft.id } : {}),
+      user_id: userId,
+      pet_id: petId,
+      vaccine_name: draft.name.trim(),
+      administered_at: draft.administeredAt || null,
+      due_at: draft.dueAt || null,
+      status: draft.dueAt ? "scheduled" : "done",
+      note: draft.note.trim(),
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from("pet_vaccinations")
+      .upsert(payload)
+      .select(
+        "id,pet_id,vaccine_name,administered_at,due_at,status,note,created_at,updated_at",
+      )
+      .single();
+    if (isMissingVaccinationTableError(error)) {
+      return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
+    }
+    if (error || !data) return { error: "예방접종 일정을 저장하지 못했어요." };
+    return { record: toVaccinationRecord(data as VaccinationRow) };
+  }
   function selectPet(nextProfile: PetProfile) {
     setSelectedEpisodeReport(null);
     clearPendingMedia();
@@ -3497,6 +3730,7 @@ export function PetFlowApp() {
   async function saveProfile(
     nextProfile: PetProfile,
     photo: PetPhotoChange,
+    vaccination: VaccinationDraft,
   ): Promise<string | null> {
     const supabase = getSupabaseBrowserClient();
     let savedProfile = nextProfile;
@@ -3585,6 +3819,26 @@ export function PetFlowApp() {
       }
 
       savedProfile = { ...nextProfile, id: data.id, photoPath, photoUrl };
+      const vaccinationSave = await saveVaccinationForPet(
+        user.id,
+        data.id,
+        vaccination,
+      );
+      if (vaccinationSave.error) return vaccinationSave.error;
+      setVaccinations((current) => {
+        if (vaccinationSave.deletedId) {
+          return current.filter((item) => item.id !== vaccinationSave.deletedId);
+        }
+        if (!vaccinationSave.record) return current;
+        const exists = current.some((item) => item.id === vaccinationSave.record?.id);
+        return exists
+          ? current.map((item) =>
+              item.id === vaccinationSave.record?.id
+                ? (vaccinationSave.record as VaccinationRecord)
+                : item,
+            )
+          : [vaccinationSave.record, ...current];
+      });
       setPets((current) => {
         const exists = current.some((pet) => pet.id === savedProfile.id);
         return exists
@@ -3758,6 +4012,7 @@ export function PetFlowApp() {
     setEpisodes([]);
     setPlans([]);
     setProgress([]);
+    setVaccinations([]);
     setTesterProfile(null);
     setAiAccess(null);
     setSelectedEpisodeReport(null);
@@ -4281,12 +4536,14 @@ export function PetFlowApp() {
             flow={healthFlow}
             flowLoading={flowLoading}
             activeEpisode={activeEpisode}
+            vaccinations={selectedPetVaccinations}
           />
         )}{" "}
         {currentView === "profile" && (
           <ProfileView
-            key={editingProfile.id ?? "new-pet"}
+            key={`${editingProfile.id ?? "new-pet"}:${editingProfileVaccinationKey}`}
             profile={editingProfile}
+            vaccinations={editingProfileVaccinations}
             onCancel={() => setView(profileReturnView, { history: "replace" })}
             onSave={saveProfile}
           />

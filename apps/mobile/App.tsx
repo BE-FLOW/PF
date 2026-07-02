@@ -77,6 +77,7 @@ import {
   type ReportMediaKind,
   type Species,
   type VetReviewDraft,
+  type VaccinationRecord,
 } from "./src/lib/health";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -121,11 +122,32 @@ interface TesterDraft {
 }
 
 interface PetDraft extends Omit<PetProfile, "id"> {
+  vaccination: VaccinationDraft;
   photoLocalUri?: string;
   photoMimeType?: string;
   photoFileName?: string;
   photoSizeBytes?: number;
   photoRemoved?: boolean;
+}
+
+interface VaccinationDraft {
+  id?: string;
+  name: string;
+  administeredAt: string;
+  dueAt: string;
+  note: string;
+}
+
+interface VaccinationRow {
+  id: string;
+  pet_id: string;
+  vaccine_name: string;
+  administered_at: string | null;
+  due_at: string | null;
+  status: VaccinationRecord["status"];
+  note: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface PendingMediaAsset {
@@ -180,6 +202,13 @@ const emptyDraft: TesterDraft = {
   consented: false,
 };
 
+const emptyVaccinationDraft: VaccinationDraft = {
+  name: "",
+  administeredAt: "",
+  dueAt: "",
+  note: "",
+};
+
 const emptyPetDraft: PetDraft = {
   name: "",
   species: "dog",
@@ -189,6 +218,7 @@ const emptyPetDraft: PetDraft = {
   weight: "",
   photoPath: "",
   photoUrl: "",
+  vaccination: emptyVaccinationDraft,
 };
 
 const defaultAiFeedbackDraft: AiFeedbackDraft = {
@@ -370,6 +400,113 @@ async function createPetPhotoSignedUrl(photoPath?: string | null) {
   return data.signedUrl ?? "";
 }
 
+function isMissingVaccinationTableError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; message?: string };
+  return (
+    maybeError.code === "42P01" ||
+    maybeError.code === "PGRST205" ||
+    Boolean(maybeError.message?.includes("pet_vaccinations"))
+  );
+}
+
+function toVaccinationRecord(row: VaccinationRow): VaccinationRecord {
+  return {
+    id: row.id,
+    petId: row.pet_id,
+    name: row.vaccine_name,
+    administeredAt: row.administered_at,
+    dueAt: row.due_at,
+    status: row.status,
+    note: row.note ?? "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function hasVaccinationDraft(draft: VaccinationDraft) {
+  return Boolean(
+    draft.name.trim() ||
+      draft.administeredAt.trim() ||
+      draft.dueAt.trim() ||
+      draft.note.trim(),
+  );
+}
+
+function daysUntilDate(dateText: string) {
+  const date = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  const today = new Date();
+  const startOfToday = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  return Math.round(
+    (startOfDate.getTime() - startOfToday.getTime()) / (24 * 60 * 60 * 1000),
+  );
+}
+
+function nextVaccination(records: VaccinationRecord[]) {
+  return records
+    .filter((record) => record.status === "scheduled" && record.dueAt)
+    .map((record) => ({
+      record,
+      daysUntil: daysUntilDate(record.dueAt as string),
+    }))
+    .filter((item): item is { record: VaccinationRecord; daysUntil: number } =>
+      item.daysUntil !== null,
+    )
+    .sort((a, b) => a.daysUntil - b.daysUntil)[0];
+}
+
+function vaccinationReminder(records: VaccinationRecord[]) {
+  const next = nextVaccination(records);
+  if (!next) return null;
+  if (next.daysUntil < 0) {
+    return {
+      tone: "overdue" as const,
+      label: "예정일 지남",
+      title: `${next.record.name} 접종일 확인`,
+      description: `${Math.abs(next.daysUntil)}일 지났어요.`,
+    };
+  }
+  if (next.daysUntil === 0) {
+    return {
+      tone: "due" as const,
+      label: "오늘 예정",
+      title: `${next.record.name} 예정일`,
+      description: "병원 방문 여부를 확인해 주세요.",
+    };
+  }
+  if (next.daysUntil <= 7) {
+    return {
+      tone: "due" as const,
+      label: `D-${next.daysUntil}`,
+      title: `${next.record.name} 일정이 가까워요`,
+      description: "이번 주 병원 일정을 확인해 주세요.",
+    };
+  }
+  return {
+    tone: "upcoming" as const,
+    label: `D-${next.daysUntil}`,
+    title: `${next.record.name} 예정`,
+    description: "가까워지면 다시 알려드릴게요.",
+  };
+}
+
+function vaccinationDraftFromRecords(records: VaccinationRecord[]): VaccinationDraft {
+  const record = nextVaccination(records)?.record ?? records[0];
+  return {
+    id: record?.id,
+    name: record?.name ?? "",
+    administeredAt: record?.administeredAt ?? "",
+    dueAt: record?.dueAt ?? "",
+    note: record?.note ?? "",
+  };
+}
+
 function isMissingPetPhotoColumnError(error: unknown) {
   const message =
     typeof error === "object" && error && "message" in error
@@ -468,6 +605,7 @@ export default function App() {
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [plans, setPlans] = useState<EpisodePlan[]>([]);
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
+  const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMessage, setHistoryMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
@@ -532,6 +670,13 @@ export default function App() {
         history.filter((record) => record.petId && record.petId === selectedPetId),
       ),
     [history, selectedPetId],
+  );
+  const selectedPetVaccinations = useMemo(
+    () =>
+      selectedPetId
+        ? vaccinations.filter((record) => record.petId === selectedPetId)
+        : [],
+    [selectedPetId, vaccinations],
   );
   const healthFlow = useMemo(
     () => summarizeHealthFlow(selectedPetHistory, selectedPet?.name),
@@ -666,7 +811,7 @@ export default function App() {
       setDraft(emptyDraft);
       setPets([]);
       setSelectedPetId(undefined);
-      setPetDraft(emptyPetDraft);
+      setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
       setPetFormExpanded(false);
       setEditingPetId(null);
       setHealthInput(null);
@@ -677,6 +822,7 @@ export default function App() {
       setEpisodes([]);
       setPlans([]);
       setProgress([]);
+      setVaccinations([]);
       setHistoryMessage("");
       setShareMessage("");
       setEditingPlanEpisodeId(null);
@@ -785,6 +931,9 @@ export default function App() {
       }),
     );
     setPets(loadedPets);
+    await loadVaccinationsForPets(
+      loadedPets.map((pet) => pet.id).filter((id): id is string => Boolean(id)),
+    );
     setSelectedPetId((current) =>
       current && loadedPets.some((pet) => pet.id === current)
         ? current
@@ -793,7 +942,7 @@ export default function App() {
     setPetFormExpanded(!loadedPets.length);
     if (!loadedPets.length) {
       setMainSection("home");
-      setPetDraft(emptyPetDraft);
+      setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
       setEditingPetId(null);
       setHealthInput(null);
       setLatestResult(null);
@@ -803,6 +952,7 @@ export default function App() {
       setEpisodes([]);
       setPlans([]);
       setProgress([]);
+      setVaccinations([]);
       setHistoryMessage("");
       setShareMessage("");
       setEditingPlanEpisodeId(null);
@@ -881,6 +1031,74 @@ export default function App() {
       setHistoryLoading(false);
     }
   }, []);
+
+  async function loadVaccinationsForPets(petIds: string[]) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !petIds.length) {
+      setVaccinations([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("pet_vaccinations")
+      .select(
+        "id,pet_id,vaccine_name,administered_at,due_at,status,note,created_at,updated_at",
+      )
+      .in("pet_id", petIds)
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
+    if (isMissingVaccinationTableError(error)) {
+      setVaccinations([]);
+      return;
+    }
+    if (error) return;
+    setVaccinations(((data ?? []) as VaccinationRow[]).map(toVaccinationRecord));
+  }
+
+  async function saveVaccinationForPet(
+    petId: string,
+    draft: VaccinationDraft,
+  ): Promise<{ deletedId?: string; record?: VaccinationRecord; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !user) return {};
+
+    if (!hasVaccinationDraft(draft)) {
+      if (!draft.id) return {};
+      const { error } = await supabase
+        .from("pet_vaccinations")
+        .delete()
+        .eq("id", draft.id)
+        .eq("pet_id", petId);
+      if (isMissingVaccinationTableError(error)) {
+        return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
+      }
+      if (error) return { error: "예방접종 일정을 지우지 못했어요." };
+      return { deletedId: draft.id };
+    }
+
+    const payload = {
+      ...(draft.id ? { id: draft.id } : {}),
+      user_id: user.id,
+      pet_id: petId,
+      vaccine_name: draft.name.trim(),
+      administered_at: draft.administeredAt || null,
+      due_at: draft.dueAt || null,
+      status: draft.dueAt ? "scheduled" : "done",
+      note: draft.note.trim(),
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from("pet_vaccinations")
+      .upsert(payload)
+      .select(
+        "id,pet_id,vaccine_name,administered_at,due_at,status,note,created_at,updated_at",
+      )
+      .single();
+    if (isMissingVaccinationTableError(error)) {
+      return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
+    }
+    if (error || !data) return { error: "예방접종 일정을 저장하지 못했어요." };
+    return { record: toVaccinationRecord(data as VaccinationRow) };
+  }
 
   async function uploadPendingMediaFiles({
     accessToken,
@@ -1295,7 +1513,7 @@ export default function App() {
 
   function startNewPet() {
     setEditingPetId(null);
-    setPetDraft(emptyPetDraft);
+    setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
     setPetFormExpanded(true);
     setPetMessage("");
   }
@@ -1303,6 +1521,9 @@ export default function App() {
   function startEditingPet(pet: PetProfile) {
     setEditingPetId(pet.id ?? null);
     setPetFormExpanded(true);
+    const petVaccinations = pet.id
+      ? vaccinations.filter((record) => record.petId === pet.id)
+      : [];
     setPetDraft({
       name: pet.name,
       species: pet.species,
@@ -1313,13 +1534,14 @@ export default function App() {
       photoPath: pet.photoPath ?? "",
       photoUrl: pet.photoUrl ?? "",
       photoRemoved: false,
+      vaccination: vaccinationDraftFromRecords(petVaccinations),
     });
     setPetMessage("");
   }
 
   function closePetForm() {
     setEditingPetId(null);
-    setPetDraft(emptyPetDraft);
+    setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
     setPetFormExpanded(false);
     setPetMessage("");
   }
@@ -1548,6 +1770,28 @@ export default function App() {
       return;
     }
 
+    if (hasVaccinationDraft(petDraft.vaccination)) {
+      if (!petDraft.vaccination.name.trim()) {
+        setPetMessage("예방접종 이름을 입력해 주세요.");
+        return;
+      }
+      if (!petDraft.vaccination.administeredAt && !petDraft.vaccination.dueAt) {
+        setPetMessage("접종일 또는 다음 예정일 중 하나는 입력해 주세요.");
+        return;
+      }
+      if (
+        petDraft.vaccination.administeredAt &&
+        !isDateInput(petDraft.vaccination.administeredAt)
+      ) {
+        setPetMessage("접종일은 YYYY-MM-DD 형식으로 입력해 주세요.");
+        return;
+      }
+      if (petDraft.vaccination.dueAt && !isDateInput(petDraft.vaccination.dueAt)) {
+        setPetMessage("다음 예정일은 YYYY-MM-DD 형식으로 입력해 주세요.");
+        return;
+      }
+    }
+
     setPetLoading(true);
     setPetMessage("");
     const payload = {
@@ -1643,7 +1887,6 @@ export default function App() {
       return;
     }
 
-    setPetLoading(false);
     const savedPet: PetProfile = {
       id: data.id,
       name: petDraft.name.trim(),
@@ -1655,6 +1898,27 @@ export default function App() {
       photoPath,
       photoUrl,
     };
+    const vaccinationSave = await saveVaccinationForPet(data.id, petDraft.vaccination);
+    if (vaccinationSave.error) {
+      setPetLoading(false);
+      setPetMessage(vaccinationSave.error);
+      return;
+    }
+    setVaccinations((current) => {
+      if (vaccinationSave.deletedId) {
+        return current.filter((item) => item.id !== vaccinationSave.deletedId);
+      }
+      if (!vaccinationSave.record) return current;
+      const exists = current.some((item) => item.id === vaccinationSave.record?.id);
+      return exists
+        ? current.map((item) =>
+            item.id === vaccinationSave.record?.id
+              ? (vaccinationSave.record as VaccinationRecord)
+              : item,
+          )
+        : [vaccinationSave.record, ...current];
+    });
+    setPetLoading(false);
     setPets((current) => {
       const exists = current.some((pet) => pet.id === data.id);
       return exists
@@ -1663,7 +1927,7 @@ export default function App() {
     });
     setSelectedPetId(data.id);
     setEditingPetId(null);
-    setPetDraft(emptyPetDraft);
+    setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
     setPetFormExpanded(false);
     setPetMessage("반려동물 정보가 저장됐어요.");
   }
@@ -2377,6 +2641,7 @@ export default function App() {
                       latestResult={latestResult}
                       pets={pets}
                       selectedPet={selectedPet}
+                      vaccinations={selectedPetVaccinations}
                       onEditPet={() => {
                         if (selectedPet) {
                           startEditingPet(selectedPet);
@@ -2577,6 +2842,7 @@ function HomeDashboard({
   latestResult,
   pets,
   selectedPet,
+  vaccinations,
   onEditPet,
   onGoRecord,
   onGoReports,
@@ -2586,6 +2852,7 @@ function HomeDashboard({
   latestResult: AnalysisResult | null;
   pets: PetProfile[];
   selectedPet?: PetProfile;
+  vaccinations: VaccinationRecord[];
   onEditPet: () => void;
   onGoRecord: () => void;
   onGoReports: () => void;
@@ -2599,6 +2866,7 @@ function HomeDashboard({
   const petSummary = selectedPet
     ? [speciesLabel(selectedPet.species), selectedPet.breed].filter(Boolean).join(" · ")
     : "함께 볼 아이를 골라주세요";
+  const vaccination = vaccinationReminder(vaccinations);
 
   if (!pets.length) {
     return (
@@ -2635,7 +2903,19 @@ function HomeDashboard({
           <Text style={styles.cardTitle}>
             흐름을 남기면 빠르게 알 수 있어요
           </Text>
-          <Text style={styles.cardText}>기록은 짧게, 정리는 펫플로우가 도와드려요.</Text>
+          {vaccination ? (
+            <View
+              style={[
+                styles.homeVaccinationLine,
+                vaccination.tone === "due" && styles.homeVaccinationLineDue,
+                vaccination.tone === "overdue" && styles.homeVaccinationLineOverdue,
+              ]}
+            >
+              <Text style={styles.homeVaccinationLabel}>{vaccination.label}</Text>
+              <Text style={styles.homeVaccinationTitle}>{vaccination.title}</Text>
+              <Text style={styles.homeVaccinationText}>{vaccination.description}</Text>
+            </View>
+          ) : null}
         </View>
         <View style={styles.petPhotoSlot}>
           {selectedPet?.photoUrl ? (
@@ -3545,6 +3825,84 @@ function PetForm({
         style={styles.input}
         value={draft.weight}
       />
+
+      <View style={styles.vaccinationInline}>
+        <View style={styles.vaccinationInlineHeader}>
+          <View>
+            <Text style={styles.vaccinationInlineTitle}>예방접종</Text>
+            <Text style={styles.vaccinationInlineText}>
+              접종 기록과 다음 병원 예정일을 함께 남겨요.
+            </Text>
+          </View>
+          <Text style={styles.vaccinationInlineBadge}>
+            {draft.vaccination.dueAt ? "일정 있음" : "선택"}
+          </Text>
+        </View>
+        <FieldLabel label="접종명" />
+        <TextInput
+          maxLength={80}
+          onChangeText={(name) =>
+            setDraft({
+              ...draft,
+              vaccination: { ...draft.vaccination, name },
+            })
+          }
+          placeholder="예: 종합백신, 광견병"
+          placeholderTextColor={colors.placeholder}
+          style={styles.input}
+          value={draft.vaccination.name}
+        />
+        <View style={styles.inlineDateGrid}>
+          <View style={styles.inlineDateField}>
+            <FieldLabel label="맞은 날" />
+            <TextInput
+              keyboardType="numbers-and-punctuation"
+              maxLength={10}
+              onChangeText={(administeredAt) =>
+                setDraft({
+                  ...draft,
+                  vaccination: { ...draft.vaccination, administeredAt },
+                })
+              }
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.placeholder}
+              style={styles.input}
+              value={draft.vaccination.administeredAt}
+            />
+          </View>
+          <View style={styles.inlineDateField}>
+            <FieldLabel label="다음 예정일" />
+            <TextInput
+              keyboardType="numbers-and-punctuation"
+              maxLength={10}
+              onChangeText={(dueAt) =>
+                setDraft({
+                  ...draft,
+                  vaccination: { ...draft.vaccination, dueAt },
+                })
+              }
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.placeholder}
+              style={styles.input}
+              value={draft.vaccination.dueAt}
+            />
+          </View>
+        </View>
+        <FieldLabel label="메모" />
+        <TextInput
+          maxLength={120}
+          onChangeText={(note) =>
+            setDraft({
+              ...draft,
+              vaccination: { ...draft.vaccination, note },
+            })
+          }
+          placeholder="병원명이나 특이사항"
+          placeholderTextColor={colors.placeholder}
+          style={styles.input}
+          value={draft.vaccination.note}
+        />
+      </View>
 
       <PrimaryButton
         disabled={loading}
@@ -5428,6 +5786,41 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "900",
   },
+  homeVaccinationLine: {
+    alignSelf: "flex-start",
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#d8eadf",
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  homeVaccinationLineDue: {
+    borderColor: "#efd79d",
+    backgroundColor: "#fff9ec",
+  },
+  homeVaccinationLineOverdue: {
+    borderColor: "#e6b5a8",
+    backgroundColor: "#fff4ef",
+  },
+  homeVaccinationLabel: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  homeVaccinationTitle: {
+    marginTop: 3,
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  homeVaccinationText: {
+    marginTop: 2,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
   petPhotoSlot: {
     width: 72,
     height: 72,
@@ -6264,6 +6657,51 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     fontWeight: "900",
+  },
+  vaccinationInline: {
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
+    padding: 13,
+  },
+  vaccinationInlineHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 8,
+  },
+  vaccinationInlineTitle: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  vaccinationInlineText: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  vaccinationInlineBadge: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  inlineDateGrid: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  inlineDateField: {
+    flex: 1,
+    minWidth: 0,
   },
   formTitle: {
     flex: 1,
