@@ -1773,6 +1773,14 @@ p {
   align-items: center;
   gap: 8px;
 }
+.deployment-footnote {
+  margin: 14px 0 0;
+  color: #8fa09a;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
 .identity-link-panel {
   display: grid;
   gap: 12px;

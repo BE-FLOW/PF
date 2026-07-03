@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Application from "expo-application";
 import { useFonts } from "expo-font";
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -3420,6 +3421,21 @@ function AccountCard({
       >
         <Text style={styles.secondaryButtonText}>로그아웃</Text>
       </TouchableOpacity>
+      <AppBuildInfo />
+    </View>
+  );
+}
+
+function AppBuildInfo() {
+  const version = Application.nativeApplicationVersion ?? "dev";
+  const build = Application.nativeBuildVersion ?? "dev";
+  const platform = Platform.OS === "ios" ? "iOS" : "Android";
+
+  return (
+    <View style={styles.buildInfo}>
+      <Text style={styles.buildInfoText}>
+        {platform} {version} · 빌드 {build}
+      </Text>
     </View>
   );
 }
@@ -6394,6 +6410,16 @@ const styles = StyleSheet.create({
     color: colors.green,
     fontSize: 14,
     fontWeight: "900",
+  },
+  buildInfo: {
+    marginTop: 12,
+    alignItems: "center",
+  },
+  buildInfoText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.1,
   },
   smallButton: {
     borderRadius: 999,

@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { hasLinkedProvider, type OAuthProvider } from "@/lib/auth-identities";
 import { formatKoreanMobile, normalizeKoreanMobile } from "@/lib/phone";
@@ -12,6 +12,11 @@ import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
 type TesterDraft = Pick<TesterProfile, "nickname" | "phone">;
+type DeploymentHealth = {
+  database?: string;
+  environment?: string;
+  version?: string;
+};
 
 const emptyTesterDraft: TesterDraft = {
   nickname: "",
@@ -565,6 +570,36 @@ export function AccountView({
           </details>
         </section>
       )}
+      <DeploymentInfo />
     </div>
+  );
+}
+
+function DeploymentInfo() {
+  const [health, setHealth] = useState<DeploymentHealth | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void fetch("/api/health", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: DeploymentHealth | null) => {
+        if (mounted) setHealth(payload);
+      })
+      .catch(() => {
+        if (mounted) setHealth(null);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const environment = health?.environment ?? "local";
+  const version = health?.version ?? "dev";
+
+  return (
+    <p className="deployment-footnote" aria-label="현재 배포 정보">
+      웹 {environment} · 빌드 {version}
+    </p>
   );
 }
