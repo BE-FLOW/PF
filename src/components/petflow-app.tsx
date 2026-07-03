@@ -2263,6 +2263,21 @@ function HistoryView({
       return new Date(bTime).getTime() - new Date(aTime).getTime();
     });
   }, [episodes, history]);
+  const [expandedEpisodeKey, setExpandedEpisodeKey] = useState<string | null>(null);
+  const collapsedEpisodeKey = "__petflow_collapsed__";
+  const defaultEpisodeKey =
+    episodeGroups[0]?.episode?.id ??
+    episodeGroups[0]?.records[0]?.result.id ??
+    null;
+  const activeEpisodeKey =
+    expandedEpisodeKey === collapsedEpisodeKey
+      ? null
+      : episodeGroups.some((group) => {
+          const key = group.episode?.id ?? group.records[0]?.result.id;
+          return key === expandedEpisodeKey;
+        })
+        ? expandedEpisodeKey
+        : defaultEpisodeKey;
 
   return (
     <div className="content-wrap">
@@ -2309,6 +2324,7 @@ function HistoryView({
               (total, record) => total + (record.media?.length ?? 0),
               0,
             );
+            const isExpanded = activeEpisodeKey === groupKey;
             return (
               <section
                 className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
@@ -2338,6 +2354,17 @@ function HistoryView({
                       {mediaCount ? ` · 첨부 ${mediaCount}개` : ""}
                     </span>
                     <button
+                      className="secondary-button compact episode-toggle-button"
+                      onClick={() =>
+                        setExpandedEpisodeKey(
+                          isExpanded ? collapsedEpisodeKey : groupKey,
+                        )
+                      }
+                      type="button"
+                    >
+                      {isExpanded ? "접기" : "자세히 보기"}
+                    </button>
+                    <button
                       className="secondary-button compact"
                       onClick={() => onOpenReport(group.records, group.episode)}
                     >
@@ -2357,46 +2384,63 @@ function HistoryView({
                     )}
                   </div>
                 </div>
-                <div className="history-grid">
-                  {group.records.map((record) => (
-                    <article
-                      key={record.result.id}
-                      className="history-card"
-                    >
-                      <button
-                        className="history-card-main"
-                        onClick={() => onSelect(record)}
+                {isExpanded ? (
+                  <div className="history-grid">
+                    {group.records.map((record) => (
+                      <article
+                        key={record.result.id}
+                        className="history-card"
                       >
-                        <span className="history-date">
-                          {new Date(record.result.createdAt).getDate()}일
-                        </span>
-                        <span>
-                          <h3>{record.result.headline}</h3>
-                          <p>
-                            {formatDate(record.result.createdAt)} · 증상{" "}
-                            {record.input.symptoms.length}개 기록
-                          </p>
-                        </span>
-                        <span className={`history-risk ${record.result.riskLevel}`}>
-                          {riskLabel[record.result.riskLevel]}
-                        </span>
-                      </button>
-                      <HistoryMediaPreview media={record.media} />
-                      <div className="history-card-actions">
-                        <button type="button" onClick={() => onEdit(record)}>
-                          수정
-                        </button>
                         <button
-                          type="button"
-                          className="danger"
-                          onClick={() => onDelete(record)}
+                          className="history-card-main"
+                          onClick={() => onSelect(record)}
                         >
-                          삭제
+                          <span className="history-date">
+                            {new Date(record.result.createdAt).getDate()}일
+                          </span>
+                          <span>
+                            <h3>{record.result.headline}</h3>
+                            <p>
+                              {formatDate(record.result.createdAt)} · 증상{" "}
+                              {record.input.symptoms.length}개 기록
+                            </p>
+                          </span>
+                          <span className={`history-risk ${record.result.riskLevel}`}>
+                            {riskLabel[record.result.riskLevel]}
+                          </span>
                         </button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
+                        <HistoryMediaPreview media={record.media} />
+                        <div className="history-card-actions">
+                          <button type="button" onClick={() => onEdit(record)}>
+                            수정
+                          </button>
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => onDelete(record)}
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <button
+                    className="episode-compact-preview"
+                    onClick={() => setExpandedEpisodeKey(groupKey)}
+                    type="button"
+                  >
+                    <span>
+                      최근 기록 {formatDate(latest.result.createdAt)} ·{" "}
+                      {group.records.length}회
+                    </span>
+                    <strong>{latest.result.headline}</strong>
+                    <small>
+                      펼치면 기록, 첨부 사진, 수정·삭제를 확인할 수 있어요.
+                    </small>
+                  </button>
+                )}
               </section>
             );
           })}

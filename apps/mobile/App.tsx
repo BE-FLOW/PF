@@ -4399,7 +4399,17 @@ function HealthHistoryCard({
   shareMessage: string;
 }) {
   const recent = history.slice(0, 5);
-  const shareGroups = episodeGroups.slice(0, 4);
+  const shareGroups = useMemo(() => episodeGroups.slice(0, 4), [episodeGroups]);
+  const [expandedReportKey, setExpandedReportKey] = useState<string | null>(null);
+  const collapsedReportKey = "__petflow_collapsed__";
+  const defaultReportKey = shareGroups[0]?.key ?? null;
+  const activeReportKey =
+    expandedReportKey === collapsedReportKey
+      ? null
+      : shareGroups.some((group) => group.key === expandedReportKey)
+        ? expandedReportKey
+        : defaultReportKey;
+
   const getAiFeedbackDraft = (draft?: VetReviewDraft) =>
     draft?.usageId
       ? aiFeedbackDrafts[draft.usageId] ?? defaultAiFeedbackDraft
@@ -4468,44 +4478,51 @@ function HealthHistoryCard({
       </Text>
       {shareGroups.length ? (
         <View style={styles.episodeList}>
-          {shareGroups.map((group) => (
-            <EpisodeReportItem
-              aiAccess={aiAccess}
-              aiFeedbackDraft={getAiFeedbackDraft(
-                group.episode ? vetDrafts[group.episode.id] : undefined,
-              )}
-              aiFeedbackNotice={aiFeedbackNotice}
-              aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
-              editingPlanEpisodeId={editingPlanEpisodeId}
-              group={group}
-              key={group.key}
-              planDraft={planDraft}
-              planNotice={planNotice}
-              planSavingEpisodeId={planSavingEpisodeId}
-              planTogglingTaskId={planTogglingTaskId}
-              progressDraft={progressDraft}
-              progressNotice={progressNotice}
-              progressSavingKey={progressSavingKey}
-              vetDraft={group.episode ? vetDrafts[group.episode.id] : undefined}
-              vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
-              vetDraftNotice={vetDraftNotice}
-              savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
-              onCancelPlanEdit={onCancelPlanEdit}
-              onCancelProgressEdit={onCancelProgressEdit}
-              onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
-              onChangePlanDraft={onChangePlanDraft}
-              onChangeProgressDraft={onChangeProgressDraft}
-              onCreateVetDraft={onCreateVetDraft}
-              onSaveAiFeedback={onSaveAiFeedback}
-              onSavePlan={onSavePlan}
-              onSaveProgress={onSaveProgress}
-              onShareReport={onShareReport}
-              onShareVetDraft={onShareVetDraft}
-              onStartPlanEdit={onStartPlanEdit}
-              onStartProgressEdit={onStartProgressEdit}
-              onTogglePlanTask={onTogglePlanTask}
-            />
-          ))}
+          {shareGroups.map((group) => {
+            const expanded = activeReportKey === group.key;
+            return (
+              <EpisodeReportItem
+                aiAccess={aiAccess}
+                aiFeedbackDraft={getAiFeedbackDraft(
+                  group.episode ? vetDrafts[group.episode.id] : undefined,
+                )}
+                aiFeedbackNotice={aiFeedbackNotice}
+                aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
+                editingPlanEpisodeId={editingPlanEpisodeId}
+                expanded={expanded}
+                group={group}
+                key={group.key}
+                planDraft={planDraft}
+                planNotice={planNotice}
+                planSavingEpisodeId={planSavingEpisodeId}
+                planTogglingTaskId={planTogglingTaskId}
+                progressDraft={progressDraft}
+                progressNotice={progressNotice}
+                progressSavingKey={progressSavingKey}
+                vetDraft={group.episode ? vetDrafts[group.episode.id] : undefined}
+                vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
+                vetDraftNotice={vetDraftNotice}
+                savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
+                onCancelPlanEdit={onCancelPlanEdit}
+                onCancelProgressEdit={onCancelProgressEdit}
+                onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
+                onChangePlanDraft={onChangePlanDraft}
+                onChangeProgressDraft={onChangeProgressDraft}
+                onCreateVetDraft={onCreateVetDraft}
+                onSaveAiFeedback={onSaveAiFeedback}
+                onSavePlan={onSavePlan}
+                onSaveProgress={onSaveProgress}
+                onShareReport={onShareReport}
+                onShareVetDraft={onShareVetDraft}
+                onStartPlanEdit={onStartPlanEdit}
+                onStartProgressEdit={onStartProgressEdit}
+                onTogglePlanTask={onTogglePlanTask}
+                onToggleReport={() =>
+                  setExpandedReportKey(expanded ? collapsedReportKey : group.key)
+                }
+              />
+            );
+          })}
         </View>
       ) : (
         <Text style={styles.emptyText}>
@@ -4541,6 +4558,7 @@ function EpisodeReportItem({
   aiFeedbackNotice,
   aiFeedbackSavingUsageId,
   editingPlanEpisodeId,
+  expanded,
   group,
   planDraft,
   planNotice,
@@ -4567,12 +4585,14 @@ function EpisodeReportItem({
   onStartPlanEdit,
   onStartProgressEdit,
   onTogglePlanTask,
+  onToggleReport,
 }: {
   aiAccess: AiAccessStatus | null;
   aiFeedbackDraft: AiFeedbackDraft;
   aiFeedbackNotice: EpisodeNotice;
   aiFeedbackSavingUsageId: string | null;
   editingPlanEpisodeId: string | null;
+  expanded: boolean;
   group: EpisodeReportGroup;
   planDraft: string;
   planNotice: EpisodeNotice;
@@ -4606,6 +4626,7 @@ function EpisodeReportItem({
     taskId: string,
     completed: boolean,
   ) => Promise<void>;
+  onToggleReport: () => void;
 }) {
   const episodeId = group.episode?.id;
   const isOpen = group.episode?.status === "open";
@@ -4665,6 +4686,15 @@ function EpisodeReportItem({
         </View>
         <TouchableOpacity
           activeOpacity={0.85}
+          onPress={onToggleReport}
+          style={styles.episodeToggleButton}
+        >
+          <Text style={styles.episodeToggleButtonText}>
+            {expanded ? "접기" : "보기"}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          activeOpacity={0.85}
           onPress={() => void onShareReport(group.report)}
           style={styles.episodeShareButton}
         >
@@ -4679,8 +4709,10 @@ function EpisodeReportItem({
         <Text style={styles.episodeMeta}>{mediaSummary}</Text>
       </View>
 
-      {episodeId ? (
-        <View style={styles.planBox}>
+      {expanded ? (
+        <>
+          {episodeId ? (
+            <View style={styles.planBox}>
           <View style={styles.planHeader}>
             <View style={styles.cardHeaderText}>
               <Text style={styles.planTitle}>병원에서 받은 안내</Text>
@@ -5178,13 +5210,26 @@ function EpisodeReportItem({
         </View>
       ) : null}
 
-      <View style={styles.episodePreviewBox}>
-        <Text style={styles.episodePreviewTitle}>제출용 미리보기</Text>
-        <Text numberOfLines={5} style={styles.episodePreviewText}>
-          {group.report.shareText}
-        </Text>
-      </View>
-      <Text style={styles.disclaimer}>{group.report.disclaimer}</Text>
+          <View style={styles.episodePreviewBox}>
+            <Text style={styles.episodePreviewTitle}>제출용 미리보기</Text>
+            <Text numberOfLines={5} style={styles.episodePreviewText}>
+              {group.report.shareText}
+            </Text>
+          </View>
+          <Text style={styles.disclaimer}>{group.report.disclaimer}</Text>
+        </>
+      ) : (
+        <TouchableOpacity
+          activeOpacity={0.86}
+          onPress={onToggleReport}
+          style={styles.episodeCompactBox}
+        >
+          <Text style={styles.episodeCompactTitle}>요약만 먼저 보여드려요</Text>
+          <Text style={styles.episodeCompactText}>
+            계획, 경과, GPT 초안, 제출 미리보기는 필요할 때 펼쳐서 확인해요.
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -7103,6 +7148,19 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
   },
+  episodeToggleButton: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  episodeToggleButtonText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
   episodeShareButton: {
     borderRadius: 999,
     backgroundColor: colors.green,
@@ -7129,6 +7187,26 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     paddingHorizontal: 9,
     paddingVertical: 6,
+  },
+  episodeCompactBox: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 12,
+  },
+  episodeCompactTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  episodeCompactText: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
   },
   planBox: {
     marginTop: 13,
