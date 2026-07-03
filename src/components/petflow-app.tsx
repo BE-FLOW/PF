@@ -419,6 +419,54 @@ function MediaThumbnail({
   );
 }
 
+function HistoryMediaPreview({ media = [] }: { media?: ReportMediaAttachment[] }) {
+  const [open, setOpen] = useState(false);
+  if (!media.length) return null;
+
+  const mediaSummary = formatReportMediaSummary(media);
+
+  return (
+    <div className={`history-media ${open ? "open" : ""}`}>
+      <button
+        type="button"
+        className="history-media-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {open ? `${mediaSummary} 접기` : `${mediaSummary} 보기`}
+      </button>
+      {open && (
+        <div className="history-media-grid">
+          {media.map((item) => (
+            <div className="history-media-card" key={item.id}>
+              <div className="history-media-thumb">
+                <MediaThumbnail
+                  kind={item.kind}
+                  label={item.fileName}
+                  src={item.signedUrl}
+                  videoControls
+                />
+              </div>
+              <span>
+                <strong>{item.fileName}</strong>
+                <small>
+                  {item.kind === "image" ? "사진" : "영상"} ·{" "}
+                  {formatFileSize(item.sizeBytes)}
+                </small>
+                {item.signedUrl && (
+                  <a href={item.signedUrl} target="_blank" rel="noreferrer">
+                    크게 보기
+                  </a>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function getOrCreateClientId() {
   const storageKey = "petflow-client-id";
   try {
@@ -2327,15 +2375,13 @@ function HistoryView({
                           <p>
                             {formatDate(record.result.createdAt)} · 증상{" "}
                             {record.input.symptoms.length}개 기록
-                            {record.media?.length
-                              ? ` · 첨부 ${record.media.length}개`
-                              : ""}
                           </p>
                         </span>
                         <span className={`history-risk ${record.result.riskLevel}`}>
                           {riskLabel[record.result.riskLevel]}
                         </span>
                       </button>
+                      <HistoryMediaPreview media={record.media} />
                       <div className="history-card-actions">
                         <button type="button" onClick={() => onEdit(record)}>
                           수정

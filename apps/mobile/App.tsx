@@ -5182,8 +5182,20 @@ function HistoryRecordItem({
   onDelete: (record: HistoryRecord) => void;
   onEdit: (record: HistoryRecord) => void;
 }) {
-  const mediaSummary = formatReportMediaSummary(record.media ?? []);
+  const media = record.media ?? [];
+  const mediaSummary = formatReportMediaSummary(media);
   const checkScore = displayCheckScore(record.result.riskScore);
+  const [mediaOpen, setMediaOpen] = useState(false);
+
+  async function openAttachedMedia(item: ReportMediaAttachment) {
+    if (!item.signedUrl) return;
+    try {
+      await Linking.openURL(item.signedUrl);
+    } catch {
+      Alert.alert("첨부를 열지 못했어요", "잠시 후 다시 시도해 주세요.");
+    }
+  }
+
   return (
     <View style={styles.historyItem}>
       <View style={styles.historyItemHeader}>
@@ -5199,11 +5211,56 @@ function HistoryRecordItem({
         {optionLabel(levelOptions, record.input.energy)} ·{" "}
         {optionLabel(durationOptions, record.input.duration)}
       </Text>
-      <Text style={styles.historyStorage}>
-        {record.result.storage === "remote" ? "서버 저장" : "기기 내 결과"}
-        {record.episodeId ? " · 사건 연결" : ""}
-        {mediaSummary ? ` · ${mediaSummary}` : ""}
-      </Text>
+      <View style={styles.historyStorageRow}>
+        <Text style={styles.historyStorage}>
+          {record.result.storage === "remote" ? "서버 저장" : "기기 내 결과"}
+          {record.episodeId ? " · 사건 연결" : ""}
+        </Text>
+        {mediaSummary ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setMediaOpen((current) => !current)}
+            style={styles.historyMediaButton}
+          >
+            <Text style={styles.historyMediaButtonText}>
+              {mediaOpen ? `${mediaSummary} 접기` : `${mediaSummary} 보기`}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {mediaOpen ? (
+        <View style={styles.historyMediaList}>
+          {media.map((item) => (
+            <TouchableOpacity
+              activeOpacity={0.86}
+              disabled={!item.signedUrl}
+              key={item.id}
+              onPress={() => void openAttachedMedia(item)}
+              style={styles.historyMediaItem}
+            >
+              {item.kind === "image" && item.signedUrl ? (
+                <Image source={{ uri: item.signedUrl }} style={styles.historyMediaThumb} />
+              ) : (
+                <View style={[styles.historyMediaThumb, styles.historyVideoThumb]}>
+                  <Text style={styles.videoThumbText}>
+                    {item.kind === "video" ? "영상" : "사진"}
+                  </Text>
+                </View>
+              )}
+              <View style={styles.historyMediaText}>
+                <Text numberOfLines={1} style={styles.historyMediaFileName}>
+                  {item.fileName}
+                </Text>
+                <Text style={styles.historyMediaFileMeta}>
+                  {item.kind === "image" ? "사진" : "영상"} ·{" "}
+                  {formatFileSize(item.sizeBytes)}
+                  {item.signedUrl ? " · 탭해서 크게 보기" : ""}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.historyActions}>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -7605,10 +7662,67 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   historyStorage: {
-    marginTop: 8,
     color: colors.green,
     fontSize: 12,
     fontWeight: "900",
+  },
+  historyStorageRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 7,
+    marginTop: 8,
+  },
+  historyMediaButton: {
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  historyMediaButtonText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  historyMediaList: {
+    gap: 8,
+    marginTop: 10,
+  },
+  historyMediaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 9,
+  },
+  historyMediaThumb: {
+    width: 54,
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: colors.greenSoft,
+  },
+  historyVideoThumb: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyMediaText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  historyMediaFileName: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  historyMediaFileMeta: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
   },
   historyActions: {
     flexDirection: "row",
