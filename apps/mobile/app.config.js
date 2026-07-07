@@ -16,7 +16,12 @@ module.exports = {
       backgroundColor: "#f2faeb",
     },
     plugins: [
-      "expo-web-browser",
+      [
+        "expo-web-browser",
+        {
+          experimentalLauncherActivity: false,
+        },
+      ],
       [
         "expo-image-picker",
         {

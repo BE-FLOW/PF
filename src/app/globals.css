@@ -1809,6 +1809,30 @@ p {
   font-weight: 800;
   line-height: 1.6;
 }
+.identity-provider-list {
+  display: grid;
+  gap: 8px;
+}
+.identity-provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 16px;
+  background: #ffffff;
+}
+.identity-provider-copy {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.identity-provider-copy strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
 .identity-link-badge {
   flex: 0 0 auto;
   padding: 7px 10px;

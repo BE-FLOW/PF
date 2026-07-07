@@ -8,6 +8,10 @@
 ## 테스트 환경 설정
 
 - Google/Apple OAuth Provider와 Redirect URL을 Supabase Auth에 연결한다.
+- 모바일 OAuth Redirect URL에는 `petflow://auth-callback`과
+  `petflow:///auth-callback`을 모두 허용한다.
+- 앱은 `AuthSession.makeRedirectUri({ scheme: "petflow", path: "auth-callback" })`로
+  콜백을 만들고, 같은 콜백 URL이 두 번 들어와도 세션 교환은 한 번만 처리한다.
 - 이메일·비밀번호 가입은 기존 테스트 계정 호환용 보조 경로로만 유지한다.
 - 반려동물 데이터는 `public.pets`에 저장한다.
 - RLS 정책으로 로그인 사용자는 본인 반려동물만 조회·수정·삭제할 수 있다.

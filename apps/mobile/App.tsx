@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Application from "expo-application";
+import * as AuthSession from "expo-auth-session";
 import { useFonts } from "expo-font";
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -27,8 +28,10 @@ import {
 import { testerConsentVersion, testerPrivacySummary } from "./src/lib/privacy";
 import {
   hasLinkedProvider,
+  oauthCallbackErrorMessage,
   oauthLinkErrorMessage,
   oauthProviderLabels,
+  oauthSignInErrorMessage,
   type OAuthProvider,
 } from "./src/lib/auth";
 import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
@@ -92,6 +95,18 @@ import {
 } from "./src/lib/vaccinations";
 
 WebBrowser.maybeCompleteAuthSession();
+
+const oauthRedirectTo = AuthSession.makeRedirectUri({
+  scheme: "petflow",
+  path: "auth-callback",
+});
+const oauthCallbackPrefixes = Array.from(
+  new Set([oauthRedirectTo, "petflow://auth-callback", "petflow:///auth-callback"]),
+);
+
+function isOAuthCallbackUrl(url: string | null): url is string {
+  return typeof url === "string" && oauthCallbackPrefixes.some((prefix) => url.startsWith(prefix));
+}
 
 type AuthMode = "login" | "signup";
 type MainSection = "home" | "record" | "reports" | "account";
@@ -455,7 +470,7 @@ export default function App() {
   const [fontsLoaded, fontLoadError] = useFonts(petFlowFontAssets);
   const configured = isSupabaseConfigured();
   petFlowFontsReady = fontsLoaded && !fontLoadError;
-  const oauthSessionActiveRef = useRef(false);
+  const processedOAuthUrlsRef = useRef<Set<string>>(new Set());
 
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -1092,6 +1107,36 @@ export default function App() {
     return storagePath;
   }
 
+  const finishOAuthRedirect = useCallback(
+    async (
+      url: string | null,
+      setErrorMessage: (message: string) => void,
+    ): Promise<"completed" | "duplicate" | "failed" | "ignored"> => {
+      if (!isOAuthCallbackUrl(url)) return "ignored";
+      if (processedOAuthUrlsRef.current.has(url)) return "duplicate";
+
+      processedOAuthUrlsRef.current.add(url);
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        processedOAuthUrlsRef.current.delete(url);
+        setErrorMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
+        return "failed";
+      }
+
+      const { error } = await supabase.auth.exchangeCodeForSession(url);
+      if (error) {
+        processedOAuthUrlsRef.current.delete(url);
+        setErrorMessage(oauthCallbackErrorMessage(error));
+        return "failed";
+      }
+
+      const { data } = await supabase.auth.getUser();
+      await loadAccount(data.user ?? null);
+      return "completed";
+    },
+    [loadAccount],
+  );
+
   useEffect(() => {
     const supabase = getSupabaseClient();
     if (!supabase) {
@@ -1109,16 +1154,9 @@ export default function App() {
   useEffect(() => {
     const supabase = getSupabaseClient();
     if (!supabase) return undefined;
-    const authClient = supabase.auth;
 
     async function exchangeAuthUrl(url: string | null) {
-      if (!url || !url.startsWith("petflow://auth-callback")) return;
-      if (oauthSessionActiveRef.current) return;
-
-      const { error } = await authClient.exchangeCodeForSession(url);
-      if (error) {
-        setMessage("이메일 인증 링크를 처리하지 못했어요. 다시 로그인해 주세요.");
-      }
+      await finishOAuthRedirect(url, setMessage);
     }
 
     void Linking.getInitialURL().then(exchangeAuthUrl);
@@ -1127,7 +1165,7 @@ export default function App() {
     });
 
     return () => subscription.remove();
-  }, []);
+  }, [finishOAuthRedirect]);
 
   useEffect(() => {
     if (!selectedPet) return;
@@ -1223,7 +1261,7 @@ export default function App() {
             email: email.trim(),
             password,
             options: {
-              emailRedirectTo: "petflow://auth-callback",
+              emailRedirectTo: oauthRedirectTo,
             },
           })
         : await supabase.auth.signInWithPassword({ email: email.trim(), password });
@@ -1260,14 +1298,12 @@ export default function App() {
 
     setOauthLoading(provider);
     setMessage("");
-    oauthSessionActiveRef.current = true;
 
     try {
-      const redirectTo = "petflow://auth-callback";
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo,
+          redirectTo: oauthRedirectTo,
           skipBrowserRedirect: true,
         },
       });
@@ -1276,25 +1312,23 @@ export default function App() {
         throw error ?? new Error("OAuth URL was not created.");
       }
 
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      const result = await WebBrowser.openAuthSessionAsync(data.url, oauthRedirectTo);
       if (result.type === "success") {
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(
-          result.url,
-        );
-        if (exchangeError) throw exchangeError;
-        setMessage("");
+        const status = await finishOAuthRedirect(result.url, setMessage);
+        if (status === "completed" || status === "duplicate") {
+          setMessage("");
+        } else if (status === "ignored") {
+          setMessage(`${oauthProviderLabels[provider]} 로그인이 완료되지 않았어요.`);
+        }
         return;
       }
 
       if (result.type !== "cancel" && result.type !== "dismiss") {
         setMessage(`${oauthProviderLabels[provider]} 로그인이 완료되지 않았어요.`);
       }
-    } catch {
-      setMessage(
-        `${oauthProviderLabels[provider]} 로그인 설정을 확인해 주세요. Supabase Provider와 Redirect URL이 필요해요.`,
-      );
+    } catch (error) {
+      setMessage(oauthSignInErrorMessage(provider, error));
     } finally {
-      oauthSessionActiveRef.current = false;
       setOauthLoading(null);
     }
   }
@@ -1308,14 +1342,12 @@ export default function App() {
 
     setLinkOauthLoading(provider);
     setLinkOauthMessage("");
-    oauthSessionActiveRef.current = true;
 
     try {
-      const redirectTo = "petflow://auth-callback";
       const { data, error } = await supabase.auth.linkIdentity({
         provider,
         options: {
-          redirectTo,
+          redirectTo: oauthRedirectTo,
           skipBrowserRedirect: true,
         },
       });
@@ -1324,13 +1356,14 @@ export default function App() {
         throw error ?? new Error("OAuth link URL was not created.");
       }
 
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      const result = await WebBrowser.openAuthSessionAsync(data.url, oauthRedirectTo);
       if (result.type === "success") {
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(
-          result.url,
-        );
-        if (exchangeError) throw exchangeError;
-        setLinkOauthMessage(`${oauthProviderLabels[provider]} 계정을 연결했어요.`);
+        const status = await finishOAuthRedirect(result.url, setLinkOauthMessage);
+        if (status === "completed" || status === "duplicate") {
+          setLinkOauthMessage(`${oauthProviderLabels[provider]} 계정을 연결했어요.`);
+        } else if (status === "ignored") {
+          setLinkOauthMessage(`${oauthProviderLabels[provider]} 연결이 완료되지 않았어요.`);
+        }
         return;
       }
 
@@ -1340,7 +1373,6 @@ export default function App() {
     } catch (error) {
       setLinkOauthMessage(oauthLinkErrorMessage(provider, error));
     } finally {
-      oauthSessionActiveRef.current = false;
       setLinkOauthLoading(null);
     }
   }
@@ -3257,6 +3289,8 @@ function AccountCard({
   onSignOut: () => Promise<void>;
 }) {
   const googleLinked = hasLinkedProvider(user, "google");
+  const appleLinked = hasLinkedProvider(user, "apple");
+  const linkDisabled = disabled || linkOauthLoading !== null;
 
   return (
     <View style={styles.card}>
@@ -3274,44 +3308,82 @@ function AccountCard({
           <View style={styles.cardHeaderText}>
             <Text style={styles.identityLinkTitle}>로그인 연결</Text>
             <Text style={styles.identityLinkText}>
-              기존 이메일 계정에 Google을 연결하면 아이들, 기록, GPT 초안 권한이
+              기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 테스터 권한이
               그대로 이어져요.
             </Text>
           </View>
-          <Text
-            style={[
-              styles.identityLinkBadge,
-              googleLinked && styles.identityLinkBadgeConnected,
-            ]}
-          >
-            {googleLinked ? "Google 연결됨" : "연결 전"}
-          </Text>
         </View>
-        {googleLinked ? (
-          <Text style={styles.identityLinkSuccess}>
-            Google로 다시 로그인해도 지금 계정의 기록을 그대로 볼 수 있어요.
-          </Text>
-        ) : (
-          <>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={disabled || linkOauthLoading !== null}
-              onPress={() => void onLinkOAuth("google")}
-              style={[
-                styles.identityLinkButton,
-                (disabled || linkOauthLoading !== null) && styles.buttonDisabled,
-              ]}
-            >
-              <Text style={styles.identityLinkButtonText}>
-                {linkOauthLoading === "google" ? "Google 연결 중" : "Google 계정 연결"}
+
+        <View style={styles.identityProviderList}>
+          <View style={styles.identityProviderRow}>
+            <View style={styles.identityProviderCopy}>
+              <Text style={styles.identityProviderName}>Google</Text>
+              <Text
+                style={[
+                  styles.identityLinkBadge,
+                  googleLinked && styles.identityLinkBadgeConnected,
+                ]}
+              >
+                {googleLinked ? "연결됨" : "연결 전"}
               </Text>
-            </TouchableOpacity>
-            <Text style={styles.identityLinkHelp}>
-              로그아웃 상태에서 Google로 새로 시작하면 기록이 다른 계정으로 나뉠
-              수 있어요. 먼저 이메일 계정으로 로그인한 뒤 연결해 주세요.
-            </Text>
-          </>
-        )}
+            </View>
+            {googleLinked ? (
+              <Text style={styles.identityLinkSuccess}>이 계정으로 로그인할 수 있어요.</Text>
+            ) : (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={linkDisabled}
+                onPress={() => void onLinkOAuth("google")}
+                style={[
+                  styles.identityLinkButton,
+                  linkDisabled && styles.buttonDisabled,
+                ]}
+              >
+                <Text style={styles.identityLinkButtonText}>
+                  {linkOauthLoading === "google" ? "연결 중" : "연결"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.identityProviderRow}>
+            <View style={styles.identityProviderCopy}>
+              <Text style={styles.identityProviderName}>Apple</Text>
+              <Text
+                style={[
+                  styles.identityLinkBadge,
+                  appleLinked && styles.identityLinkBadgeConnected,
+                ]}
+              >
+                {appleLinked ? "연결됨" : "연결 전"}
+              </Text>
+            </View>
+            {appleLinked ? (
+              <Text style={styles.identityLinkSuccess}>이 계정으로 로그인할 수 있어요.</Text>
+            ) : (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={linkDisabled}
+                onPress={() => void onLinkOAuth("apple")}
+                style={[
+                  styles.identityLinkButton,
+                  linkDisabled && styles.buttonDisabled,
+                ]}
+              >
+                <Text style={styles.identityLinkButtonText}>
+                  {linkOauthLoading === "apple" ? "연결 중" : "연결"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {!googleLinked || !appleLinked ? (
+          <Text style={styles.identityLinkHelp}>
+            기록이 나뉘지 않도록 먼저 기존 이메일 계정으로 로그인한 뒤 연결해 주세요.
+          </Text>
+        ) : null}
+
         <Message
           text={linkOauthMessage}
           tone={linkOauthMessage.includes("연결했어요") ? "success" : "error"}
@@ -6262,6 +6334,31 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
   },
+  identityProviderList: {
+    gap: 8,
+    marginTop: 12,
+  },
+  identityProviderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  identityProviderCopy: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  identityProviderName: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
   identityLinkBadge: {
     overflow: "hidden",
     borderRadius: 999,
@@ -6281,7 +6378,6 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderRadius: 16,
     backgroundColor: colors.greenSoft,
-    marginTop: 12,
     paddingHorizontal: 14,
     paddingVertical: 11,
   },
@@ -6298,7 +6394,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   identityLinkSuccess: {
-    marginTop: 10,
     color: colors.green,
     fontSize: 12,
     fontWeight: "800",

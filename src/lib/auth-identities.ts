@@ -39,3 +39,16 @@ export function oauthLinkErrorMessage(provider: OAuthProvider, error: unknown) {
   }
   return `${label} 계정을 연결하지 못했어요. 잠시 후 다시 시도해 주세요.`;
 }
+
+export function oauthSignInErrorMessage(provider: OAuthProvider, error: unknown) {
+  const label = oauthProviderLabels[provider];
+  const message = authErrorMessage(error).toLowerCase();
+
+  if (message.includes("provider") || message.includes("unsupported")) {
+    return `${label} 로그인이 아직 활성화되지 않았어요. 관리자 설정을 확인해 주세요.`;
+  }
+  if (message.includes("redirect")) {
+    return `${label} 로그인 Redirect URL 설정을 확인해야 해요.`;
+  }
+  return `${label} 로그인을 완료하지 못했어요. 잠시 후 다시 시도해 주세요.`;
+}

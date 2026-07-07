@@ -17,7 +17,11 @@ import { Icon, type IconName } from "./icon";
 import { analyzeLocally, deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
 import { buildEpisodeReport } from "@/lib/episode-report";
 import { summarizeHealthFlow } from "@/lib/health-flow";
-import { oauthLinkErrorMessage, oauthProviderLabels, type OAuthProvider } from "@/lib/auth-identities";
+import {
+  oauthLinkErrorMessage,
+  oauthSignInErrorMessage,
+  type OAuthProvider,
+} from "@/lib/auth-identities";
 import { normalizeKoreanMobile } from "@/lib/phone";
 import {
   storedReportToHistoryRecord,
@@ -3974,7 +3978,7 @@ export function PetFlowApp() {
     });
 
     if (error) {
-      return `${oauthProviderLabels[provider]} 로그인 설정을 확인해 주세요.`;
+      return oauthSignInErrorMessage(provider, error);
     }
 
     return "";

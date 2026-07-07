@@ -215,6 +215,8 @@ export function AccountView({
   );
   const showTesterForm = needsTesterProfile || editingTester;
   const googleLinked = hasLinkedProvider(user, "google");
+  const appleLinked = hasLinkedProvider(user, "apple");
+  const linkDisabled = linkLoading !== null;
 
   async function submitAuth() {
     if (!emailPattern.test(email.trim())) {
@@ -330,34 +332,61 @@ export function AccountView({
               <div>
                 <h3>로그인 연결</h3>
                 <p>
-                  기존 이메일 계정에 Google을 연결하면 아이들, 기록, GPT 초안 권한이
+                  기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 테스터 권한이
                   그대로 이어져요.
                 </p>
               </div>
-              <span className={`identity-link-badge ${googleLinked ? "connected" : ""}`}>
-                {googleLinked ? "Google 연결됨" : "연결 전"}
-              </span>
             </div>
-            {googleLinked ? (
-              <p className="identity-link-note success">
-                Google로 다시 로그인해도 지금 계정의 기록을 그대로 볼 수 있어요.
+
+            <div className="identity-provider-list">
+              <div className="identity-provider-row">
+                <div className="identity-provider-copy">
+                  <strong>Google</strong>
+                  <span className={`identity-link-badge ${googleLinked ? "connected" : ""}`}>
+                    {googleLinked ? "연결됨" : "연결 전"}
+                  </span>
+                </div>
+                {googleLinked ? (
+                  <p className="identity-link-note success">이 계정으로 로그인할 수 있어요.</p>
+                ) : (
+                  <button
+                    className="secondary-button compact identity-link-button"
+                    type="button"
+                    onClick={() => void submitOAuthLink("google")}
+                    disabled={linkDisabled}
+                  >
+                    {linkLoading === "google" ? "연결 중..." : "연결"}
+                  </button>
+                )}
+              </div>
+
+              <div className="identity-provider-row">
+                <div className="identity-provider-copy">
+                  <strong>Apple</strong>
+                  <span className={`identity-link-badge ${appleLinked ? "connected" : ""}`}>
+                    {appleLinked ? "연결됨" : "연결 전"}
+                  </span>
+                </div>
+                {appleLinked ? (
+                  <p className="identity-link-note success">이 계정으로 로그인할 수 있어요.</p>
+                ) : (
+                  <button
+                    className="secondary-button compact identity-link-button"
+                    type="button"
+                    onClick={() => void submitOAuthLink("apple")}
+                    disabled={linkDisabled}
+                  >
+                    {linkLoading === "apple" ? "연결 중..." : "연결"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!googleLinked || !appleLinked ? (
+              <p className="identity-link-note">
+                기록이 나뉘지 않도록 먼저 기존 이메일 계정으로 로그인한 뒤 연결해 주세요.
               </p>
-            ) : (
-              <>
-                <button
-                  className="secondary-button compact identity-link-button"
-                  type="button"
-                  onClick={() => void submitOAuthLink("google")}
-                  disabled={linkLoading !== null}
-                >
-                  {linkLoading === "google" ? "Google 연결 중..." : "Google 계정 연결"}
-                </button>
-                <p className="identity-link-note">
-                  로그아웃 상태에서 Google로 새로 시작하면 기록이 다른 계정으로
-                  나뉠 수 있어요. 먼저 이메일 계정으로 로그인한 뒤 연결해 주세요.
-                </p>
-              </>
-            )}
+            ) : null}
             {linkMessage && (
               <p
                 className={linkMessage.includes("연결했어요") ? "form-success" : "form-error"}
