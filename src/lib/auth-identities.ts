@@ -1,11 +1,57 @@
 import type { User } from "@supabase/supabase-js";
 
 export type OAuthProvider = "google" | "apple";
+export type OAuthProviderStatus = Record<OAuthProvider, boolean>;
 
 export const oauthProviderLabels: Record<OAuthProvider, string> = {
   google: "Google",
   apple: "Apple",
 };
+
+export const defaultOAuthProviderStatus: OAuthProviderStatus = {
+  google: true,
+  apple: false,
+};
+
+function readProviderFlag(
+  settings: Record<string, unknown>,
+  provider: OAuthProvider,
+  fallback: boolean,
+) {
+  const external = settings.external;
+  if (external && typeof external === "object") {
+    const value = (external as Record<string, unknown>)[provider];
+    if (typeof value === "boolean") return value;
+  }
+
+  const legacyValue = settings[`external_${provider}_enabled`];
+  return typeof legacyValue === "boolean" ? legacyValue : fallback;
+}
+
+export async function fetchOAuthProviderStatus(
+  supabaseUrl: string | undefined,
+  publishableKey: string | undefined,
+) {
+  if (!supabaseUrl || !publishableKey) return defaultOAuthProviderStatus;
+
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/settings`, {
+      headers: {
+        apikey: publishableKey,
+        Authorization: `Bearer ${publishableKey}`,
+      },
+    });
+    if (!response.ok) return defaultOAuthProviderStatus;
+
+    const settings = (await response.json()) as Record<string, unknown>;
+    return {
+      google: readProviderFlag(settings, "google", defaultOAuthProviderStatus.google),
+      apple: readProviderFlag(settings, "apple", defaultOAuthProviderStatus.apple),
+    };
+  } catch {
+    return defaultOAuthProviderStatus;
+  }
+}
 
 function authErrorCode(error: unknown) {
   return typeof error === "object" && error && "code" in error

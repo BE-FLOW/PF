@@ -4,7 +4,12 @@
 
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { hasLinkedProvider, type OAuthProvider } from "@/lib/auth-identities";
+import {
+  defaultOAuthProviderStatus,
+  fetchOAuthProviderStatus,
+  hasLinkedProvider,
+  type OAuthProvider,
+} from "@/lib/auth-identities";
 import { formatKoreanMobile, normalizeKoreanMobile } from "@/lib/phone";
 import { testerConsentVersion, testerPrivacySummary } from "@/lib/privacy";
 import type { AiAccessStatus, PetProfile, TesterProfile } from "@/lib/types";
@@ -200,6 +205,9 @@ export function AccountView({
   const [linkLoading, setLinkLoading] = useState<OAuthProvider | null>(null);
   const [message, setMessage] = useState("");
   const [linkMessage, setLinkMessage] = useState("");
+  const [enabledOAuthProviders, setEnabledOAuthProviders] = useState(
+    defaultOAuthProviderStatus,
+  );
   const [aiCode, setAiCode] = useState("");
   const [aiCodeSaving, setAiCodeSaving] = useState(false);
   const [aiCodeMessage, setAiCodeMessage] = useState("");
@@ -216,7 +224,22 @@ export function AccountView({
   const showTesterForm = needsTesterProfile || editingTester;
   const googleLinked = hasLinkedProvider(user, "google");
   const appleLinked = hasLinkedProvider(user, "apple");
+  const appleEnabled = enabledOAuthProviders.apple || appleLinked;
   const linkDisabled = linkLoading !== null;
+
+  useEffect(() => {
+    let active = true;
+    void fetchOAuthProviderStatus(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    ).then((status) => {
+      if (active) setEnabledOAuthProviders(status);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function submitAuth() {
     if (!emailPattern.test(email.trim())) {
@@ -360,29 +383,31 @@ export function AccountView({
                 )}
               </div>
 
-              <div className="identity-provider-row">
-                <div className="identity-provider-copy">
-                  <strong>Apple</strong>
-                  <span className={`identity-link-badge ${appleLinked ? "connected" : ""}`}>
-                    {appleLinked ? "연결됨" : "연결 전"}
-                  </span>
+              {appleEnabled ? (
+                <div className="identity-provider-row">
+                  <div className="identity-provider-copy">
+                    <strong>Apple</strong>
+                    <span className={`identity-link-badge ${appleLinked ? "connected" : ""}`}>
+                      {appleLinked ? "연결됨" : "연결 전"}
+                    </span>
+                  </div>
+                  {appleLinked ? (
+                    <p className="identity-link-note success">이 계정으로 로그인할 수 있어요.</p>
+                  ) : (
+                    <button
+                      className="secondary-button compact identity-link-button"
+                      type="button"
+                      onClick={() => void submitOAuthLink("apple")}
+                      disabled={linkDisabled}
+                    >
+                      {linkLoading === "apple" ? "연결 중..." : "연결"}
+                    </button>
+                  )}
                 </div>
-                {appleLinked ? (
-                  <p className="identity-link-note success">이 계정으로 로그인할 수 있어요.</p>
-                ) : (
-                  <button
-                    className="secondary-button compact identity-link-button"
-                    type="button"
-                    onClick={() => void submitOAuthLink("apple")}
-                    disabled={linkDisabled}
-                  >
-                    {linkLoading === "apple" ? "연결 중..." : "연결"}
-                  </button>
-                )}
-              </div>
+              ) : null}
             </div>
 
-            {!googleLinked || !appleLinked ? (
+            {!googleLinked || (appleEnabled && !appleLinked) ? (
               <p className="identity-link-note">
                 기록이 나뉘지 않도록 먼저 기존 이메일 계정으로 로그인한 뒤 연결해 주세요.
               </p>
@@ -534,7 +559,7 @@ export function AccountView({
       ) : (
         <section className="form-panel auth-panel">
           <div className="auth-intro">
-            <h2>Google 또는 Apple로 시작하기</h2>
+            <h2>{enabledOAuthProviders.apple ? "Google 또는 Apple로 시작하기" : "Google로 시작하기"}</h2>
             <p>
               펫플로우는 로그인 후 닉네임과 테스트 연락처만 한 번 확인해요.
             </p>
@@ -549,19 +574,23 @@ export function AccountView({
               <span>G</span>
               {oauthLoading === "google" ? "Google 로그인 중..." : "Google로 계속하기"}
             </button>
-            <button
-              className="oauth-button apple"
-              onClick={() => void submitOAuth("apple")}
-              disabled={loading || oauthLoading !== null}
-              type="button"
-            >
-              <span></span>
-              {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
-            </button>
+            {enabledOAuthProviders.apple ? (
+              <button
+                className="oauth-button apple"
+                onClick={() => void submitOAuth("apple")}
+                disabled={loading || oauthLoading !== null}
+                type="button"
+              >
+                <span></span>
+                {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
+              </button>
+            ) : null}
           </div>
           <p className="auth-note">
-            Google은 확인된 이메일을 제공해요. Apple은 사용자가 선택하면 비공개 릴레이
-            이메일로 연결될 수 있어요.
+            Google은 확인된 이메일을 제공해요.
+            {enabledOAuthProviders.apple
+              ? " Apple은 사용자가 선택하면 비공개 릴레이 이메일로 연결될 수 있어요."
+              : ""}
           </p>
           {message && <div className="form-error" role="alert">{message}</div>}
           <details className="password-auth-fallback">

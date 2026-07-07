@@ -27,6 +27,8 @@ import {
 } from "react-native";
 import { testerConsentVersion, testerPrivacySummary } from "./src/lib/privacy";
 import {
+  defaultOAuthProviderStatus,
+  fetchOAuthProviderStatus,
   hasLinkedProvider,
   oauthCallbackErrorMessage,
   oauthLinkErrorMessage,
@@ -475,6 +477,9 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [mainSection, setMainSection] = useState<MainSection>("home");
+  const [enabledOAuthProviders, setEnabledOAuthProviders] = useState(
+    defaultOAuthProviderStatus,
+  );
   const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
   const [linkOauthLoading, setLinkOauthLoading] =
     useState<OAuthProvider | null>(null);
@@ -1150,6 +1155,20 @@ export default function App() {
     });
     return () => listener.subscription.unsubscribe();
   }, [loadAccount]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchOAuthProviderStatus(
+      process.env.EXPO_PUBLIC_SUPABASE_URL,
+      process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    ).then((status) => {
+      if (active) setEnabledOAuthProviders(status);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -2482,6 +2501,7 @@ export default function App() {
       testerProfile={testerProfile}
       linkOauthLoading={linkOauthLoading}
       linkOauthMessage={linkOauthMessage}
+      enabledOAuthProviders={enabledOAuthProviders}
       onSignOut={signOut}
       onChangeAiCode={setAiCodeDraft}
       onLinkOAuth={linkOAuthIdentity}
@@ -2686,6 +2706,7 @@ export default function App() {
               setDraft={setDraft}
               loading={loading}
               message={message}
+              enabledOAuthProviders={enabledOAuthProviders}
               oauthLoading={oauthLoading}
               onOAuth={submitOAuth}
               onSubmit={submitAuth}
@@ -3022,6 +3043,7 @@ function AuthForm({
   setDraft,
   loading,
   message,
+  enabledOAuthProviders,
   oauthLoading,
   onOAuth,
   onSubmit,
@@ -3036,16 +3058,20 @@ function AuthForm({
   setDraft: (draft: TesterDraft) => void;
   loading: boolean;
   message: string;
+  enabledOAuthProviders: Record<OAuthProvider, boolean>;
   oauthLoading: OAuthProvider | null;
   onOAuth: (provider: OAuthProvider) => Promise<void>;
   onSubmit: () => Promise<void>;
 }) {
   const authBusy = loading || oauthLoading !== null;
   const [showEmailAuth, setShowEmailAuth] = useState(false);
+  const appleEnabled = enabledOAuthProviders.apple;
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>Google 또는 Apple로 시작하기</Text>
+      <Text style={styles.cardTitle}>
+        {appleEnabled ? "Google 또는 Apple로 시작하기" : "Google로 시작하기"}
+      </Text>
       <Text style={styles.cardText}>
         이메일 확인과 비밀번호 관리는 각 계정에서 맡기고, 펫플로우는 로그인 후
         닉네임과 테스트 연락처만 한 번 확인해요.
@@ -3063,22 +3089,28 @@ function AuthForm({
             {oauthLoading === "google" ? "Google 로그인 중..." : "Google로 계속하기"}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          disabled={authBusy}
-          onPress={() => void onOAuth("apple")}
-          style={[styles.oauthButton, styles.oauthButtonDark, authBusy && styles.buttonDisabled]}
-        >
-          <Text style={[styles.oauthButtonMark, styles.oauthButtonMarkDark]}></Text>
-          <Text style={[styles.oauthButtonText, styles.oauthButtonTextDark]}>
-            {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
-          </Text>
-        </TouchableOpacity>
+        {appleEnabled ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            disabled={authBusy}
+            onPress={() => void onOAuth("apple")}
+            style={[
+              styles.oauthButton,
+              styles.oauthButtonDark,
+              authBusy && styles.buttonDisabled,
+            ]}
+          >
+            <Text style={[styles.oauthButtonMark, styles.oauthButtonMarkDark]}></Text>
+            <Text style={[styles.oauthButtonText, styles.oauthButtonTextDark]}>
+              {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <Text style={styles.authHint}>
-        Google은 확인된 이메일을 제공해요. Apple은 비공개 릴레이 이메일로 연결될 수
-        있어요.
+        Google은 확인된 이메일을 제공해요.
+        {appleEnabled ? " Apple은 비공개 릴레이 이메일로 연결될 수 있어요." : ""}
       </Text>
       <Message text={message} />
 
@@ -3263,6 +3295,7 @@ function AccountCard({
   testerProfile,
   linkOauthLoading,
   linkOauthMessage,
+  enabledOAuthProviders,
   disabled,
   onChangeAiCode,
   onLinkOAuth,
@@ -3281,6 +3314,7 @@ function AccountCard({
   testerProfile: TesterProfile | null;
   linkOauthLoading: OAuthProvider | null;
   linkOauthMessage: string;
+  enabledOAuthProviders: Record<OAuthProvider, boolean>;
   disabled: boolean;
   onChangeAiCode: (value: string) => void;
   onLinkOAuth: (provider: OAuthProvider) => Promise<void>;
@@ -3290,6 +3324,7 @@ function AccountCard({
 }) {
   const googleLinked = hasLinkedProvider(user, "google");
   const appleLinked = hasLinkedProvider(user, "apple");
+  const appleEnabled = enabledOAuthProviders.apple || appleLinked;
   const linkDisabled = disabled || linkOauthLoading !== null;
 
   return (
@@ -3346,39 +3381,41 @@ function AccountCard({
             )}
           </View>
 
-          <View style={styles.identityProviderRow}>
-            <View style={styles.identityProviderCopy}>
-              <Text style={styles.identityProviderName}>Apple</Text>
-              <Text
-                style={[
-                  styles.identityLinkBadge,
-                  appleLinked && styles.identityLinkBadgeConnected,
-                ]}
-              >
-                {appleLinked ? "연결됨" : "연결 전"}
-              </Text>
-            </View>
-            {appleLinked ? (
-              <Text style={styles.identityLinkSuccess}>이 계정으로 로그인할 수 있어요.</Text>
-            ) : (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                disabled={linkDisabled}
-                onPress={() => void onLinkOAuth("apple")}
-                style={[
-                  styles.identityLinkButton,
-                  linkDisabled && styles.buttonDisabled,
-                ]}
-              >
-                <Text style={styles.identityLinkButtonText}>
-                  {linkOauthLoading === "apple" ? "연결 중" : "연결"}
+          {appleEnabled ? (
+            <View style={styles.identityProviderRow}>
+              <View style={styles.identityProviderCopy}>
+                <Text style={styles.identityProviderName}>Apple</Text>
+                <Text
+                  style={[
+                    styles.identityLinkBadge,
+                    appleLinked && styles.identityLinkBadgeConnected,
+                  ]}
+                >
+                  {appleLinked ? "연결됨" : "연결 전"}
                 </Text>
-              </TouchableOpacity>
-            )}
-          </View>
+              </View>
+              {appleLinked ? (
+                <Text style={styles.identityLinkSuccess}>이 계정으로 로그인할 수 있어요.</Text>
+              ) : (
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  disabled={linkDisabled}
+                  onPress={() => void onLinkOAuth("apple")}
+                  style={[
+                    styles.identityLinkButton,
+                    linkDisabled && styles.buttonDisabled,
+                  ]}
+                >
+                  <Text style={styles.identityLinkButtonText}>
+                    {linkOauthLoading === "apple" ? "연결 중" : "연결"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : null}
         </View>
 
-        {!googleLinked || !appleLinked ? (
+        {!googleLinked || (appleEnabled && !appleLinked) ? (
           <Text style={styles.identityLinkHelp}>
             기록이 나뉘지 않도록 먼저 기존 이메일 계정으로 로그인한 뒤 연결해 주세요.
           </Text>
