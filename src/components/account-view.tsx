@@ -311,12 +311,17 @@ export function AccountView({
 
   async function requestDeletion() {
     if (deletionRequested) return;
+    const confirmed = window.confirm(
+      "계정, 함께하는 아이들, 건강 기록, 사진·영상, GPT 권한이 삭제됩니다. 이 작업은 되돌리기 어려워요. 계속할까요?",
+    );
+    if (!confirmed) return;
+
     setDeletionSaving(true);
     const result = await onRequestAccountDeletion();
     setDeletionSaving(false);
     setDeletionMessage(
       result ||
-        "계정 삭제 요청을 접수했어요. 운영자가 확인 후 테스트 데이터 삭제를 진행합니다.",
+        "계정 탈퇴가 완료됐어요. 현재 기기에서 로그아웃합니다.",
     );
     if (!result) setDeletionRequested(true);
   }
@@ -481,10 +486,10 @@ export function AccountView({
 
           <section className="panel account-deletion-panel">
             <div>
-              <h3>계정 삭제 요청</h3>
+              <h3>계정 탈퇴</h3>
               <p>
-                테스트를 중단하려면 요청을 남겨주세요. 운영자가 확인 후 계정과
-                연결된 아이들, 건강 기록, GPT 초안 권한을 삭제합니다.
+                탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, GPT
+                권한이 삭제되고 현재 기기에서 로그아웃합니다.
               </p>
             </div>
             <button
@@ -494,10 +499,10 @@ export function AccountView({
               disabled={deletionSaving || deletionRequested}
             >
               {deletionRequested
-                ? "삭제 요청 접수됨"
+                ? "탈퇴 완료"
                 : deletionSaving
-                  ? "요청 중..."
-                  : "계정 삭제 요청"}
+                  ? "탈퇴 중..."
+                  : "계정 탈퇴"}
             </button>
             {deletionMessage && (
               <p

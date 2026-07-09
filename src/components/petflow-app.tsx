@@ -4062,7 +4062,11 @@ export function PetFlowApp() {
   }
   async function logout() {
     const supabase = getSupabaseBrowserClient();
-    await supabase?.auth.signOut();
+    try {
+      await supabase?.auth.signOut();
+    } catch {
+      // The session may already be gone after account deletion.
+    }
     clearPendingMedia();
     setMediaUploadWarning("");
     setProfile(initialProfile);
@@ -4529,16 +4533,17 @@ export function PetFlowApp() {
         : { data: { session: null } };
       if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
       const response = await fetch("/api/account-deletion", {
-        method: "POST",
+        method: "DELETE",
         headers: { Authorization: `Bearer ${data.session.access_token}` },
       });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) {
-        return payload.error ?? "계정 삭제 요청을 접수하지 못했어요.";
+        return payload.error ?? "계정 탈퇴를 완료하지 못했어요.";
       }
+      await logout();
       return "";
     } catch {
-      return "계정 삭제 요청을 접수하지 못했어요.";
+      return "계정 탈퇴를 완료하지 못했어요. 잠시 후 다시 시도해 주세요.";
     }
   }
 

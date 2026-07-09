@@ -10,7 +10,7 @@ export const oauthProviderLabels: Record<OAuthProvider, string> = {
 
 export const defaultOAuthProviderStatus: OAuthProviderStatus = {
   google: true,
-  apple: false,
+  apple: true,
 };
 
 function readProviderFlag(

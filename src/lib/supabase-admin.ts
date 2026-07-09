@@ -22,6 +22,7 @@ import {
   maxReportMediaSizeBytes,
   reportMediaBucket,
 } from "./report-media";
+import { petPhotoBucket } from "./pet-photo";
 
 const requestTimeoutMs = 3500;
 
@@ -360,6 +361,66 @@ export async function requestAccountDeletion(
     if (!response?.ok) return null;
     const rows = (await response.json()) as Array<{ requested_at: string }>;
     return { requestedAt: rows[0]?.requested_at ?? requestedAt };
+  } catch {
+    return null;
+  }
+}
+
+async function removeStorageFiles(
+  bucket: string,
+  paths: Array<string | null | undefined>,
+) {
+  const uniquePaths = Array.from(
+    new Set(paths.map((path) => path?.trim()).filter(Boolean) as string[]),
+  );
+  const client = getAdminClient();
+  if (!client || !uniquePaths.length) return;
+
+  try {
+    await client.storage.from(bucket).remove(uniquePaths);
+  } catch {
+    /* Account deletion must still remove the auth user; orphan cleanup can be retried from storage logs. */
+  }
+}
+
+export async function deleteAccount(
+  accessToken: string | null,
+): Promise<{ deletedAt: string } | null> {
+  const user = await getAuthenticatedUser(accessToken);
+  const client = getAdminClient();
+  if (!user || !client) return null;
+
+  try {
+    const [mediaResponse, petResponse] = await Promise.all([
+      supabaseRequest(
+        `health_report_media?user_id=eq.${user.id}&select=storage_path`,
+        { method: "GET" },
+      ),
+      supabaseRequest(`pets?user_id=eq.${user.id}&select=photo_path`, {
+        method: "GET",
+      }),
+    ]);
+    const mediaRows = mediaResponse?.ok
+      ? ((await mediaResponse.json()) as Array<{ storage_path: string | null }>)
+      : [];
+    const petRows = petResponse?.ok
+      ? ((await petResponse.json()) as Array<{ photo_path: string | null }>)
+      : [];
+
+    await Promise.all([
+      removeStorageFiles(
+        reportMediaBucket,
+        mediaRows.map((row) => row.storage_path),
+      ),
+      removeStorageFiles(
+        petPhotoBucket,
+        petRows.map((row) => row.photo_path),
+      ),
+    ]);
+
+    const { error } = await client.auth.admin.deleteUser(user.id);
+    if (error) return null;
+    return { deletedAt: new Date().toISOString() };
   } catch {
     return null;
   }

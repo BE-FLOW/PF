@@ -37,6 +37,7 @@ apps/mobile/*.ipa
 *.keystore
 apps/mobile/google-service-account*.json
 apps/mobile/credentials.json
+apps/mobile/credentials/*.json
 
 # debug
 npm-debug.log*

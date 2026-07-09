@@ -1416,13 +1416,15 @@ export default function App() {
   async function signOut() {
     const supabase = getSupabaseClient();
     setLoading(true);
-    await supabase?.auth.signOut();
-    setLoading(false);
+    try {
+      await supabase?.auth.signOut();
+    } finally {
+      await loadAccount(null);
+      setLoading(false);
+    }
   }
 
-  async function requestAccountDeletion() {
-    if (accountDeletionRequested) return;
-
+  async function performAccountDeletion() {
     setAccountDeletionLoading(true);
     setAccountDeletionMessage("");
     try {
@@ -1434,22 +1436,40 @@ export default function App() {
       if (!accessToken) throw new Error("missing session");
 
       const response = await fetch(`${apiBaseUrl}/api/account-deletion`, {
-        method: "POST",
+        method: "DELETE",
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!response.ok) throw new Error("request failed");
 
       setAccountDeletionRequested(true);
-      setAccountDeletionMessage(
-        "계정 삭제 요청을 접수했어요. 운영자가 확인 후 테스트 데이터 삭제를 진행합니다.",
-      );
+      setAccountDeletionMessage("계정 탈퇴가 완료됐어요. 현재 기기에서 로그아웃합니다.");
+      await supabase?.auth.signOut();
+      await loadAccount(null);
+      setMessage("계정 탈퇴가 완료됐어요.");
     } catch {
       setAccountDeletionMessage(
-        "계정 삭제 요청을 접수하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        "계정 탈퇴를 완료하지 못했어요. 잠시 후 다시 시도해 주세요.",
       );
     } finally {
       setAccountDeletionLoading(false);
     }
+  }
+
+  async function requestAccountDeletion() {
+    if (accountDeletionRequested) return;
+
+    Alert.alert(
+      "계정 탈퇴",
+      "계정, 함께하는 아이들, 건강 기록, 사진·영상, GPT 권한이 삭제됩니다. 이 작업은 되돌리기 어려워요.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "탈퇴",
+          style: "destructive",
+          onPress: () => void performAccountDeletion(),
+        },
+      ],
+    );
   }
 
   function startNewPet() {
@@ -3503,10 +3523,10 @@ function AccountCard({
       </View>
 
       <View style={styles.accountDeletionBox}>
-        <Text style={styles.accountDeletionTitle}>계정 삭제 요청</Text>
+        <Text style={styles.accountDeletionTitle}>계정 탈퇴</Text>
         <Text style={styles.accountDeletionText}>
-          테스트를 중단하려면 요청을 남겨주세요. 운영자가 확인 후 계정과 연결된
-          반려동물, 건강 기록, GPT 사용 권한을 삭제합니다.
+          탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, GPT 권한이
+          삭제되고 현재 기기에서 로그아웃합니다.
         </Text>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -3520,10 +3540,10 @@ function AccountCard({
         >
           <Text style={styles.accountDeletionButtonText}>
             {accountDeletionRequested
-              ? "삭제 요청 접수됨"
+              ? "탈퇴 완료"
               : accountDeletionLoading
-                ? "요청 중"
-                : "계정 삭제 요청"}
+                ? "탈퇴 중"
+                : "계정 탈퇴"}
           </Text>
         </TouchableOpacity>
         <Message
