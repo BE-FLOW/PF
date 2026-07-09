@@ -31,9 +31,11 @@ import {
   fetchOAuthProviderStatus,
   hasLinkedProvider,
   oauthCallbackErrorMessage,
+  oauthCallbackUrlErrorMessage,
   oauthLinkErrorMessage,
   oauthProviderLabels,
   oauthSignInErrorMessage,
+  passwordAuthErrorMessage,
   type OAuthProvider,
 } from "./src/lib/auth";
 import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
@@ -1118,6 +1120,11 @@ export default function App() {
       setErrorMessage: (message: string) => void,
     ): Promise<"completed" | "duplicate" | "failed" | "ignored"> => {
       if (!isOAuthCallbackUrl(url)) return "ignored";
+      const callbackErrorMessage = oauthCallbackUrlErrorMessage(url);
+      if (callbackErrorMessage) {
+        setErrorMessage(callbackErrorMessage);
+        return "failed";
+      }
       if (processedOAuthUrlsRef.current.has(url)) return "duplicate";
 
       processedOAuthUrlsRef.current.add(url);
@@ -1130,6 +1137,13 @@ export default function App() {
 
       const { error } = await supabase.auth.exchangeCodeForSession(url);
       if (error) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session) {
+          const { data } = await supabase.auth.getUser();
+          await loadAccount(data.user ?? null);
+          return "completed";
+        }
+
         processedOAuthUrlsRef.current.delete(url);
         setErrorMessage(oauthCallbackErrorMessage(error));
         return "failed";
@@ -1286,11 +1300,7 @@ export default function App() {
         : await supabase.auth.signInWithPassword({ email: email.trim(), password });
 
     if (result.error) {
-      setMessage(
-        result.error.message === "Invalid login credentials"
-          ? "이메일 또는 비밀번호를 확인해 주세요."
-          : "계정을 처리하지 못했어요. 입력 내용을 확인해 주세요.",
-      );
+      setMessage(passwordAuthErrorMessage(authMode, result.error));
       setLoading(false);
       return;
     }

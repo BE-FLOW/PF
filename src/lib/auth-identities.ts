@@ -64,6 +64,41 @@ function authErrorMessage(error: unknown) {
   return typeof error === "string" ? error : "";
 }
 
+export function passwordAuthErrorMessage(
+  mode: "login" | "signup",
+  error: unknown,
+) {
+  const code = authErrorCode(error);
+  const message = authErrorMessage(error).toLowerCase();
+
+  if (
+    code === "user_already_exists" ||
+    message.includes("already registered") ||
+    message.includes("already exists")
+  ) {
+    return "이미 가입된 이메일이에요. 로그인으로 들어가거나 Google/Apple로 계속해 주세요.";
+  }
+
+  if (
+    code === "invalid_credentials" ||
+    message.includes("invalid login credentials")
+  ) {
+    return "이메일 또는 비밀번호를 확인해 주세요.";
+  }
+
+  if (message.includes("weak password") || message.includes("password")) {
+    return "비밀번호 조건을 다시 확인해 주세요.";
+  }
+
+  if (code === "signup_disabled" || message.includes("signup")) {
+    return "지금은 새 계정 가입 설정을 확인해야 해요. 잠시 후 다시 시도해 주세요.";
+  }
+
+  return mode === "signup"
+    ? "가입을 완료하지 못했어요. 이메일과 비밀번호를 확인해 주세요."
+    : "로그인을 완료하지 못했어요. 입력 내용을 확인해 주세요.";
+}
+
 export function hasLinkedProvider(user: User | null, provider: OAuthProvider) {
   return Boolean(user?.identities?.some((identity) => identity.provider === provider));
 }

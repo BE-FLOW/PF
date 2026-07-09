@@ -64,6 +64,41 @@ function authErrorMessage(error: unknown) {
   return typeof error === "string" ? error : "";
 }
 
+export function passwordAuthErrorMessage(
+  mode: "login" | "signup",
+  error: unknown,
+) {
+  const code = authErrorCode(error);
+  const message = authErrorMessage(error).toLowerCase();
+
+  if (
+    code === "user_already_exists" ||
+    message.includes("already registered") ||
+    message.includes("already exists")
+  ) {
+    return "이미 가입된 이메일이에요. 로그인으로 들어가거나 Google/Apple로 계속해 주세요.";
+  }
+
+  if (
+    code === "invalid_credentials" ||
+    message.includes("invalid login credentials")
+  ) {
+    return "이메일 또는 비밀번호를 확인해 주세요.";
+  }
+
+  if (message.includes("weak password") || message.includes("password")) {
+    return "비밀번호 조건을 다시 확인해 주세요.";
+  }
+
+  if (code === "signup_disabled" || message.includes("signup")) {
+    return "지금은 새 계정 가입 설정을 확인해야 해요. 잠시 후 다시 시도해 주세요.";
+  }
+
+  return mode === "signup"
+    ? "가입을 완료하지 못했어요. 이메일과 비밀번호를 확인해 주세요."
+    : "로그인을 완료하지 못했어요. 입력 내용을 확인해 주세요.";
+}
+
 export function hasLinkedProvider(user: User | null, provider: OAuthProvider) {
   return Boolean(user?.identities?.some((identity) => identity.provider === provider));
 }
@@ -97,6 +132,36 @@ export function oauthCallbackErrorMessage(error: unknown) {
     return "로그인 설정을 확인해야 해요. 관리자에게 Redirect URL과 Provider 설정을 알려 주세요.";
   }
   return "로그인을 완료하지 못했어요. 다시 시도해 주세요.";
+}
+
+export function oauthCallbackUrlErrorMessage(url: string) {
+  try {
+    const parsed = new URL(url);
+    const code =
+      parsed.searchParams.get("error_code") ??
+      parsed.searchParams.get("error") ??
+      "";
+    const description = parsed.searchParams.get("error_description") ?? "";
+    const message = `${code} ${description}`.toLowerCase();
+
+    if (!code && !description) return "";
+
+    if (message.includes("access_denied") || message.includes("cancel")) {
+      return "로그인을 취소했어요. 다시 시도하려면 Google 또는 Apple 버튼을 눌러 주세요.";
+    }
+
+    if (message.includes("already") || message.includes("identity")) {
+      return "이미 같은 이메일로 만든 계정이 있어요. 기존 이메일 계정으로 로그인한 뒤 Google/Apple 연결을 눌러 주세요.";
+    }
+
+    if (message.includes("provider") || message.includes("redirect")) {
+      return "로그인 설정을 확인해야 해요. 관리자에게 Provider와 Redirect URL 설정을 알려 주세요.";
+    }
+
+    return "로그인을 완료하지 못했어요. 다시 시도해 주세요.";
+  } catch {
+    return "";
+  }
 }
 
 export function oauthSignInErrorMessage(provider: OAuthProvider, error: unknown) {

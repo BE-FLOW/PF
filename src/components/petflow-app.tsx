@@ -20,6 +20,7 @@ import { summarizeHealthFlow } from "@/lib/health-flow";
 import {
   oauthLinkErrorMessage,
   oauthSignInErrorMessage,
+  passwordAuthErrorMessage,
   type OAuthProvider,
 } from "@/lib/auth-identities";
 import { normalizeKoreanMobile } from "@/lib/phone";
@@ -3951,9 +3952,7 @@ export function PetFlowApp() {
           },
         })
       : await supabase.auth.signInWithPassword({ email, password });
-    if (result.error) return result.error.message === "Invalid login credentials"
-      ? "이메일 또는 비밀번호를 확인해 주세요."
-      : "계정을 처리하지 못했어요. 입력 내용을 확인해 주세요.";
+    if (result.error) return passwordAuthErrorMessage(mode, result.error);
     if (mode === "signup" && !result.data.session) {
       return "가입 확인 메일을 보냈어요. 확인 후 로그인해 주세요.";
     }
