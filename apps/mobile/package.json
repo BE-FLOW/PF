@@ -19,7 +19,7 @@
     "submit:android": "npx eas-cli submit --platform android --profile production",
     "submit:android:latest": "npx eas-cli submit --platform android --profile production --latest --non-interactive --wait",
     "submit:ios": "npx eas-cli submit --platform ios --profile production",
-    "submit:ios:latest": "npx eas-cli submit --platform ios --profile production --latest --non-interactive --wait --groups \"PetFlow 내부 테스트\" --what-to-test \"로그인, 계정 연결, 로그아웃, 탈퇴 흐름을 개선했습니다.\"",
+    "submit:ios:latest": "npx eas-cli submit --platform ios --profile production --latest --non-interactive --wait --groups \"PetFlow 내부 테스트\"",
     "release:android": "npm run build:android:production && npm run submit:android:latest",
     "release:ios": "npm run build:ios:production && npm run submit:ios:latest",
     "release:all": "npm run release:android && npm run release:ios"
