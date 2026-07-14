@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   defaultOAuthProviderStatus,
   fetchOAuthProviderStatus,
@@ -8,6 +8,10 @@ import {
 } from "./auth-identities";
 
 describe("auth identity helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("keeps Google and Apple visible when provider settings cannot be fetched", async () => {
     expect(defaultOAuthProviderStatus).toEqual({ google: true, apple: true });
 
@@ -31,7 +35,32 @@ describe("auth identity helpers", () => {
       apple: false,
     });
 
-    vi.unstubAllGlobals();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.supabase.co/auth/v1/settings",
+      expect.objectContaining({
+        headers: expect.objectContaining({ apikey: "anon" }),
+      }),
+    );
+  });
+
+  it("supports legacy Supabase provider flags", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          external_google_enabled: false,
+          external_apple_enabled: true,
+        }),
+      }),
+    );
+
+    await expect(
+      fetchOAuthProviderStatus("https://example.supabase.co/", "anon"),
+    ).resolves.toEqual({
+      google: false,
+      apple: true,
+    });
   });
 
   it("explains existing email and linked identity conflicts clearly", () => {

@@ -44,12 +44,12 @@ function daysUntilDate(dateText: string, today = new Date()) {
   );
 }
 
-function nextVaccination(records: VaccinationRecord[]) {
+function nextVaccination(records: VaccinationRecord[], today = new Date()) {
   return records
     .filter((record) => record.status === "scheduled" && record.dueAt)
     .map((record) => ({
       record,
-      daysUntil: daysUntilDate(record.dueAt as string),
+      daysUntil: daysUntilDate(record.dueAt as string, today),
     }))
     .filter((item): item is { record: VaccinationRecord; daysUntil: number } =>
       item.daysUntil !== null,
@@ -92,8 +92,9 @@ export function hasVaccinationDraft(draft: VaccinationDraft) {
 
 export function vaccinationReminder(
   records: VaccinationRecord[],
+  today = new Date(),
 ): MobileVaccinationReminder | null {
-  const next = nextVaccination(records);
+  const next = nextVaccination(records, today);
   if (!next) return null;
   if (next.daysUntil < 0) {
     return {

@@ -12,8 +12,16 @@ const defaults = {
 };
 
 const args = new Map();
-for (let index = 2; index < process.argv.length; index += 2) {
-  args.set(process.argv[index], process.argv[index + 1]);
+for (let index = 2; index < process.argv.length; index += 1) {
+  const key = process.argv[index];
+  if (!key.startsWith("--")) continue;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    args.set(key, "true");
+    continue;
+  }
+  args.set(key, value);
+  index += 1;
 }
 
 const appId = args.get("--app-id") || process.env.ASC_APP_ID || defaults.appId;
@@ -80,9 +88,15 @@ async function request(pathname, options = {}) {
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${text}`);
+    const error = new Error(`${response.status} ${response.statusText}: ${text}`);
+    error.status = response.status;
+    throw error;
   }
   return text ? JSON.parse(text) : null;
+}
+
+function hasStatus(error, status) {
+  return error && typeof error === "object" && error.status === status;
 }
 
 async function findLatestBuild() {
@@ -128,10 +142,15 @@ async function attachBuildToGroup(buildId, groupId) {
   if (current.data.some((item) => item.id === buildId)) {
     return "already-attached";
   }
-  await request(`/v1/betaGroups/${groupId}/relationships/builds`, {
-    method: "POST",
-    body: JSON.stringify({ data: [{ type: "builds", id: buildId }] }),
-  });
+  try {
+    await request(`/v1/betaGroups/${groupId}/relationships/builds`, {
+      method: "POST",
+      body: JSON.stringify({ data: [{ type: "builds", id: buildId }] }),
+    });
+  } catch (error) {
+    if (!hasStatus(error, 409)) throw error;
+    return "already-attached";
+  }
   return "attached";
 }
 
@@ -140,15 +159,22 @@ async function ensureBetaReviewSubmission(buildId) {
   if (existing.data?.id) {
     return existing.data.attributes?.betaReviewState || "existing";
   }
-  const created = await request("/v1/betaAppReviewSubmissions", {
-    method: "POST",
-    body: JSON.stringify({
-      data: {
-        type: "betaAppReviewSubmissions",
-        relationships: { build: { data: { type: "builds", id: buildId } } },
-      },
-    }),
-  });
+  let created;
+  try {
+    created = await request("/v1/betaAppReviewSubmissions", {
+      method: "POST",
+      body: JSON.stringify({
+        data: {
+          type: "betaAppReviewSubmissions",
+          relationships: { build: { data: { type: "builds", id: buildId } } },
+        },
+      }),
+    });
+  } catch (error) {
+    if (!hasStatus(error, 409)) throw error;
+    const current = await request(`/v1/builds/${buildId}/betaAppReviewSubmission`);
+    return current.data?.attributes?.betaReviewState || "existing";
+  }
   return created.data.attributes?.betaReviewState || "submitted";
 }
 
