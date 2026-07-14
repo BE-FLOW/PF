@@ -32,11 +32,13 @@ apps/mobile/*.ipa
 .codex-remote-attachments/
 *.pem
 *.p8
+*.p12
 *.mobileprovision
 *.jks
 *.keystore
 apps/mobile/google-service-account*.json
 apps/mobile/credentials.json
+apps/mobile/credentials/
 apps/mobile/credentials/*.json
 
 # debug

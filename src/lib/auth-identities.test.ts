@@ -24,7 +24,9 @@ describe("auth identity helpers", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchOAuthProviderStatus("https://example.supabase.co", "anon")).resolves.toEqual({
+    await expect(
+      fetchOAuthProviderStatus("https://example.supabase.co", "anon"),
+    ).resolves.toEqual({
       google: true,
       apple: false,
     });
@@ -36,9 +38,10 @@ describe("auth identity helpers", () => {
     expect(
       passwordAuthErrorMessage("signup", { code: "user_already_exists" }),
     ).toContain("이미 가입된 이메일");
+
     expect(
       oauthLinkErrorMessage("google", { code: "identity_already_exists" }),
-    ).toContain("이미 다른 펫플로우 계정에 연결");
+    ).toContain("이미 다른 펫플로우 계정");
   });
 
   it("points disabled OAuth providers to admin setup", () => {
