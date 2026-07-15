@@ -30,6 +30,7 @@ import {
   defaultOAuthProviderStatus,
   fetchOAuthProviderStatus,
   hasLinkedProvider,
+  oauthCallbackCode,
   oauthCallbackErrorMessage,
   oauthCallbackUrlErrorMessage,
   oauthLinkErrorMessage,
@@ -1135,7 +1136,14 @@ export default function App() {
         return "failed";
       }
 
-      const { error } = await supabase.auth.exchangeCodeForSession(url);
+      const authCode = oauthCallbackCode(url);
+      if (!authCode) {
+        processedOAuthUrlsRef.current.delete(url);
+        setErrorMessage("로그인 확인 코드가 앱으로 돌아오지 않았어요. Google 또는 Apple로 다시 시작해 주세요.");
+        return "failed";
+      }
+
+      const { error } = await supabase.auth.exchangeCodeForSession(authCode);
       if (error) {
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData.session) {

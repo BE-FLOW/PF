@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  oauthCallbackCode,
+  oauthCallbackErrorMessage,
   oauthCallbackUrlErrorMessage,
   oauthLinkErrorMessage,
   passwordAuthErrorMessage,
@@ -18,6 +20,21 @@ describe("mobile auth helpers", () => {
         "petflow://auth-callback?error=server_error&error_description=identity_already_exists",
       ),
     ).toContain("기존 이메일 계정");
+  });
+
+  it("extracts only the auth code from native OAuth callback links", () => {
+    expect(oauthCallbackCode("petflow://auth-callback?code=google-code&state=ok")).toBe(
+      "google-code",
+    );
+    expect(oauthCallbackCode("petflow:///auth-callback#error=server_error")).toBe("");
+  });
+
+  it("explains expired or malformed OAuth callback codes", () => {
+    expect(
+      oauthCallbackErrorMessage(
+        new Error("invalid request: both auth code and code verifier should be non-empty"),
+      ),
+    ).toContain("로그인 확인 코드");
   });
 
   it("does not allow hidden account merges on linked identity conflicts", () => {

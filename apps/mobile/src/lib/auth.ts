@@ -125,13 +125,36 @@ export function oauthCallbackErrorMessage(error: unknown) {
   const code = authErrorCode(error);
   const message = authErrorMessage(error).toLowerCase();
 
-  if (code === "bad_code_verifier" || message.includes("code verifier")) {
-    return "로그인 확인 시간이 지나 다시 시도가 필요해요. Google 또는 Apple로 다시 시작해 주세요.";
+  if (
+    code === "bad_code_verifier" ||
+    message.includes("code verifier") ||
+    message.includes("auth code") ||
+    message.includes("invalid_grant") ||
+    message.includes("invalid request")
+  ) {
+    return "로그인 확인 코드가 만료되었거나 앱으로 제대로 돌아오지 않았어요. Google 또는 Apple로 다시 시작해 주세요.";
   }
   if (message.includes("redirect") || message.includes("provider")) {
     return "로그인 설정을 확인해야 해요. 관리자에게 Redirect URL과 Provider 설정을 알려 주세요.";
   }
   return "로그인을 완료하지 못했어요. 다시 시도해 주세요.";
+}
+
+function callbackParam(url: string, key: string) {
+  try {
+    const parsed = new URL(url);
+    const searchValue = parsed.searchParams.get(key);
+    if (searchValue) return searchValue;
+
+    const hash = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
+    return hash ? new URLSearchParams(hash).get(key) ?? "" : "";
+  } catch {
+    return "";
+  }
+}
+
+export function oauthCallbackCode(url: string) {
+  return callbackParam(url, "code");
 }
 
 export function oauthCallbackUrlErrorMessage(url: string) {
