@@ -105,16 +105,22 @@ async function findLatestBuild() {
     `/v1/builds?filter[app]=${appId}${filter}&sort=-uploadedDate&limit=10`,
   );
   const build = data.data.find((item) => !item.attributes.expired);
-  if (!build) {
-    throw new Error("No uploaded App Store Connect build found for PetFlow.");
-  }
-  return build;
+  return build ?? null;
 }
 
 async function waitForValidBuild() {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30 * 60 * 1000) {
     const build = await findLatestBuild();
+    if (!build) {
+      console.log(
+        buildNumber
+          ? `Waiting for App Store Connect processing: build ${buildNumber} is not listed yet.`
+          : "Waiting for App Store Connect processing: no uploaded build is listed yet.",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30_000));
+      continue;
+    }
     if (build.attributes.processingState === "VALID") {
       return build;
     }

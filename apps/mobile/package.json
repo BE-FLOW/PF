@@ -20,7 +20,7 @@
     "submit:android:closed": "npx eas-cli submit --platform android --profile production --latest --non-interactive --wait",
     "submit:android:latest": "npm run submit:android:closed",
     "submit:ios": "npx eas-cli submit --platform ios --profile production",
-    "submit:ios:latest": "npx eas-cli submit --platform ios --profile production --latest --non-interactive --wait --what-to-test \"Google/Apple 계정 연결, 로그아웃, 계정 탈퇴, 최근 기록과 보고서 안정성을 개선했습니다.\"",
+    "submit:ios:latest": "npx eas-cli submit --platform ios --profile production --latest --non-interactive --wait",
     "submit:ios:testflight-external": "node scripts/distribute-ios-testflight.mjs",
     "release:android": "npm run build:android:production && npm run submit:android:closed",
     "release:android:closed": "npm run release:android",
