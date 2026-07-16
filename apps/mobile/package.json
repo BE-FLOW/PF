@@ -23,6 +23,8 @@
     "submit:ios": "npx eas-cli submit --platform ios --profile production",
     "submit:ios:latest": "npx eas-cli submit --platform ios --profile production --latest --non-interactive --wait",
     "submit:ios:testflight-external": "node scripts/distribute-ios-testflight.mjs",
+    "prepare:ios:app-store": "node scripts/prepare-ios-app-store.mjs",
+    "upload:ios:screenshots": "node scripts/upload-ios-screenshots.mjs",
     "release:android": "npm run build:android:production && npm run submit:android:closed",
     "release:android:closed": "npm run release:android",
     "release:ios": "npm run release:ios:external",

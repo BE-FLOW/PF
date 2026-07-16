@@ -1,19 +1,20 @@
 # 모바일 앱 등록 준비
 
 이 문서는 Android와 iOS 등록을 위해 필요한 설정, 스토어 응답, 남은 작업을
-간결하게 고정한다. 현재 목표는 공개 출시가 아니라 TestFlight와 Google Play
-내부 테스트에 올릴 수 있는 준비 상태다.
+간결하게 고정한다. 현재 운영 기준은 Google Play 비공개 테스트, iOS 외부
+TestFlight, 그리고 Apple App Store 1.0 심사 제출 준비 상태다.
 
 ## 현재 앱 식별자
 
 | 항목 | 값 |
 | --- | --- |
-| 앱 이름 | PetFlow |
+| 앱 이름 | 펫플로우 |
 | Expo slug | `petflow-mobile` |
 | iOS bundle ID | `com.beflow.petflow` |
 | Android package name | `com.beflow.petflow` |
 | 앱 버전 | `0.1.0` |
-| iOS build number | `1` |
+| iOS App Store version | `1.0` |
+| iOS build number | `17` |
 | Android version code | EAS remote auto increment |
 | 개인정보 처리방침 | `https://pf-two-eta.vercel.app/privacy` |
 
@@ -23,7 +24,7 @@
 
 - `development`: 개발 클라이언트와 팀 내부 확인용
 - `preview`: 설치 가능한 내부 테스트 APK
-- `production`: TestFlight와 Google Play 내부 트랙 제출용
+- `production`: TestFlight, Google Play 비공개 테스트, App Store 제출용
 
 현재 모바일 빌드는 로그인, 테스터 정보 저장, 반려동물 등록·수정·선택, 오늘 건강
 기록 입력, 기본 안전 분류, 최근 기록 확인, 최근 14일 건강 흐름, 사진·동영상
@@ -54,6 +55,8 @@ npm run build:android:production
 npm run build:ios:production
 npm run submit:ios
 npm run submit:android
+npm run prepare:ios:app-store
+npm run upload:ios:screenshots
 ```
 
 ## 2026-06-29 빌드 준비 상태
@@ -95,6 +98,21 @@ npm run submit:android
 
 ## Apple App Store Connect
 
+2026-07-16 기준 상태:
+
+- 앱 ID: `6786073387`
+- Bundle ID: `com.beflow.petflow`
+- App Store version: `1.0`
+- 연결 빌드: iOS build `17`
+- 카테고리: 라이프스타일
+- 연령 등급: 9+
+- 가격: 무료
+- 개인정보 답변: 이름, 이메일 주소, 전화번호, 사용자 ID, 사진 또는 비디오,
+  기타 사용자 콘텐츠 수집. 추적 목적 사용 없음.
+- 콘텐츠 권한: 타사 콘텐츠를 포함, 표시 또는 이용하지 않음.
+- 심사 정보: `kisuwo16+appreview@gmail.com` 심사용 계정 준비.
+- 현재 App Store Connect 상태: `iOS 1.0 심사 준비됨`, 제출 초안 1개 생성.
+
 등록 전 확인:
 
 - 최소 제출 기능: 계정, 반려동물 등록, 오늘 건강 기록, 병원 공유 요약
@@ -104,6 +122,18 @@ npm run submit:android
   사진·동영상 사용 여부를 실제 빌드 기준으로 신고한다.
 - AI 리포트는 수의사 확인 정보가 아닌 초안이라고 심사 메모와 앱 UI에 표시한다.
 - 계정 삭제 요청 경로는 앱 계정 화면과 개인정보 처리방침에 제공한다.
+
+App Store 메타데이터와 스크린샷은 다음 스크립트로 반복 적용한다.
+
+```bash
+cd apps/mobile
+npm run prepare:ios:app-store
+npm run upload:ios:screenshots
+```
+
+App Store Connect API 키는 저장소에 커밋하지 않는다. 기본 탐색 경로는
+`~/Downloads/AuthKey_*.p8` 또는 `~/AppData/Local/PetFlow/apple/AuthKey_*.p8`이며,
+필요하면 `ASC_API_KEY_PATH`로 지정한다.
 
 ## Google Play Console
 
@@ -124,10 +154,10 @@ npm run submit:android
 
 ## 다음 작업
 
-1. Android build quota reset 후 production AAB 재빌드
-2. Google Play 내부 테스트 새 버전 업로드
-3. TestFlight용 iOS production 빌드 생성
-4. 12명/14일 테스트 운영 로그 정리
+1. Apple App Store 심사 제출 여부를 최종 확인하고 `제출 초안(1개)`를 제출한다.
+2. Google Play 비공개 테스트 새 버전 업로드와 테스터 링크를 확인한다.
+3. iOS 외부 TestFlight 최신 빌드와 App Store 제출 빌드가 같은 기능 상태인지 확인한다.
+4. 12명/14일 테스트 운영 로그와 계정 로그인 피드백을 정리한다.
 
 ## 공식 문서
 

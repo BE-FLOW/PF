@@ -48,6 +48,7 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 1. Expo 계정 로그인 또는 `EXPO_TOKEN` 연결
 2. Android: Google Play 비공개 테스트 트랙에 production AAB 제출
 3. iOS: App Store Connect 업로드 후 외부 TestFlight 그룹에 배포
+4. App Store: 심사용 메타데이터와 스크린샷을 적용하고 제출 초안 생성
 
 ## 배포 명령
 
@@ -59,6 +60,10 @@ npm run typecheck
 npm run eas:whoami
 npm run release:android:closed
 npm run release:ios:external
+npm run prepare:ios:app-store
+npm run upload:ios:screenshots
 ```
 
 `release:ios:external`은 production iOS 빌드를 만들고 App Store Connect로 업로드한 뒤, `PetFlow 보호자 테스트` 외부 TestFlight 그룹에 최신 빌드를 연결하고 Beta App Review로 넘깁니다. App Store Connect API 키는 앱에 넣지 않고 로컬 `AuthKey_*.p8` 파일이나 `ASC_API_KEY_PATH` 환경 변수로만 참조합니다.
+
+`prepare:ios:app-store`는 App Store 1.0 버전에 최신 유효 빌드를 연결하고 한국어 설명, 키워드, 지원 URL, 개인정보 처리방침 URL을 갱신합니다. `upload:ios:screenshots`는 `apps/mobile/store/app-store/iphone-6-7`의 PNG 스크린샷을 App Store Connect 6.7/6.9형 iPhone 스크린샷 세트로 다시 업로드합니다.
