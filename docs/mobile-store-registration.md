@@ -111,7 +111,7 @@ npm run upload:ios:screenshots
   기타 사용자 콘텐츠 수집. 추적 목적 사용 없음.
 - 콘텐츠 권한: 타사 콘텐츠를 포함, 표시 또는 이용하지 않음.
 - 심사 정보: `kisuwo16+appreview@gmail.com` 심사용 계정 준비.
-- 현재 App Store Connect 상태: `iOS 1.0 심사 준비됨`, 제출 초안 1개 생성.
+- 현재 App Store Connect 상태: `iOS 1.0 심사 대기 중`, 제출 초안 0개.
 
 등록 전 확인:
 
@@ -154,7 +154,7 @@ App Store Connect API 키는 저장소에 커밋하지 않는다. 기본 탐색 
 
 ## 다음 작업
 
-1. Apple App Store 심사 제출 여부를 최종 확인하고 `제출 초안(1개)`를 제출한다.
+1. Apple App Store 심사 결과를 확인하고 반려 또는 추가 요청이 오면 대응한다.
 2. Google Play 비공개 테스트 새 버전 업로드와 테스터 링크를 확인한다.
 3. iOS 외부 TestFlight 최신 빌드와 App Store 제출 빌드가 같은 기능 상태인지 확인한다.
 4. 12명/14일 테스트 운영 로그와 계정 로그인 피드백을 정리한다.
