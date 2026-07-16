@@ -18,7 +18,26 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+          cache-dependency-path: |
+            package-lock.json
+            apps/mobile/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+      - name: Lint web and shared code
+        run: npm run lint
+      - name: Test web and shared code
+        run: npm test
+      - name: Build web app
+        run: npm run build
+      - name: Install mobile dependencies
+        run: npm ci
+        working-directory: apps/mobile
+      - name: Typecheck mobile app
+        run: npm run typecheck
+        working-directory: apps/mobile
+      - name: Test mobile helpers
+        run: npm test
+        working-directory: apps/mobile
+      - name: Check Expo dependency versions
+        run: npm run expo:check
+        working-directory: apps/mobile
