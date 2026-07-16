@@ -2,7 +2,7 @@
 
 이 문서는 Android와 iOS 등록을 위해 필요한 설정, 스토어 응답, 남은 작업을
 간결하게 고정한다. 현재 운영 기준은 Google Play 비공개 테스트, iOS 외부
-TestFlight, 그리고 Apple App Store 1.0 심사 제출 준비 상태다.
+TestFlight, 그리고 Apple App Store 1.0 심사 대기 상태다.
 
 ## 현재 앱 식별자
 

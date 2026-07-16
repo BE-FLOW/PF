@@ -22,6 +22,14 @@ describe("mobile auth helpers", () => {
     ).toContain("기존 이메일 계정");
   });
 
+  it("reads OAuth callback errors from hash fragments", () => {
+    expect(
+      oauthCallbackUrlErrorMessage(
+        "petflow:///auth-callback#error=access_denied&error_description=user_cancelled",
+      ),
+    ).toContain("로그인을 취소");
+  });
+
   it("extracts only the auth code from native OAuth callback links", () => {
     expect(oauthCallbackCode("petflow://auth-callback?code=google-code&state=ok")).toBe(
       "google-code",

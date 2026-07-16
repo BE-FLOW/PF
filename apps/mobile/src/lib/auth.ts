@@ -159,12 +159,11 @@ export function oauthCallbackCode(url: string) {
 
 export function oauthCallbackUrlErrorMessage(url: string) {
   try {
-    const parsed = new URL(url);
     const code =
-      parsed.searchParams.get("error_code") ??
-      parsed.searchParams.get("error") ??
+      callbackParam(url, "error_code") ||
+      callbackParam(url, "error") ||
       "";
-    const description = parsed.searchParams.get("error_description") ?? "";
+    const description = callbackParam(url, "error_description");
     const message = `${code} ${description}`.toLowerCase();
 
     if (!code && !description) return "";

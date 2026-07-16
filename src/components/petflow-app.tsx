@@ -2463,7 +2463,7 @@ function HistoryView({
             아직 건강 흐름이 없어요
           </h2>
           <p style={{ fontSize: 12, color: "#81908b", margin: 0 }}>
-            오늘의 작은 변화부터 기록해 보세요.
+            오늘 상태를 남기면 흐름이 쌓여요.
           </p>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={17} /> 첫 기록 남기기
@@ -3338,6 +3338,10 @@ export function PetFlowApp() {
   const [closingEpisodeId, setClosingEpisodeId] = useState<string>();
   const [episodeError, setEpisodeError] = useState("");
   const [error, setError] = useState("");
+  const [appNotice, setAppNotice] = useState<{
+    tone: "success" | "error";
+    text: string;
+  } | null>(null);
   const setView = useCallback<SetView>((nextView, options) => {
     const mode = options?.history ?? "push";
     if (currentViewRef.current === nextView) return;
@@ -3396,6 +3400,12 @@ export function PetFlowApp() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!appNotice) return;
+    const timer = window.setTimeout(() => setAppNotice(null), 4200);
+    return () => window.clearTimeout(timer);
+  }, [appNotice]);
 
   useEffect(() => {
     if (isView(window.history.state?.petflowView)) {
@@ -4120,6 +4130,7 @@ export function PetFlowApp() {
     );
     if (!confirmed) return;
 
+    setAppNotice(null);
     try {
       if (record.result.storage === "remote") {
         const supabase = getSupabaseBrowserClient();
@@ -4151,9 +4162,13 @@ export function PetFlowApp() {
         );
         return records.length ? { ...current, records } : null;
       });
+      setAppNotice({ tone: "success", text: "기록을 삭제했어요." });
       if (currentView === "result") setView("history", { history: "replace" });
     } catch {
-      window.alert("기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
+      setAppNotice({
+        tone: "error",
+        text: "기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      });
     }
   }
   async function submit() {
@@ -4585,6 +4600,17 @@ export function PetFlowApp() {
         </button>
       </header>
       <main className="app-main">
+        {appNotice && (
+          <div
+            className={`app-notice ${appNotice.tone}`}
+            role={appNotice.tone === "error" ? "alert" : "status"}
+          >
+            <span>{appNotice.text}</span>
+            <button type="button" onClick={() => setAppNotice(null)}>
+              닫기
+            </button>
+          </div>
+        )}
         {currentView === "home" && (
           <HomeView
             profile={profile}

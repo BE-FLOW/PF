@@ -173,6 +173,38 @@ button {
   min-height: 100vh;
   padding: 42px 52px 70px;
 }
+.app-notice {
+  width: min(100%, 1080px);
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid #cfe7dc;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--mint-dark);
+  box-shadow: 0 12px 30px rgba(44, 89, 72, 0.08);
+  font-size: 12px;
+  font-weight: 900;
+}
+.app-notice.error {
+  border-color: #f1c9c4;
+  background: #fff7f6;
+  color: #a94840;
+}
+.app-notice button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(37, 131, 98, 0.09);
+  color: inherit;
+  cursor: pointer;
+  padding: 6px 9px;
+  font-size: 10px;
+  font-weight: 900;
+}
 .content-wrap {
   width: min(100%, 1080px);
   margin: 0 auto;

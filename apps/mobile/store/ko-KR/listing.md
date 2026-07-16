@@ -1,7 +1,7 @@
 # PetFlow 스토어 등록 초안
 
 이 문구는 Google Play 비공개 테스트, iOS 외부 TestFlight, Apple App Store 1.0
-심사 제출에 함께 사용한다. 공개 심사에 제출하기 전에는 실제 테스트 빌드에서
+심사 제출에 함께 사용한다. 새 빌드를 제출하기 전에는 실제 테스트 빌드에서
 로그인, 기록, 미디어 첨부, AI 초안, 계정 삭제 요청 흐름을 한 번 더 확인한다.
 
 ## 앱 이름
@@ -79,5 +79,5 @@ PetFlow는 보호자 관찰을 정리하고 병원 상담 자료로 공유하도
 - 앱 아이콘: `apps/mobile/store/app-store/app-icon-1024.png`
 - iPhone 6.7/6.9 스크린샷: `apps/mobile/store/app-store/iphone-6-7/*.png`
 
-App Store Connect 1.0 버전은 빌드 17을 연결하고, 개인정보 답변과 콘텐츠 권한까지
-입력한 뒤 제출 초안 상태로 둔다.
+App Store Connect 1.0 버전은 빌드 17을 연결했고, 개인정보 답변과 콘텐츠 권한까지
+입력한 뒤 심사 대기 상태로 제출했다.
