@@ -28,7 +28,7 @@ describe("vaccination reminders", () => {
 
     expect(reminder.tone).toBe("due");
     expect(reminder.label).toBe("D-6");
-    expect(reminder.title).toContain("가까워졌어요");
+    expect(reminder.title).toContain("가까워요");
   });
 
   it("keeps the latest completed record available when nothing is scheduled", () => {

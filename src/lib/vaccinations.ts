@@ -72,7 +72,7 @@ export function vaccinationReminder(
       tone: "overdue",
       label: "예정일 지남",
       title: `${next.record.name} 접종일을 확인해 주세요`,
-      description: `${Math.abs(next.daysUntil)}일 지났어요. 접종 여부를 확인해 주세요.`,
+      description: `${Math.abs(next.daysUntil)}일 지났어요.`,
       daysUntil: next.daysUntil,
     };
   }
@@ -83,7 +83,7 @@ export function vaccinationReminder(
       tone: "due",
       label: "오늘 예정",
       title: `${next.record.name} 접종 예정일이에요`,
-      description: "오늘 병원 방문 여부를 확인해 주세요.",
+      description: "병원 방문 여부를 확인해 주세요.",
       daysUntil: next.daysUntil,
     };
   }
@@ -93,8 +93,8 @@ export function vaccinationReminder(
       record: next.record,
       tone: "due",
       label: `D-${next.daysUntil}`,
-      title: `${next.record.name} 일정이 가까워졌어요`,
-      description: "이번 주 병원 일정을 확인해 주세요.",
+      title: `${next.record.name} 일정이 가까워요`,
+      description: "이번 주 일정을 확인해 주세요.",
       daysUntil: next.daysUntil,
     };
   }
@@ -104,8 +104,8 @@ export function vaccinationReminder(
       record: next.record,
       tone: "upcoming",
       label: `D-${next.daysUntil}`,
-      title: `${next.record.name} 일정이 다가오고 있어요`,
-      description: "병원 방문 날짜를 미리 확인해 두면 좋아요.",
+      title: `${next.record.name} 예정`,
+      description: "가까워지면 다시 알려드릴게요.",
       daysUntil: next.daysUntil,
     };
   }
@@ -114,8 +114,8 @@ export function vaccinationReminder(
     record: next.record,
     tone: "none",
     label: `D-${next.daysUntil}`,
-    title: `다음 예방접종은 ${next.record.dueAt} 예정이에요`,
-    description: "가까워지면 홈에서 다시 알려드릴게요.",
+    title: `${next.record.name} 예정`,
+    description: "가까워지면 다시 알려드릴게요.",
     daysUntil: next.daysUntil,
   };
 }

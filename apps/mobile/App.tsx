@@ -680,6 +680,9 @@ export default function App() {
         return new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime();
       });
   }, [episodes, plans, progress, selectedPet?.name, selectedPetHistory, selectedPetId]);
+  const activeEpisodeGroup = episodeReportGroups.find(
+    (group) => group.episode?.status === "open",
+  );
 
   const needsTesterProfile = Boolean(
     user &&
@@ -2611,6 +2614,7 @@ export default function App() {
                       latestResult={latestResult}
                       pets={pets}
                       selectedPet={selectedPet}
+                      activeEpisodeGroup={activeEpisodeGroup}
                       vaccinations={selectedPetVaccinations}
                       onEditPet={() => {
                         if (selectedPet) {
@@ -2808,6 +2812,7 @@ function AppBrandMark() {
 }
 
 function HomeDashboard({
+  activeEpisodeGroup,
   flow,
   history,
   latestResult,
@@ -2818,6 +2823,7 @@ function HomeDashboard({
   onGoRecord,
   onGoReports,
 }: {
+  activeEpisodeGroup?: EpisodeReportGroup;
   flow: HealthFlowSummary;
   history: HistoryRecord[];
   latestResult: AnalysisResult | null;
@@ -2838,6 +2844,10 @@ function HomeDashboard({
     ? [speciesLabel(selectedPet.species), selectedPet.breed].filter(Boolean).join(" · ")
     : "함께 볼 아이를 골라주세요";
   const vaccination = vaccinationReminder(vaccinations);
+  const initialProgressCount =
+    activeEpisodeGroup?.progress.filter((item) =>
+      initialFollowUpDays.includes(item.followUpDay),
+    ).length ?? 0;
 
   if (!pets.length) {
     return (
@@ -2886,6 +2896,20 @@ function HomeDashboard({
               <Text style={styles.homeVaccinationTitle}>{vaccination.title}</Text>
               <Text style={styles.homeVaccinationText}>{vaccination.description}</Text>
             </View>
+          ) : null}
+          {activeEpisodeGroup ? (
+            <TouchableOpacity
+              activeOpacity={0.86}
+              onPress={onGoReports}
+              style={styles.homeEpisodeLine}
+            >
+              <Text style={styles.homeEpisodeLabel}>진행 중 흐름</Text>
+              <Text style={styles.homeEpisodeTitle}>
+                기록 {activeEpisodeGroup.records.length}회 · 경과{" "}
+                {Math.min(initialProgressCount, 3)}/3
+              </Text>
+              <Text style={styles.homeEpisodeText}>병원 공유 요약 보기</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
         <View style={styles.petPhotoSlot}>
@@ -4548,14 +4572,10 @@ function HealthHistoryCard({
   const recent = history.slice(0, 5);
   const shareGroups = useMemo(() => episodeGroups.slice(0, 4), [episodeGroups]);
   const [expandedReportKey, setExpandedReportKey] = useState<string | null>(null);
-  const collapsedReportKey = "__petflow_collapsed__";
-  const defaultReportKey = shareGroups[0]?.key ?? null;
   const activeReportKey =
-    expandedReportKey === collapsedReportKey
-      ? null
-      : shareGroups.some((group) => group.key === expandedReportKey)
+    shareGroups.some((group) => group.key === expandedReportKey)
         ? expandedReportKey
-        : defaultReportKey;
+        : null;
 
   const getAiFeedbackDraft = (draft?: VetReviewDraft) =>
     draft?.usageId
@@ -4665,7 +4685,7 @@ function HealthHistoryCard({
                 onStartProgressEdit={onStartProgressEdit}
                 onTogglePlanTask={onTogglePlanTask}
                 onToggleReport={() =>
-                  setExpandedReportKey(expanded ? collapsedReportKey : group.key)
+                  setExpandedReportKey(expanded ? null : group.key)
                 }
               />
             );
@@ -5960,6 +5980,33 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   homeVaccinationText: {
+    marginTop: 2,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  homeEpisodeLine: {
+    alignSelf: "flex-start",
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#cfe7dc",
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  homeEpisodeLabel: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  homeEpisodeTitle: {
+    marginTop: 3,
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  homeEpisodeText: {
     marginTop: 2,
     color: colors.muted,
     fontSize: 11,

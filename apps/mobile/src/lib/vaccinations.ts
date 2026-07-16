@@ -117,7 +117,7 @@ export function vaccinationReminder(
       tone: "due",
       label: `D-${next.daysUntil}`,
       title: `${next.record.name} 일정이 가까워요`,
-      description: "이번 주 병원 일정을 확인해 주세요.",
+      description: "이번 주 일정을 확인해 주세요.",
     };
   }
   return {

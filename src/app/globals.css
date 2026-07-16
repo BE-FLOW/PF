@@ -415,6 +415,37 @@ p {
   padding: 0 17px;
   border-radius: 14px;
 }
+.hero-episode-link {
+  width: fit-content;
+  max-width: min(100%, 320px);
+  margin-top: 9px;
+  padding: 10px 12px;
+  border: 1px solid rgba(34, 132, 102, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.66);
+  display: grid;
+  gap: 2px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  box-shadow: 0 10px 22px rgba(14, 69, 57, 0.06);
+}
+.hero-episode-link span,
+.hero-episode-link small {
+  color: var(--mint-dark);
+  font-size: 10px;
+  font-weight: 900;
+}
+.hero-episode-link strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+}
+.hero-episode-link small {
+  color: var(--muted);
+  line-height: 1.35;
+}
 .hero-vaccination {
   width: fit-content;
   max-width: min(100%, 360px);

@@ -710,6 +710,7 @@ function HomeView({
   flow,
   flowLoading,
   activeEpisode,
+  activeEpisodeProgressCount,
   vaccinations,
 }: {
   profile: PetProfile;
@@ -721,12 +722,16 @@ function HomeView({
   flow: HealthFlowSummary;
   flowLoading: boolean;
   activeEpisode?: PetEpisode;
+  activeEpisodeProgressCount: number;
   vaccinations: VaccinationRecord[];
 }) {
   const recent = history[0];
   const recentCheckScore = recent ? displayCheckScore(recent.result.riskScore) : undefined;
   const hasProfile = Boolean(profile.name.trim());
   const vaccination = vaccinationReminder(vaccinations);
+  const activeEpisodeRecordCount = activeEpisode
+    ? history.filter((record) => record.episodeId === activeEpisode.id).length
+    : 0;
   const ageGroup = deriveAgeGroup(profile.birthDate);
   const profileDetails = [
     profile.species === "dog"
@@ -769,6 +774,16 @@ function HomeView({
                 : "오늘 기록하기"
               : "등록하고 시작하기"}
           </button>
+          {hasProfile && activeEpisode && (
+            <button className="hero-episode-link" type="button" onClick={onHistory}>
+              <span>진행 중 흐름</span>
+              <strong>
+                기록 {Math.max(activeEpisodeRecordCount, 1)}회 · 경과{" "}
+                {Math.min(activeEpisodeProgressCount, 3)}/3
+              </strong>
+              <small>병원 공유 요약 보기</small>
+            </button>
+          )}
         </div>
         <button
           type="button"
@@ -2270,10 +2285,6 @@ function HistoryView({
   }, [episodes, history]);
   const [expandedEpisodeKey, setExpandedEpisodeKey] = useState<string | null>(null);
   const collapsedEpisodeKey = "__petflow_collapsed__";
-  const defaultEpisodeKey =
-    episodeGroups[0]?.episode?.id ??
-    episodeGroups[0]?.records[0]?.result.id ??
-    null;
   const activeEpisodeKey =
     expandedEpisodeKey === collapsedEpisodeKey
       ? null
@@ -2282,7 +2293,7 @@ function HistoryView({
           return key === expandedEpisodeKey;
         })
         ? expandedEpisodeKey
-        : defaultEpisodeKey;
+        : null;
 
   return (
     <div className="content-wrap">
@@ -3459,6 +3470,17 @@ export function PetFlowApp() {
     ),
     [episodes, selectedPetId],
   );
+  const activeEpisodeProgressCount = useMemo(
+    () =>
+      activeEpisode
+        ? progress.filter(
+            (item) =>
+              item.episodeId === activeEpisode.id &&
+              [3, 7, 14].includes(item.followUpDay),
+          ).length
+        : 0,
+    [activeEpisode, progress],
+  );
   const clearPendingMedia = useCallback(() => {
     setPendingMedia((current) => {
       current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
@@ -4626,6 +4648,7 @@ export function PetFlowApp() {
             flow={healthFlow}
             flowLoading={flowLoading}
             activeEpisode={activeEpisode}
+            activeEpisodeProgressCount={activeEpisodeProgressCount}
             vaccinations={selectedPetVaccinations}
           />
         )}{" "}
