@@ -32,6 +32,26 @@ Google/Apple 로그인을 기본으로 안내하고, 기존 이메일·비밀번
 
 Supabase SQL Editor에서 반복 조회할 쿼리는 `supabase/management.sql`에 있다.
 
+## 더미 데이터 정리
+
+더미 정리는 운영 테스터 기록과 섞이지 않도록 `scripts/cleanup-dummy-data.mjs`로만
+수행한다. 기본 실행은 dry-run이며 삭제 대상 수만 확인한다.
+
+```bash
+npm run db:cleanup:dummy -- --env-file=.env.local
+```
+
+삭제가 필요한 경우에만 `--apply`를 붙인다.
+
+```bash
+npm run db:cleanup:dummy -- --env-file=.env.local --apply
+```
+
+정리 대상은 계정에 연결되지 않은 `seed/development/local/test/preview` 분석 row와
+`example.com`, `example.test`, `dummy/demo/sample/seed` 패턴의 명확한 더미 계정으로
+제한한다. 실제 보호자 이메일, 실제 휴대전화번호가 들어간 테스터 계정, 로그인된
+반려동물 기록은 자동 정리 대상에 포함하지 않는다.
+
 ## 장애 시
 
 - DB 장애여도 익명 건강 기록은 브라우저 저장으로 계속 동작한다.

@@ -211,7 +211,7 @@ export async function POST(
   if (!access.status.enabled) {
     return NextResponse.json(
       {
-        error: "참여코드를 입력한 테스터만 GPT AI 리포트를 만들 수 있어요.",
+        error: "참여코드를 등록한 계정만 GPT AI 리포트를 만들 수 있어요.",
         access: access.status,
       },
       { status: 403 },

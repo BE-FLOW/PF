@@ -695,7 +695,7 @@ export default function App() {
     if (!configured) return "앱 환경을 먼저 연결해요";
     if (!authReady) return "계정 확인 중";
     if (!user) return "계정으로 이어서 관리";
-    if (needsTesterProfile) return "테스터 정보를 확인해요";
+    if (needsTesterProfile) return "필수 계정 정보를 확인해요";
     if (!pets.length) return "함께할 아이를 알려주세요";
     if (mainSection === "record") return "오늘의 건강 기록";
     if (mainSection === "reports") return "건강 흐름";
@@ -787,7 +787,7 @@ export default function App() {
     ]);
 
     if (error) {
-      setMessage("테스터 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
+      setMessage("계정 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
     let effectivePetRows: Array<{
       id: string;
@@ -1259,7 +1259,7 @@ export default function App() {
       updated_at: now,
     });
 
-    if (error) return "테스터 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
+    if (error) return "계정 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
 
     setTesterProfile({
       nickname: draft.nickname.trim(),
@@ -1420,7 +1420,7 @@ export default function App() {
   async function submitTesterProfile() {
     setLoading(true);
     const saveMessage = await saveTesterProfile();
-    setMessage(saveMessage || "테스터 정보가 저장됐어요.");
+    setMessage(saveMessage || "계정 정보가 저장됐어요.");
     setLoading(false);
   }
 
@@ -2372,9 +2372,9 @@ export default function App() {
 
       setAiAccess(payload.access);
       setAiCodeDraft("");
-      setAiCodeMessage("테스터 키가 등록됐어요.");
+      setAiCodeMessage("참여코드가 등록됐어요.");
     } catch {
-      setAiCodeMessage("테스터 키를 등록하지 못했어요. 코드와 사용 가능 여부를 확인해 주세요.");
+      setAiCodeMessage("참여코드를 등록하지 못했어요. 코드와 사용 가능 여부를 확인해 주세요.");
     } finally {
       setAiCodeLoading(false);
     }
@@ -2384,7 +2384,7 @@ export default function App() {
     if (!aiAccess?.enabled) {
       setVetDraftNotice({
         episodeId,
-        text: "테스터 키를 등록한 계정만 GPT 초안을 만들 수 있어요.",
+        text: "참여코드를 등록한 계정만 GPT 초안을 만들 수 있어요.",
         tone: "error",
       });
       return;
@@ -2527,7 +2527,7 @@ export default function App() {
   const appDescription =
     user && !needsTesterProfile
       ? mainSectionDescriptions[mainSection]
-      : "로그인 세션을 앱에 저장하고, 테스터 필수 정보를 웹과 같은 DB 구조로 관리하는 단계예요.";
+      : "로그인 세션을 앱에 저장하고, 필수 계정 정보를 웹과 같은 DB 구조로 관리하는 단계예요.";
 
   const accountCard = user ? (
     <AccountCard
@@ -3275,7 +3275,7 @@ function TesterProfileForm({
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>테스터 필수 정보</Text>
+      <Text style={styles.cardTitle}>필수 계정 정보</Text>
       <Text style={styles.cardText}>
         닉네임과 연락용 010 번호를 저장해요. 인증번호는 보내지 않아요.
       </Text>
@@ -3283,7 +3283,7 @@ function TesterProfileForm({
       <Message text={message} />
       <PrimaryButton
         disabled={loading}
-        label={loading ? "저장 중..." : "테스터 정보 저장"}
+        label={loading ? "저장 중..." : "계정 정보 저장"}
         onPress={onSubmit}
       />
     </View>
@@ -3393,7 +3393,7 @@ function AccountCard({
     <View style={styles.card}>
       <Text style={styles.cardEyebrow}>SIGNED IN</Text>
       <Text style={styles.cardTitle}>
-        {testerProfile?.nickname || user.email || "테스터"}
+        {testerProfile?.nickname || user.email || "사용자"}
       </Text>
       <Text style={styles.cardText}>{user.email}</Text>
       {testerProfile?.phone ? (
@@ -3405,7 +3405,7 @@ function AccountCard({
           <View style={styles.cardHeaderText}>
             <Text style={styles.identityLinkTitle}>로그인 연결</Text>
             <Text style={styles.identityLinkText}>
-              기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 테스터 권한이
+              기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 AI 초안 권한이
               그대로 이어져요.
             </Text>
           </View>
@@ -3492,7 +3492,7 @@ function AccountCard({
       <View style={[styles.aiAccessBox, aiAccess?.enabled && styles.aiAccessBoxEnabled]}>
         <View style={styles.aiAccessHeader}>
           <View style={styles.cardHeaderText}>
-            <Text style={styles.aiAccessTitle}>GPT 테스터 키</Text>
+            <Text style={styles.aiAccessTitle}>GPT 참여코드</Text>
             <Text style={styles.aiAccessText}>{aiAccessCopy(aiAccess)}</Text>
           </View>
           <Text
@@ -3501,7 +3501,7 @@ function AccountCard({
               aiAccess?.enabled && styles.aiAccessBadgeEnabled,
             ]}
           >
-            {aiAccess?.enabled ? "사용 가능" : "키 필요"}
+            {aiAccess?.enabled ? "사용 가능" : "코드 필요"}
           </Text>
         </View>
 
@@ -3522,7 +3522,7 @@ function AccountCard({
             </View>
             <View style={styles.aiUsageItem}>
               <Text style={styles.aiUsageLabel}>그룹</Text>
-              <Text style={styles.aiUsageValue}>{aiAccess.codeLabel ?? "테스터"}</Text>
+              <Text style={styles.aiUsageValue}>{aiAccess.codeLabel ?? "사용자"}</Text>
             </View>
           </View>
         ) : (
@@ -3543,14 +3543,14 @@ function AccountCard({
               style={[styles.aiCodeButton, aiCodeLoading && styles.buttonDisabled]}
             >
               <Text style={styles.aiCodeButtonText}>
-                {aiCodeLoading ? "확인 중" : "키 등록"}
+                {aiCodeLoading ? "확인 중" : "코드 등록"}
               </Text>
             </TouchableOpacity>
           </View>
         )}
         <Message
           text={aiCodeMessage}
-          tone={aiCodeMessage === "테스터 키가 등록됐어요." ? "success" : "error"}
+          tone={aiCodeMessage === "참여코드가 등록됐어요." ? "success" : "error"}
         />
       </View>
 
@@ -4402,7 +4402,7 @@ function ResultVetDraftBox({
             canUseAiDraft && styles.vetDraftBadgeEnabled,
           ]}
         >
-          {canUseAiDraft ? "키 확인됨" : "키 필요"}
+          {canUseAiDraft ? "코드 확인됨" : "코드 필요"}
         </Text>
       </View>
 
@@ -4418,7 +4418,7 @@ function ResultVetDraftBox({
             onPress={onGoAccount}
             style={styles.vetDraftSecondaryButton}
           >
-            <Text style={styles.vetDraftSecondaryButtonText}>테스터 키 확인</Text>
+            <Text style={styles.vetDraftSecondaryButtonText}>참여코드 확인</Text>
           </TouchableOpacity>
         </>
       ) : (
@@ -5181,7 +5181,7 @@ function EpisodeReportItem({
                 canUseAiDraft && styles.vetDraftBadgeEnabled,
               ]}
             >
-              {canUseAiDraft ? "키 확인됨" : "키 필요"}
+              {canUseAiDraft ? "코드 확인됨" : "코드 필요"}
             </Text>
           </View>
 
@@ -5195,8 +5195,8 @@ function EpisodeReportItem({
 
           {!canUseAiDraft ? (
             <Text style={styles.planEmptyText}>
-              로그인 카드에서 참여코드를 등록하면 GPT 초안을 만들 수
-              있어요. 키별 월간·전체 사용량은 서버에서 관리됩니다.
+              계정 화면에서 참여코드를 등록하면 GPT 초안을 만들 수
+              있어요. 코드별 월간·전체 사용량은 서버에서 관리됩니다.
             </Text>
           ) : (
             <>
@@ -5245,7 +5245,7 @@ function EpisodeReportItem({
                   ))}
                   {feedbackUsageId ? (
                     <View style={styles.aiFeedbackBox}>
-                      <Text style={styles.aiFeedbackTitle}>테스터 피드백</Text>
+                      <Text style={styles.aiFeedbackTitle}>사용자 피드백</Text>
                       <Text style={styles.aiFeedbackHint}>
                         수의사에게 보여주기 좋은 초안인지 짧게 알려주세요.
                       </Text>
@@ -5585,12 +5585,12 @@ function aiAccessCopy(access: AiAccessStatus | null) {
     return "이번 달 GPT 초안 사용량을 모두 사용했어요.";
   }
   if (access.reason === "total_limit") {
-    return "이 테스터 키의 전체 사용량을 모두 사용했어요.";
+    return "이 참여코드의 전체 사용량을 모두 사용했어요.";
   }
   if (access.reason === "revoked") {
-    return "이 테스터 키는 현재 사용할 수 없어요.";
+    return "이 참여코드는 현재 사용할 수 없어요.";
   }
-  return "권한이 있는 테스터 계정이에요. 사용량은 서버에서 관리됩니다.";
+  return "AI 초안 권한이 있는 계정이에요. 사용량은 서버에서 관리됩니다.";
 }
 
 function recordSymptomText(record: HistoryRecord) {

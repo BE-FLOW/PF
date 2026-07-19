@@ -345,7 +345,7 @@ export function AccountView({
         <div className="account-stack">
           <section className="panel account-summary">
             <div>
-              <small>테스터 계정</small>
+              <small>사용자 계정</small>
               <strong>{testerProfile?.nickname || user.email}</strong>
               {testerProfile && <span>{user.email}</span>}
             </div>
@@ -360,7 +360,7 @@ export function AccountView({
               <div>
                 <h3>로그인 연결</h3>
                 <p>
-                  기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 테스터 권한이
+                  기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 AI 초안 권한이
                   그대로 이어져요.
                 </p>
               </div>
@@ -454,7 +454,7 @@ export function AccountView({
                 </div>
                 <div>
                   <span>코드 그룹</span>
-                  <strong>{aiAccess.codeLabel ?? "테스터"}</strong>
+                  <strong>{aiAccess.codeLabel ?? "사용자"}</strong>
                 </div>
               </div>
             ) : (
@@ -516,7 +516,7 @@ export function AccountView({
 
           {showTesterForm && (
             <section className="form-panel auth-panel">
-              <h2>{needsTesterProfile ? "테스터 정보를 알려주세요" : "테스터 정보 수정"}</h2>
+              <h2>{needsTesterProfile ? "필수 계정 정보를 알려주세요" : "계정 정보 수정"}</h2>
               <TesterFields draft={draft} setDraft={setDraft} />
               <PrivacyNotice />
               <label className="consent-check">

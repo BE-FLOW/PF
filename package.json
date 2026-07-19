@@ -11,6 +11,7 @@
     "db:start": "npx supabase start",
     "db:reset": "npx supabase db reset",
     "db:test": "npx supabase test db",
+    "db:cleanup:dummy": "node scripts/cleanup-dummy-data.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs"
   },
   "dependencies": {

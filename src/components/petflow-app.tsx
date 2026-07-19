@@ -1917,7 +1917,7 @@ function ResultView({
       return;
     }
     if (!canUseAiReport) {
-      setVetDraftError("참여코드를 입력한 테스터만 GPT 초안을 만들 수 있어요.");
+      setVetDraftError("참여코드를 등록한 계정만 GPT 초안을 만들 수 있어요.");
       return;
     }
     setVetDraftState("loading");
@@ -2082,7 +2082,7 @@ function ResultView({
                 </p>
               </div>
               <span className="vet-draft-badge">
-                {canUseAiReport ? "키 확인됨" : "키 필요"}
+                {canUseAiReport ? "코드 확인됨" : "코드 필요"}
               </span>
             </div>
             {!record.episodeId ? (
@@ -2091,7 +2091,7 @@ function ResultView({
               </p>
             ) : !canUseAiReport ? (
               <div className="vet-draft-locked">
-                <strong>참여코드가 있는 테스터에게만 GPT 초안을 열어두고 있어요.</strong>
+                <strong>참여코드를 등록한 계정에서 GPT 초안을 만들 수 있어요.</strong>
                 <p>
                   {aiAccess?.reason === "monthly_limit"
                     ? "이번 달 GPT 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
@@ -2657,7 +2657,7 @@ function EpisodeReportView({
       return;
     }
     if (!canUseAiReport) {
-      setVetDraftError("참여코드를 입력한 테스터만 GPT 초안을 만들 수 있어요.");
+      setVetDraftError("참여코드를 등록한 계정만 GPT 초안을 만들 수 있어요.");
       return;
     }
     setVetDraftState("loading");
@@ -2792,7 +2792,7 @@ function EpisodeReportView({
           </p>
         ) : !canUseAiReport ? (
           <div className="vet-draft-locked">
-            <strong>참여코드가 있는 테스터에게만 GPT 초안을 열어두고 있어요.</strong>
+            <strong>참여코드를 등록한 계정에서 GPT 초안을 만들 수 있어요.</strong>
             <p>
               {aiAccess?.reason === "monthly_limit"
                 ? "이번 달 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
@@ -2863,7 +2863,7 @@ function EpisodeReportView({
                 </div>
                 {vetDraft.usageId && (
                   <div className="ai-feedback-box">
-                    <span>테스터 피드백</span>
+                    <span>사용자 피드백</span>
                     <div className="ai-feedback-grid">
                       <label>
                         수의사 검토에 유용했나요?
@@ -4053,7 +4053,7 @@ export function PetFlowApp() {
       phone_consented_at: consentedAt,
       updated_at: consentedAt,
     });
-    if (profileError) return "테스터 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
+    if (profileError) return "계정 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
     setTesterProfile({
       ...tester,
       nickname: tester.nickname.trim(),
