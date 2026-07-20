@@ -12,7 +12,10 @@
     "db:reset": "npx supabase db reset",
     "db:test": "npx supabase test db",
     "db:cleanup:dummy": "node scripts/cleanup-dummy-data.mjs",
-    "verify:deployment": "node scripts/verify-deployment.mjs"
+    "verify:deployment": "node scripts/verify-deployment.mjs",
+    "verify:all": "npm run lint && npm test && npm run build && npm --prefix apps/mobile run verify",
+    "release:preflight:android": "npm --prefix apps/mobile run release:preflight:android",
+    "release:preflight:ios": "npm --prefix apps/mobile run release:preflight:ios"
   },
   "dependencies": {
     "@fontsource/pretendard": "^5.2.5",

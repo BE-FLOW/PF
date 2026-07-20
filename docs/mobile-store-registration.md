@@ -1,8 +1,8 @@
-# 모바일 앱 등록 준비
+# 모바일 출시 운영 기준
 
-이 문서는 Android와 iOS 등록을 위해 필요한 설정, 스토어 응답, 남은 작업을
-간결하게 고정한다. 현재 운영 기준은 Google Play 비공개 테스트, iOS 외부
-TestFlight, 그리고 Apple App Store 1.0 심사 대기 상태다.
+이 문서는 웹, Android, iOS를 같은 제품 상태로 유지하면서 서로 다른 심사 일정을
+안전하게 다루는 단일 출시 기준이다. 수정 중에는 웹만 계속 배포하고, 모바일은 코드
+동결 시점의 `main`으로 새 빌드를 만든다.
 
 ## 현재 앱 식별자
 
@@ -12,19 +12,38 @@ TestFlight, 그리고 Apple App Store 1.0 심사 대기 상태다.
 | Expo slug | `petflow-mobile` |
 | iOS bundle ID | `com.beflow.petflow` |
 | Android package name | `com.beflow.petflow` |
-| 앱 버전 | `0.1.0` |
+| 앱 버전 | `1.0` (`package.json`은 `1.0.0`) |
 | iOS App Store version | `1.0` |
-| iOS build number | `17` |
-| Android version code | EAS remote auto increment |
+| iOS remote build number | `18` (다음 후보는 자동 증가) |
+| Android remote version code | `26` (다음 후보는 자동 증가) |
 | 개인정보 처리방침 | `https://pf-two-eta.vercel.app/privacy` |
 
-## 빌드와 제출
+## 2026-07-20 상태
 
-`apps/mobile/eas.json`에 세 프로필을 둔다.
+- 웹 운영본은 `main`의 최신 커밋으로 계속 갱신한다.
+- Android 스토어 최신 빌드는 version code `26`이며 현재 `main`보다 오래됐다.
+- iOS 심사 빌드는 `1.0 (18)`이며 현재 `main`보다 오래됐다. App Store Connect
+  상태는 `WAITING_FOR_REVIEW`, 출시 방식은 수동이다.
+- 따라서 앞으로 수정되는 내용은 새 Android/iOS 빌드를 만들기 전까지 설치된 앱에
+  자동 반영되지 않는다.
+- Android 정식 출시는 12명 테스트 요건과 Google Play의 프로덕션 액세스 승인을
+  확인한 뒤 진행한다.
+- iOS `1.0 (18)` 심사를 유지하면 승인 후 즉시 출시할 수 있지만, 해당 빌드 이후의
+  수정은 포함되지 않는다. 최신 코드를 첫 출시본에 넣으려면 현재 심사를 철회하고
+  새 빌드를 연결해 다시 심사해야 한다.
+
+## 빌드와 제출 프로필
+
+`apps/mobile/eas.json`의 빌드 프로필은 다음과 같다.
 
 - `development`: 개발 클라이언트와 팀 내부 확인용
 - `preview`: 설치 가능한 내부 테스트 APK
-- `production`: TestFlight, Google Play 비공개 테스트, App Store 제출용
+- `production`: 스토어 제출용 AAB/IPA
+
+제출 프로필은 용도를 분리한다.
+
+- `closed`: Google Play `alpha` 비공개 테스트 트랙
+- `production`: Google Play 정식 트랙 또는 App Store Connect
 
 현재 모바일 빌드는 로그인, 필수 계정 정보 저장, 반려동물 등록·수정·선택, 오늘 건강
 기록 입력, 기본 안전 분류, 최근 기록 확인, 최근 14일 건강 흐름, 사진·동영상
@@ -33,7 +52,89 @@ TestFlight, 그리고 Apple App Store 1.0 심사 대기 상태다.
 GPT 유용성·지불의향 피드백, 계정 삭제 요청 접수까지 구현되어 있다. Apple 심사와
 Google 공개 트랙 제출 전에는 내부 테스트 빌드를 한 번 더 확인한다.
 
-빌드 전 확인:
+## 계속 수정하는 동안
+
+기능을 수정할 때마다 다음 순서를 지킨다.
+
+1. 웹과 모바일의 공통 흐름 및 문구를 함께 확인한다.
+2. 웹·모바일 전체 검증을 통과시킨다.
+3. `main`에 커밋하고 GitHub CI를 확인한다.
+4. 웹을 배포하고 `/api/health`에서 DB 연결과 배포 커밋을 확인한다.
+5. 모바일 스토어 빌드는 만들지 않는다.
+
+```bash
+npm run verify:all
+```
+
+## Android 출시일
+
+출시할 기능을 동결한 뒤 Google Play 프로덕션 액세스가 승인됐는지 확인한다.
+
+```bash
+cd apps/mobile
+npm run release:android:production
+```
+
+아직 비공개 테스터에게만 새 후보를 배포할 때는 다음 명령을 사용한다.
+
+```bash
+npm run release:android:closed
+```
+
+두 명령 모두 검증과 배포 커밋 확인 후 새 AAB를 만들며, 서로 다른 Play 트랙으로
+제출한다. 프로덕션 액세스 심사나 앱 심사가 남아 있으면 제출 즉시 공개되지는 않는다.
+
+## iOS 심사와 출시
+
+현재 심사 중인 빌드 `18`과 최신 소스 중 어떤 것을 첫 출시본으로 사용할지 코드 동결
+시점에 결정한다.
+
+### 현재 심사 유지
+
+- 빌드 `18`이 승인되면 App Store Connect에서 출시한다.
+- 이후 수정은 앱 버전을 `1.0.1`로 올려 새 심사를 진행한다.
+
+### 최신 소스로 교체
+
+1. 현재 제출을 철회한다.
+2. 아래 명령으로 새 후보를 빌드하고 업로드한다.
+3. 메타데이터와 스크린샷을 확인한 뒤 새 빌드로 심사를 다시 제출한다.
+
+```bash
+cd apps/mobile
+npm run release:ios:review-candidate
+npm run prepare:ios:app-store
+npm run upload:ios:screenshots
+```
+
+외부 TestFlight에만 최신 후보를 제공할 때는 다음 명령을 사용한다.
+
+```bash
+npm run release:ios:testflight
+```
+
+읽기 전용 상태 확인:
+
+```bash
+npm run status:ios
+```
+
+## 자동 사전검증
+
+릴리스 명령은 다음 조건을 먼저 검사한다.
+
+- Expo 버전과 패키지 버전 일치
+- Android package와 iOS bundle ID 일치
+- 앱 아이콘, 스토어 이미지, 제출 키 존재
+- EAS 로그인
+- 변경 사항이 없는 `main`
+- 로컬 `main`과 `origin/main` 일치
+- 운영 웹과 DB 정상 상태
+- 운영 웹 배포 커밋과 모바일 빌드 커밋 일치
+
+이 조건을 우회한 수동 스토어 제출은 하지 않는다.
+
+## 비밀정보와 계정
 
 1. Expo 계정 또는 자동화 환경의 `EXPO_TOKEN`을 준비한다.
 2. Apple Developer Program과 Google Play Console 앱 상태를 확인한다.
@@ -42,38 +143,9 @@ Google 공개 트랙 제출 전에는 내부 테스트 빌드를 한 번 더 확
 5. EAS 제출용 Apple App Store Connect API 키와 Google service account key는
    저장소에 커밋하지 않는다.
 
-권장 명령:
-
-```bash
-cd apps/mobile
-npm run doctor
-npm run expo:check
-npm run typecheck
-npm run eas:init
-npm run build:android:preview
-npm run build:android:production
-npm run build:ios:production
-npm run submit:ios
-npm run submit:android
-npm run prepare:ios:app-store
-npm run upload:ios:screenshots
-```
-
-## 2026-06-29 빌드 준비 상태
-
-완료:
-
-- `expo-doctor`: 21/21 통과
-- `expo install --check`: 권장 버전 일치
-- `npm run typecheck`: 통과
-- EAS project ID 연결
-- Google Play Console 앱 생성과 최초 업로드 진행
-
-남은 연결과 제약:
-
-- Expo Free plan Android build quota가 소진되면 다음 reset까지 production AAB 재빌드가 막힌다.
-- 자동화 환경에서는 `EXPO_TOKEN`을 secret으로 등록하고 앱 번들에는 넣지 않는다.
-- `EXPO_PUBLIC_*` 값만 모바일 빌드에 넣고, OpenAI 키와 service role key는 서버에만 둔다.
+- 자동화 환경에서는 `EXPO_TOKEN`을 secret으로만 등록한다.
+- `EXPO_PUBLIC_*` 값만 앱에 넣고 OpenAI 키와 service role key는 서버에 둔다.
+- Apple API 키와 Google service account key는 저장소에 커밋하지 않는다.
 
 ## 스토어 개인정보 응답 초안
 
@@ -96,14 +168,12 @@ npm run upload:ios:screenshots
 - 위치, 주소, 실명 확인 정보, 반려동물 등록번호 없음
 - 사용자 데이터의 모델 학습 사용 없음
 
-## Apple App Store Connect
-
-2026-07-16 기준 상태:
+## Apple App Store Connect 등록 정보
 
 - 앱 ID: `6786073387`
 - Bundle ID: `com.beflow.petflow`
 - App Store version: `1.0`
-- 연결 빌드: iOS build `17`
+- 현재 연결 빌드: iOS build `18`
 - 카테고리: 라이프스타일
 - 연령 등급: 9+
 - 가격: 무료
@@ -111,7 +181,7 @@ npm run upload:ios:screenshots
   기타 사용자 콘텐츠 수집. 추적 목적 사용 없음.
 - 콘텐츠 권한: 타사 콘텐츠를 포함, 표시 또는 이용하지 않음.
 - 심사 정보: `kisuwo16+appreview@gmail.com` 심사용 계정 준비.
-- 현재 App Store Connect 상태: `iOS 1.0 심사 대기 중`, 제출 초안 0개.
+- 현재 App Store Connect 상태는 `npm run status:ios`로 조회한다.
 
 등록 전 확인:
 
@@ -135,7 +205,7 @@ App Store Connect API 키는 저장소에 커밋하지 않는다. 기본 탐색 
 `~/Downloads/AuthKey_*.p8` 또는 `~/AppData/Local/PetFlow/apple/AuthKey_*.p8`이며,
 필요하면 `ASC_API_KEY_PATH`로 지정한다.
 
-## Google Play Console
+## Google Play Console 등록 정보
 
 등록 전 확인:
 
@@ -152,12 +222,15 @@ App Store Connect API 키는 저장소에 커밋하지 않는다. 기본 탐색 
 - 광고, 외부 분석 SDK, 앱 추적 권한
 - 진단, 처방, 약명, 용량, 치료 계획 생성
 
-## 다음 작업
+## 출시 직전 확인
 
-1. Apple App Store 심사 결과를 확인하고 반려 또는 추가 요청이 오면 대응한다.
-2. Google Play 비공개 테스트 새 버전 업로드와 테스터 링크를 확인한다.
-3. iOS 외부 TestFlight 최신 빌드와 App Store 제출 빌드가 같은 기능 상태인지 확인한다.
-4. 12명/14일 테스트 운영 로그와 계정 로그인 피드백을 정리한다.
+- Google/Apple 신규 로그인과 기존 계정 연결
+- 로그아웃 후 재로그인 시 반려동물과 기록 유지
+- 계정 삭제 요청 후 데이터 접근 차단
+- 사진·동영상 첨부와 최근 기록 열람
+- 기록 수정·삭제와 병원 공유 요약
+- AI 초안이 수의사 확인 정보로 표시되지 않는지 확인
+- 앱 설정 하단 버전·빌드 번호 확인
 
 ## 공식 문서
 

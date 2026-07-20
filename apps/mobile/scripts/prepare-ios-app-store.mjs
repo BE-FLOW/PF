@@ -1,13 +1,13 @@
-import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import {
+  appStoreConnectDefaults,
+  createAppStoreConnectClient,
+  parseArgs,
+} from "./lib/app-store-connect.mjs";
 
 const defaults = {
-  appId: "6786073387",
-  keyId: process.env.ASC_API_KEY_ID || "955FL4G6H5",
-  issuerId:
-    process.env.ASC_API_ISSUER_ID || "d70bd04a-60bd-4b23-a5a8-a296063e5767",
+  appId: appStoreConnectDefaults.appId,
+  keyId: appStoreConnectDefaults.keyId,
+  issuerId: appStoreConnectDefaults.issuerId,
   locale: "ko",
   versionString: "1.0",
 };
@@ -40,18 +40,7 @@ const appInfoMetadata = {
   privacyPolicyUrl: "https://pf-two-eta.vercel.app/privacy",
 };
 
-const args = new Map();
-for (let index = 2; index < process.argv.length; index += 1) {
-  const key = process.argv[index];
-  if (!key.startsWith("--")) continue;
-  const value = process.argv[index + 1];
-  if (!value || value.startsWith("--")) {
-    args.set(key, "true");
-    continue;
-  }
-  args.set(key, value);
-  index += 1;
-}
+const args = parseArgs();
 
 const appId = args.get("--app-id") || process.env.ASC_APP_ID || defaults.appId;
 const keyId = args.get("--key-id") || defaults.keyId;
@@ -59,67 +48,7 @@ const issuerId = args.get("--issuer-id") || defaults.issuerId;
 const locale = args.get("--locale") || defaults.locale;
 const versionString = args.get("--version") || defaults.versionString;
 
-const keyPath = findKeyPath(keyId);
-const privateKey = fs.readFileSync(keyPath, "utf8");
-
-function findKeyPath(id) {
-  const candidates = [
-    process.env.ASC_API_KEY_PATH,
-    path.join(os.homedir(), "Downloads", `AuthKey_${id}.p8`),
-    path.join(os.homedir(), "AppData", "Local", "PetFlow", "apple", `AuthKey_${id}.p8`),
-  ].filter(Boolean);
-
-  const found = candidates.find((candidate) => fs.existsSync(candidate));
-  if (!found) {
-    throw new Error(`App Store Connect API key not found. Set ASC_API_KEY_PATH to AuthKey_${id}.p8.`);
-  }
-  return found;
-}
-
-function base64url(input) {
-  return Buffer.from(input)
-    .toString("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
-function createToken() {
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: "ES256", kid: keyId, typ: "JWT" };
-  const payload = {
-    iss: issuerId,
-    iat: now - 60,
-    exp: now + 10 * 60,
-    aud: "appstoreconnect-v1",
-  };
-  const signingInput = `${base64url(JSON.stringify(header))}.${base64url(
-    JSON.stringify(payload),
-  )}`;
-  const signature = crypto.sign("sha256", Buffer.from(signingInput), {
-    key: privateKey,
-    dsaEncoding: "ieee-p1363",
-  });
-  return `${signingInput}.${base64url(signature)}`;
-}
-
-async function request(pathname, options = {}) {
-  const response = await fetch(`https://api.appstoreconnect.apple.com${pathname}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${createToken()}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    const error = new Error(`${response.status} ${response.statusText}: ${text}`);
-    error.status = response.status;
-    throw error;
-  }
-  return text ? JSON.parse(text) : null;
-}
+const { request } = createAppStoreConnectClient({ keyId, issuerId });
 
 async function findAppStoreVersion() {
   const response = await request(`/v1/apps/${appId}/appStoreVersions?limit=10`);
