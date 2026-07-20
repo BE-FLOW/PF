@@ -513,6 +513,7 @@ export default function App() {
   const [plans, setPlans] = useState<EpisodePlan[]>([]);
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
   const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
+  const vaccinationTableAvailableRef = useRef(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMessage, setHistoryMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
@@ -733,6 +734,7 @@ export default function App() {
       setPlans([]);
       setProgress([]);
       setVaccinations([]);
+      vaccinationTableAvailableRef.current = true;
       setHistoryMessage("");
       setShareMessage("");
       setEditingPlanEpisodeId(null);
@@ -948,6 +950,10 @@ export default function App() {
       setVaccinations([]);
       return;
     }
+    if (!vaccinationTableAvailableRef.current) {
+      setVaccinations([]);
+      return;
+    }
     const { data, error } = await supabase
       .from("pet_vaccinations")
       .select(vaccinationSelectColumns)
@@ -955,6 +961,7 @@ export default function App() {
       .order("due_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false });
     if (isMissingVaccinationTableError(error)) {
+      vaccinationTableAvailableRef.current = false;
       setVaccinations([]);
       return;
     }
@@ -968,6 +975,9 @@ export default function App() {
   ): Promise<{ deletedId?: string; record?: VaccinationRecord; error?: string }> {
     const supabase = getSupabaseClient();
     if (!supabase || !user) return {};
+    if (!vaccinationTableAvailableRef.current) {
+      return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
+    }
 
     if (!hasVaccinationDraft(draft)) {
       if (!draft.id) return {};
@@ -977,6 +987,7 @@ export default function App() {
         .eq("id", draft.id)
         .eq("pet_id", petId);
       if (isMissingVaccinationTableError(error)) {
+        vaccinationTableAvailableRef.current = false;
         return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
       }
       if (error) return { error: "예방접종 일정을 지우지 못했어요." };
@@ -1000,6 +1011,7 @@ export default function App() {
       .select(vaccinationSelectColumns)
       .single();
     if (isMissingVaccinationTableError(error)) {
+      vaccinationTableAvailableRef.current = false;
       return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
     }
     if (error || !data) return { error: "예방접종 일정을 저장하지 못했어요." };
