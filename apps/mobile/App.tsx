@@ -127,7 +127,7 @@ const mainSectionDescriptions: Record<MainSection, string> = {
   home: "최신 흐름과 다음 행동을 한눈에 봐요.",
   record: "관찰한 변화만 빠르게 남겨요.",
   reports: "건강 흐름과 병원 전달 요약을 확인해요.",
-  account: "로그인과 테스트 권한을 관리해요.",
+  account: "로그인과 계정 설정을 관리해요.",
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -2539,7 +2539,9 @@ export default function App() {
   const appDescription =
     user && !needsTesterProfile
       ? mainSectionDescriptions[mainSection]
-      : "로그인 세션을 앱에 저장하고, 필수 계정 정보를 웹과 같은 DB 구조로 관리하는 단계예요.";
+      : user
+        ? "닉네임과 연락처를 한 번 확인하면 바로 기록할 수 있어요."
+        : "기록과 사진을 안전하게 이어서 관리하려면 계정으로 시작해요.";
 
   const accountCard = user ? (
     <AccountCard

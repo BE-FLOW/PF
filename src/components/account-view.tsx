@@ -18,8 +18,6 @@ import { Icon } from "./icon";
 type AuthMode = "login" | "signup";
 type TesterDraft = Pick<TesterProfile, "nickname" | "phone">;
 type DeploymentHealth = {
-  database?: string;
-  environment?: string;
   version?: string;
 };
 
@@ -121,7 +119,7 @@ function PrivacyNotice() {
         <div><dt>보관</dt><dd>{testerPrivacySummary.retention}</dd></div>
       </dl>
       <p>전화번호는 본인 인증, 광고나 마케팅에 사용하지 않습니다. 주소, 위치, 실명 확인 정보는 받지 않습니다.</p>
-      <a href="/privacy" target="_blank" rel="noreferrer">전체 테스트 개인정보 안내 보기</a>
+      <a href="/privacy" target="_blank" rel="noreferrer">전체 개인정보 안내 보기</a>
     </details>
   );
 }
@@ -681,12 +679,11 @@ function DeploymentInfo() {
     };
   }, []);
 
-  const environment = health?.environment ?? "local";
   const version = health?.version ?? "dev";
 
   return (
     <p className="deployment-footnote" aria-label="현재 배포 정보">
-      웹 {environment} · 빌드 {version}
+      웹 빌드 {version}
     </p>
   );
 }

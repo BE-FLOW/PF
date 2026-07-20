@@ -10,7 +10,7 @@ export default function AccountDeletionPage() {
 
         <section>
           <h2>대상 앱</h2>
-          <p>펫플로우(PetFlow)는 반려동물 건강 기록과 병원 공유용 요약을 돕는 테스트 서비스입니다.</p>
+          <p>펫플로우(PetFlow)는 반려동물 건강 기록과 병원 공유용 요약을 돕는 서비스입니다.</p>
         </section>
 
         <section>

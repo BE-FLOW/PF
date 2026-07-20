@@ -5,8 +5,8 @@ export default function PrivacyPage() {
   return (
     <main className="privacy-page">
       <div className="privacy-sheet">
-        <p className="eyebrow">PETFLOW TEST</p>
-        <h1>테스트 개인정보 안내</h1>
+        <p className="eyebrow">PETFLOW PRIVACY</p>
+        <h1>개인정보 안내</h1>
         <p>시행일: 2026년 6월 15일</p>
 
         <section>
@@ -18,12 +18,12 @@ export default function PrivacyPage() {
           <h2>이용 목적과 기간</h2>
           <p>목적: {testerPrivacySummary.purpose}</p>
           <p>보관: {testerPrivacySummary.retention}</p>
-          <p>휴대전화번호는 본인 인증, 광고나 마케팅에 사용하지 않고 서비스 안내와 테스트 관련 연락에만 사용합니다.</p>
+          <p>휴대전화번호는 본인 인증, 광고나 마케팅에 사용하지 않고 서비스 안내와 요청 대응에만 사용합니다.</p>
         </section>
         <section>
           <h2>선택과 삭제</h2>
           <p>
-            주소, 위치, 실명 확인 정보는 받지 않습니다. 테스트 중 삭제가 필요하면 앱 또는 웹의
+            주소, 위치, 실명 확인 정보는 받지 않습니다. 삭제가 필요하면 앱 또는 웹의
             계정 화면에서 계정 삭제 요청을 남길 수 있습니다.
           </p>
           <p>
