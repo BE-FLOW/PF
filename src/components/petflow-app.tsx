@@ -621,15 +621,25 @@ function SideNav({
   view,
   setView,
   onStart,
+  authReady,
+  signedIn,
+  canUseApp,
 }: {
   view: View;
   setView: SetView;
   onStart: () => void;
+  authReady: boolean;
+  signedIn: boolean;
+  canUseApp: boolean;
 }) {
   const items: Array<{ id: View; label: string; icon: IconName }> = [
     { id: "home", label: "홈", icon: "home" },
-    { id: "check", label: "건강 기록", icon: "plus" },
-    { id: "history", label: "건강 흐름", icon: "history" },
+    ...(canUseApp
+      ? [
+          { id: "check" as const, label: "건강 기록", icon: "plus" as const },
+          { id: "history" as const, label: "건강 흐름", icon: "history" as const },
+        ]
+      : []),
   ];
   return (
     <aside className="desktop-sidebar">
@@ -649,6 +659,20 @@ function SideNav({
             {item.label}
           </button>
         ))}
+        <button
+          type="button"
+          className={`nav-item account-nav ${view === "account" ? "active" : ""}`}
+          onClick={() => setView("account", { history: "replace" })}
+          aria-label={authReady && signedIn ? "내 계정" : "로그인"}
+        >
+          <Icon name="user" size={19} />
+          <span>{authReady ? (signedIn ? "내 계정" : "로그인") : "계정 확인 중"}</span>
+          {authReady && (
+            <small className={signedIn ? "connected" : ""}>
+              {signedIn ? "연결됨" : "시작"}
+            </small>
+          )}
+        </button>
       </nav>
       <div className="side-card">
         <span className="side-card-icon">
@@ -700,7 +724,99 @@ function MobileNav({
   );
 }
 
+type HomeStage = "login" | "pet" | "record";
+
+const homeStageSteps: Array<{ id: HomeStage; label: string }> = [
+  { id: "login", label: "로그인" },
+  { id: "pet", label: "아이 등록" },
+  { id: "record", label: "첫 기록" },
+];
+
+function HomeSteps({ current }: { current: HomeStage }) {
+  const currentIndex = homeStageSteps.findIndex((step) => step.id === current);
+  return (
+    <ol className="home-steps" aria-label="펫플로우 시작 순서">
+      {homeStageSteps.map((step, index) => {
+        const complete = index < currentIndex;
+        const active = index === currentIndex;
+        return (
+          <li className={`${complete ? "complete" : ""} ${active ? "active" : ""}`} key={step.id}>
+            <span>{complete ? <Icon name="check" size={13} /> : index + 1}</span>
+            <strong>{step.label}</strong>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function HomeSetup({
+  stage,
+  onAction,
+}: {
+  stage: "login" | "account" | "pet";
+  onAction: () => void;
+}) {
+  const loginStage = stage === "login";
+  const accountStage = stage === "account";
+  const currentStep: HomeStage = stage === "pet" ? "pet" : "login";
+  return (
+    <div className="content-wrap home-setup-wrap">
+      <header className="home-page-heading">
+        <p className="eyebrow">PET FLOW HOME</p>
+        <h1>
+          {loginStage
+            ? "건강 기록을 이어서 관리해요"
+            : accountStage
+              ? "계정 준비를 마무리해요"
+              : "함께 기록할 아이를 알려주세요"}
+        </h1>
+      </header>
+      <HomeSteps current={currentStep} />
+      <section className={`home-setup-card ${stage}`}>
+        <div className="home-setup-copy">
+          <span className="home-stage-label">
+            {loginStage
+              ? "1단계 · 로그인"
+              : accountStage
+                ? "로그인 완료 · 정보 확인"
+                : "2단계 · 아이 등록"}
+          </span>
+          <h2>
+            {loginStage
+              ? "먼저 로그인해 주세요"
+              : accountStage
+                ? "필수 정보를 한 번만 확인해요"
+                : "이름과 종류부터 시작해요"}
+          </h2>
+          <p>
+            {loginStage
+              ? "기록과 사진을 계정에 안전하게 이어서 저장해요."
+              : accountStage
+                ? "닉네임과 테스트 연락처를 확인하면 다음 단계로 이어져요."
+                : "기본 정보만 등록하면 바로 건강 기록을 남길 수 있어요."}
+          </p>
+          <button className="primary-button" type="button" onClick={onAction}>
+            <Icon name={loginStage || accountStage ? "user" : "paw"} size={18} />
+            {loginStage
+              ? "로그인하고 시작"
+              : accountStage
+                ? "정보 확인하기"
+                : "첫 아이 등록"}
+          </button>
+        </div>
+        <span className="home-setup-symbol" aria-hidden="true">
+          <Icon name={loginStage || accountStage ? "shield" : "paw"} size={38} />
+        </span>
+      </section>
+    </div>
+  );
+}
+
 function HomeView({
+  authReady,
+  signedIn,
+  accountComplete,
   profile,
   history,
   onStart,
@@ -712,7 +828,11 @@ function HomeView({
   activeEpisode,
   activeEpisodeProgressCount,
   vaccinations,
+  onAccount,
 }: {
+  authReady: boolean;
+  signedIn: boolean;
+  accountComplete: boolean;
   profile: PetProfile;
   history: HistoryRecord[];
   onStart: () => void;
@@ -724,6 +844,7 @@ function HomeView({
   activeEpisode?: PetEpisode;
   activeEpisodeProgressCount: number;
   vaccinations: VaccinationRecord[];
+  onAccount: () => void;
 }) {
   const recent = history[0];
   const recentCheckScore = recent ? displayCheckScore(recent.result.riskScore) : undefined;
@@ -748,16 +869,41 @@ function HomeView({
           : "성견·성묘"
       : "",
   ].filter(Boolean);
+  if (!authReady) {
+    return (
+      <div className="content-wrap home-setup-wrap" aria-live="polite">
+        <section className="home-loading-card">
+          <span className="home-loading-dot" aria-hidden="true" />
+          <div>
+            <strong>계정 상태를 확인하고 있어요</strong>
+            <p>잠시만 기다려 주세요.</p>
+          </div>
+        </section>
+      </div>
+    );
+  }
+  if (!signedIn) return <HomeSetup stage="login" onAction={onAccount} />;
+  if (!accountComplete) return <HomeSetup stage="account" onAction={onAccount} />;
+  if (!hasProfile) return <HomeSetup stage="pet" onAction={onProfile} />;
+
   return (
     <div className="content-wrap">
+      <header className="home-page-heading dashboard">
+        <p className="eyebrow">HOME · 계정에 저장 중</p>
+        <h1>{recent ? `${profile.name}의 건강 홈` : `${profile.name}의 첫 기록을 시작해요`}</h1>
+      </header>
+      {!recent && <HomeSteps current="record" />}
       <section className="hero-card">
         <div className="hero-content">
           <p className="hero-greeting">
-            {profile.name ? `${profile.name}와` : "반려동물과"} 좋은 하루 보내고 있나요?
+            {recent ? `${profile.name}와 좋은 하루 보내고 있나요?` : "3단계 · 첫 기록"}
           </p>
           <h2>
-            흐름을 남기면
-            <br />빠르게 알 수 있어요
+            {recent ? (
+              <>흐름을 남기면<br />빠르게 알 수 있어요</>
+            ) : (
+              <>오늘 상태를<br />한 번 남겨보세요</>
+            )}
           </h2>
           {hasProfile && vaccination.record && (
             <div className={`hero-vaccination ${vaccination.tone}`}>
@@ -768,11 +914,11 @@ function HomeView({
           )}
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
-            {hasProfile
+            {recent
               ? activeEpisode
                 ? "이어서 기록"
                 : "오늘 기록하기"
-              : "등록하고 시작하기"}
+              : "첫 기록 시작"}
           </button>
           {hasProfile && activeEpisode && (
             <button className="hero-episode-link" type="button" onClick={onHistory}>
@@ -811,37 +957,27 @@ function HomeView({
           </span>
         </button>
       </section>
-      <section className={`home-score-card ${recent?.result.riskLevel ?? "empty"}`}>
+      {recent && <section className={`home-score-card ${recent.result.riskLevel}`}>
         <div className="home-score-copy">
           <p className="eyebrow">TODAY CHECK SCORE</p>
           <h2>
-            {recent
-              ? `${profile.name || "반려동물"}의 최신 체크스코어`
-              : "첫 기록을 남기면 체크스코어가 보여요"}
+            {`${profile.name}의 최신 체크스코어`}
           </h2>
-          {recent && (
-            <p>{`${formatDate(recent.result.createdAt)} 기록 기준 · ${riskLabel[recent.result.riskLevel]}`}</p>
-          )}
-          {recent ? (
-            <button className="secondary-button compact" onClick={() => onSelectLatest(recent)}>
-              최근 기록 자세히 보기
-            </button>
-          ) : (
-            <button className="primary-button compact" onClick={onStart}>
-              <Icon name="plus" size={14} /> 첫 체크 시작
-            </button>
-          )}
+          <p>{`${formatDate(recent.result.createdAt)} 기록 기준 · ${riskLabel[recent.result.riskLevel]}`}</p>
+          <button className="secondary-button compact" onClick={() => onSelectLatest(recent)}>
+            최근 기록 자세히 보기
+          </button>
         </div>
         <div
           className="home-score-badge"
-          style={{ "--score": recentCheckScore ?? 0 } as React.CSSProperties}
-          aria-label={`체크스코어 ${recentCheckScore ?? 0}`}
+          style={{ "--score": recentCheckScore } as React.CSSProperties}
+          aria-label={`체크스코어 ${recentCheckScore}`}
         >
-          <strong>{recentCheckScore ?? "--"}</strong>
+          <strong>{recentCheckScore}</strong>
           <span>CHECK SCORE</span>
         </div>
-      </section>
-      {hasProfile && (
+      </section>}
+      {recent && (
         <section className={`flow-card ${flow.trend}`}>
           <div className="flow-card-head">
             <div>
@@ -865,7 +1001,7 @@ function HomeView({
           )}
         </section>
       )}
-      <div className="dashboard-grid">
+      {recent && <div className="dashboard-grid">
         <section className="panel">
           <div className="panel-head">
             <h3>최근 기록 한눈에 보기</h3>
@@ -943,7 +1079,7 @@ function HomeView({
             </div>
           )}
         </section>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -4128,6 +4264,10 @@ export function PetFlowApp() {
     setView("home", { history: "replace" });
   }
   function startNew() {
+    if (!authReady || !user || !testerProfile) {
+      setView("account");
+      return;
+    }
     if (!profile.name.trim()) {
       openProfile("check");
       return;
@@ -4623,14 +4763,21 @@ export function PetFlowApp() {
 
   return (
     <div className="app-shell">
-      <SideNav view={currentView} setView={setView} onStart={startNew} />
+      <SideNav
+        view={currentView}
+        setView={setView}
+        onStart={startNew}
+        authReady={authReady}
+        signedIn={Boolean(user)}
+        canUseApp={Boolean(user && testerProfile)}
+      />
       <header className="mobile-header">
         <Brand small onClick={() => setView("home", { history: "replace" })} />
         <button
           className="mobile-account"
           onClick={() => setView("account", { history: "replace" })}
         >
-          내 계정
+          {authReady && user ? "내 계정" : "로그인"}
         </button>
       </header>
       <main className="app-main">
@@ -4647,11 +4794,17 @@ export function PetFlowApp() {
         )}
         {currentView === "home" && (
           <HomeView
+            authReady={authReady}
+            signedIn={Boolean(user)}
+            accountComplete={Boolean(testerProfile)}
             profile={profile}
             history={visibleHistory}
             onStart={startNew}
-            onHistory={() => setView("history", { history: "replace" })}
+            onHistory={() =>
+              setView(user ? "history" : "account", { history: "replace" })
+            }
             onProfile={() => openProfile("home")}
+            onAccount={() => setView("account", { history: "replace" })}
             onSelectLatest={(record) => {
               setMediaUploadWarning("");
               setSelected(record);
@@ -4800,7 +4953,9 @@ export function PetFlowApp() {
           />
         )}
       </main>
-      <MobileNav view={currentView} setView={setView} onStart={startNew} />
+      {user && testerProfile && (
+        <MobileNav view={currentView} setView={setView} onStart={startNew} />
+      )}
     </div>
   );
 }

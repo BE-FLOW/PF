@@ -11,6 +11,7 @@ export type IconName =
   | "activity"
   | "clipboard"
   | "shield"
+  | "user"
   | "copy"
   | "share"
   | "spark"
@@ -75,6 +76,12 @@ export function Icon({
       </>
     ),
     shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />,
+    user: (
+      <>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
+      </>
+    ),
     copy: (
       <>
         <rect x="9" y="9" width="11" height="11" rx="2" />
