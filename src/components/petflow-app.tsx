@@ -835,7 +835,6 @@ function HomeView({
   onStart,
   onHistory,
   onProfile,
-  onSelectLatest,
   flow,
   flowLoading,
   activeEpisode,
@@ -853,7 +852,6 @@ function HomeView({
   onStart: () => void;
   onHistory: () => void;
   onProfile: () => void;
-  onSelectLatest: (record: HistoryRecord) => void;
   flow: HealthFlowSummary;
   flowLoading: boolean;
   activeEpisode?: PetEpisode;
@@ -931,31 +929,10 @@ function HomeView({
   }
 
   return (
-    <div className="content-wrap">
-      <header className="home-page-heading dashboard">
-        <p className="eyebrow">HOME · 계정에 저장 중</p>
-        <h1>{recent ? `${profile.name}의 건강 홈` : `${profile.name}의 첫 기록을 시작해요`}</h1>
-      </header>
-      {!recent && <HomeSteps current="record" />}
+    <div className="content-wrap home-dashboard-compact">
       <section className="hero-card">
         <div className="hero-content">
-          <p className="hero-greeting">
-            {recent ? `${profile.name}와 좋은 하루 보내고 있나요?` : "3단계 · 첫 기록"}
-          </p>
-          <h2>
-            {recent ? (
-              <>흐름을 남기면<br />빠르게 알 수 있어요</>
-            ) : (
-              <>오늘 상태를<br />한 번 남겨보세요</>
-            )}
-          </h2>
-          {hasProfile && vaccination.record && (
-            <div className={`hero-vaccination ${vaccination.tone}`}>
-              <span>{vaccination.label}</span>
-              <strong>{vaccination.title}</strong>
-              <small>{vaccination.description}</small>
-            </div>
-          )}
+          <h1>{recent ? "오늘 상태" : "첫 기록"}</h1>
           <button className="primary-button" onClick={onStart}>
             <Icon name="plus" size={18} />{" "}
             {recent
@@ -964,16 +941,27 @@ function HomeView({
                 : "오늘 기록하기"
               : "첫 기록 시작"}
           </button>
-          {hasProfile && activeEpisode && (
-            <button className="hero-episode-link" type="button" onClick={onHistory}>
-              <span>진행 중 흐름</span>
-              <strong>
-                기록 {Math.max(activeEpisodeRecordCount, 1)}회 · 경과{" "}
-                {Math.min(activeEpisodeProgressCount, 3)}/3
-              </strong>
-              <small>병원 공유 요약 보기</small>
-            </button>
-          )}
+          <div className="hero-status-row">
+            {hasProfile && activeEpisode && (
+              <button className="hero-inline-status" type="button" onClick={onHistory}>
+                <span>진행 중</span>
+                <strong>
+                  기록 {Math.max(activeEpisodeRecordCount, 1)}회 · 경과{" "}
+                  {Math.min(activeEpisodeProgressCount, 3)}/3
+                </strong>
+              </button>
+            )}
+            {hasProfile && vaccination.record && (
+              <button
+                className={`hero-inline-status vaccination ${vaccination.tone}`}
+                type="button"
+                onClick={onProfile}
+              >
+                <span>{vaccination.label}</span>
+                <strong>{vaccination.title}</strong>
+              </button>
+            )}
+          </div>
         </div>
         <button
           type="button"
@@ -1003,13 +991,14 @@ function HomeView({
       </section>
       {recent && <section className={`home-score-card ${recent.result.riskLevel}`}>
         <div className="home-score-copy">
-          <p className="eyebrow">TODAY CHECK SCORE</p>
-          <h2>
-            {`${profile.name}의 최신 체크스코어`}
-          </h2>
-          <p>{`${formatDate(recent.result.createdAt)} 기록 기준 · ${riskLabel[recent.result.riskLevel]}`}</p>
-          <button className="secondary-button compact" onClick={() => onSelectLatest(recent)}>
-            최근 기록 자세히 보기
+          <p className="eyebrow">현재 상태</p>
+          <h2>{riskLabel[recent.result.riskLevel]}</h2>
+          <p>
+            {formatDate(recent.result.createdAt)} · 최근 14일 {flow.recordCount}회
+          </p>
+          {!flowLoading && <strong className="home-flow-summary">{flow.headline}</strong>}
+          <button className="text-button flow-link" onClick={onHistory}>
+            건강 흐름 보기
           </button>
         </div>
         <div
@@ -1021,109 +1010,6 @@ function HomeView({
           <span>CHECK SCORE</span>
         </div>
       </section>}
-      {recent && (
-        <section className={`flow-card ${flow.trend}`}>
-          <div className="flow-card-head">
-            <div>
-              <p className="eyebrow">14-DAY HEALTH FLOW</p>
-              <h2>{flowLoading ? "건강 흐름을 불러오는 중..." : flow.headline}</h2>
-            </div>
-            <span className="flow-count">기록 {flow.recordCount}회</span>
-          </div>
-          {!flowLoading && (
-            <>
-              {flow.description && <p>{flow.description}</p>}
-              {flow.repeatedSymptoms.length > 0 && (
-                <div className="flow-tags">
-                  {flow.repeatedSymptoms.map((item) => <span key={item}>{item}</span>)}
-                </div>
-              )}
-              <button className="text-button flow-link" onClick={onHistory}>
-                전체 건강 흐름 보기
-              </button>
-            </>
-          )}
-        </section>
-      )}
-      {recent && <div className="dashboard-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <h3>최근 기록 한눈에 보기</h3>
-            <button className="text-button" onClick={onHistory}>
-              전체 보기
-            </button>
-          </div>
-          <div className="stat-row">
-            <div className="stat-card">
-              <span className="stat-icon mint">
-                <Icon name="calendar" size={17} />
-              </span>
-              <span className="stat-label">최근 기록</span>
-              <strong className="stat-value">
-                {history.length
-                  ? formatDate(history[0].result.createdAt)
-                      .split(" ")
-                      .slice(0, 2)
-                      .join(" ")
-                  : "아직 없음"}
-              </strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-icon orange">
-                <Icon name="activity" size={17} />
-              </span>
-              <span className="stat-label">체크 횟수</span>
-              <strong className="stat-value">{history.length}회</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-icon lime">
-                <Icon name="heart" size={17} />
-              </span>
-              <span className="stat-label">최근 상태</span>
-              <strong className="stat-value">
-                {recent ? riskLabel[recent.result.riskLevel] : "기록 전"}
-              </strong>
-            </div>
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-head">
-            <h3>가장 최근 기록</h3>
-          </div>
-          {recent ? (
-            <div className="timeline">
-              <button
-                className="timeline-item"
-                onClick={onHistory}
-                style={{
-                  border: 0,
-                  background: "transparent",
-                  width: "100%",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <span className="timeline-icon">
-                  <Icon name="clipboard" size={17} />
-                </span>
-                <span>
-                  <strong>오늘 건강 기록을 남겼어요</strong>
-                  <span>{formatDate(recent.result.createdAt)}</span>
-                </span>
-                <em
-                  className={`status-pill ${recent.result.riskLevel === "watch" ? "good" : "watch"}`}
-                >
-                  {riskLabel[recent.result.riskLevel]}
-                </em>
-              </button>
-            </div>
-          ) : (
-            <div className="empty-state">
-              첫 기록을 남기면 여기에 건강 흐름이 쌓여요.
-            </div>
-          )}
-        </section>
-      </div>}
     </div>
   );
 }
@@ -1645,7 +1531,7 @@ function CheckView({
   setMediaError: (message: string) => void;
   onBack: () => void;
   onEditProfile: () => void;
-  onSubmit: () => void;
+  onSubmit: (overrideInput?: HealthCheckInput) => void;
   loading: boolean;
   error: string;
 }) {
@@ -1656,6 +1542,13 @@ function CheckView({
     input.duration === "today" &&
     input.redFlags.length === 0 &&
     !input.note;
+  const [showChanges, setShowChanges] = useState(
+    isEditing || !allNormal || mediaFiles.length > 0,
+  );
+  const [showSafety, setShowSafety] = useState(input.redFlags.length > 0);
+  const [showExtras, setShowExtras] = useState(
+    Boolean(input.note || mediaFiles.length),
+  );
   const profileDetails = [
     input.species === "dog"
       ? "강아지"
@@ -1667,8 +1560,8 @@ function CheckView({
   ]
     .filter(Boolean)
     .join(" · ");
-  function setNormal() {
-    setInput({
+  function normalInput(): HealthCheckInput {
+    return {
       ...input,
       symptoms: [],
       appetite: "normal",
@@ -1676,7 +1569,18 @@ function CheckView({
       duration: "today",
       redFlags: [],
       note: "",
-    });
+    };
+  }
+  function handleNormal() {
+    const nextInput = normalInput();
+    if (allNormal) {
+      onSubmit(nextInput);
+      return;
+    }
+    setInput(nextInput);
+    setShowChanges(false);
+    setShowSafety(false);
+    setShowExtras(false);
   }
   function addMediaFiles(fileList: FileList | null) {
     if (!fileList?.length) return;
@@ -1728,22 +1632,7 @@ function CheckView({
           <Icon name="arrow" size={20} />
         </button>
         <div>
-          <p className="eyebrow">HEALTH CHECK</p>
-          <h1>{isEditing ? "기록 수정" : "오늘의 건강 기록"}</h1>
-          <p>
-            {isEditing
-              ? "수정할 부분만 바꾸면 같은 기록에 다시 반영돼요."
-              : "달라진 것만 골라주세요. 나머지는 평소 상태로 기록할게요."}
-          </p>
-        </div>
-      </div>
-      <div className="progress-wrap">
-        <div className="progress-labels">
-          <span className="active">1. 오늘의 상태</span>
-          <span>2. 리포트</span>
-        </div>
-        <div className="progress-track">
-          <div className="progress-bar" style={{ width: "50%" }} />
+          <h1>{isEditing ? "기록 수정" : "오늘 기록"}</h1>
         </div>
       </div>
       <div className="form-panel">
@@ -1761,32 +1650,33 @@ function CheckView({
         <button
           type="button"
           className={`normal-shortcut ${allNormal ? "selected" : ""}`}
-          onClick={setNormal}
+          onClick={handleNormal}
           aria-pressed={allNormal}
+          disabled={loading}
         >
           <span className="normal-check" aria-hidden="true">
-            {allNormal && <Icon name="check" size={18} />}
+            <Icon name={allNormal ? "check" : "history"} size={18} />
           </span>
-          <span className="normal-copy">
-            <strong>오늘은 평소와 같아요</strong>
-            <small>
-              {allNormal
-                ? "특별한 변화가 없다면 이것만 누르고 바로 완료하세요."
-                : "누르면 입력한 변화가 지워지고 평소 상태로 돌아가요."}
-            </small>
-          </span>
-          <em className="normal-state">{allNormal ? "선택됨" : "눌러서 선택"}</em>
+          <strong>{allNormal ? "평소와 같음" : "평소 상태로 초기화"}</strong>
+          {allNormal && <em className="normal-state">바로 기록</em>}
         </button>
-        <section className="form-section compact-section">
-          <div className="section-title">
-            <span className="section-number">1</span>
-            <div>
-              <h2>달라진 점이 있나요?</h2>
-              <p>해당하는 항목만 골라주세요.</p>
-            </div>
+        {!isEditing && (
+          <button
+            type="button"
+            className={`detail-toggle ${showChanges ? "open" : ""}`}
+            onClick={() => setShowChanges((current) => !current)}
+            aria-expanded={showChanges}
+          >
+            <strong>{showChanges ? "상세 입력 닫기" : "변화가 있어요"}</strong>
+            <span aria-hidden="true">{showChanges ? "−" : "+"}</span>
+          </button>
+        )}
+        {showChanges && <section className="form-section compact-section">
+          <div className="section-title compact-title">
+            <h2>달라진 점</h2>
           </div>
           <div className="field">
-            <span className="field-label">주요 증상</span>
+            <span className="field-label">증상</span>
             <div className="symptom-grid">
               {symptoms.map((item) => (
                 <button
@@ -1838,7 +1728,7 @@ function CheckView({
               </div>
             </div>
             <div className="field full">
-              <span className="field-label">지속 기간</span>
+              <span className="field-label">기간</span>
               <div
                 className="choice-grid"
                 role="group"
@@ -1866,127 +1756,128 @@ function CheckView({
               </div>
             </div>
             <div className="field full">
-              <fieldset className="urgent-box">
-                <legend>지금 보이는 위험 신호가 있나요?</legend>
-                <div className="check-list">
-                  {redFlags.map((item) => (
-                    <label key={item.id} className="check-item">
-                      <input
-                        type="checkbox"
-                        checked={input.redFlags.includes(item.id)}
-                        onChange={() =>
-                          setInput({
-                            ...input,
-                            redFlags: toggle(input.redFlags, item.id),
-                          })
-                        }
-                      />
-                      {item.label}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <p className="helper">
-                하나라도 있다면 결과를 기다리지 말고 가까운 동물병원에 먼저
-                연락하세요.
-              </p>
-            </div>
-            <div className="field full">
-              <label htmlFor="note">추가 메모 (선택)</label>
-              <textarea
-                id="note"
-                maxLength={1000}
-                value={input.note}
-                onChange={(event) =>
-                  setInput({ ...input, note: event.target.value })
-                }
-                placeholder="언제, 어떤 상황에서 달라졌는지만 짧게 적어도 충분해요."
-              />
-            </div>
-            <div className="field full">
-              <span className="field-label">사진·영상 (선택)</span>
-              <div className="media-uploader">
-                <label
-                  className={`media-dropzone ${mediaEnabled && !isEditing ? "" : "disabled"}`}
-                >
-                  <input
-                    type="file"
-                    accept={reportMediaAccept}
-                    multiple
-                    disabled={
-                      isEditing ||
-                      !mediaEnabled ||
-                      mediaFiles.length >= maxReportMediaFiles
-                    }
-                    onChange={(event) => {
-                      addMediaFiles(event.currentTarget.files);
-                      event.currentTarget.value = "";
-                    }}
-                  />
-                  <span>
-                    <strong>말로 설명하기 어려운 장면만 가볍게 추가</strong>
-                    <small>
-                      사진·영상 최대 {maxReportMediaFiles}개, 파일당 50MB까지 저장해요.
-                    </small>
-                  </span>
-                  <em>{mediaFiles.length}/{maxReportMediaFiles}</em>
-                </label>
-                {isEditing ? (
-                  <p className="media-helper">
-                    첨부를 바꾸고 싶다면 새 기록으로 다시 추가해 주세요.
-                  </p>
-                ) : !mediaEnabled && (
-                  <p className="media-helper">
-                    로그인 후 등록된 반려동물을 선택하면 계정 기록에 첨부할 수 있어요.
-                  </p>
-                )}
-                {mediaFiles.length > 0 && (
-                  <div className="media-preview-grid">
-                    {mediaFiles.map((item) => (
-                      <div className="media-preview-card" key={item.id}>
-                        <div className="media-preview-thumb">
-                          <MediaThumbnail
-                            kind={item.kind}
-                            label={`${item.file.name} 미리보기`}
-                            src={item.previewUrl}
-                          />
-                        </div>
-                        <span>
-                          <strong>{item.file.name}</strong>
-                          <small>
-                            {item.kind === "image" ? "사진" : "영상"} ·{" "}
-                            {formatFileSize(item.file.size)}
-                          </small>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removeMediaFile(item.id)}
-                        >
-                          삭제
-                        </button>
-                      </div>
+              <button
+                type="button"
+                className={`detail-disclosure safety ${showSafety ? "open" : ""}`}
+                onClick={() => setShowSafety((current) => !current)}
+                aria-expanded={showSafety}
+              >
+                <strong>위험 신호</strong>
+                <span>{input.redFlags.length ? `${input.redFlags.length}개 선택` : "확인"}</span>
+              </button>
+              {showSafety && (
+                <div className="urgent-box">
+                  <div className="check-list">
+                    {redFlags.map((item) => (
+                      <label key={item.id} className="check-item">
+                        <input
+                          type="checkbox"
+                          checked={input.redFlags.includes(item.id)}
+                          onChange={() =>
+                            setInput({
+                              ...input,
+                              redFlags: toggle(input.redFlags, item.id),
+                            })
+                          }
+                        />
+                        {item.label}
+                      </label>
                     ))}
                   </div>
-                )}
-                {mediaError && (
-                  <p className="media-error" role="alert">{mediaError}</p>
-                )}
-              </div>
+                  <p className="helper">선택한 항목이 있으면 가까운 동물병원에 먼저 연락하세요.</p>
+                </div>
+              )}
+            </div>
+            <div className="field full">
+              <button
+                type="button"
+                className={`detail-disclosure ${showExtras ? "open" : ""}`}
+                onClick={() => setShowExtras((current) => !current)}
+                aria-expanded={showExtras}
+              >
+                <strong>메모·사진</strong>
+                <span>{input.note || mediaFiles.length ? "추가됨" : "선택"}</span>
+              </button>
+              {showExtras && (
+                <div className="optional-inputs">
+                  <label htmlFor="note">메모</label>
+                  <textarea
+                    id="note"
+                    maxLength={1000}
+                    value={input.note}
+                    onChange={(event) =>
+                      setInput({ ...input, note: event.target.value })
+                    }
+                    placeholder="달라진 상황을 짧게 적어주세요."
+                  />
+                  <span className="field-label">사진·영상</span>
+                  <div className="media-uploader">
+                    <label
+                      className={`media-dropzone ${mediaEnabled && !isEditing ? "" : "disabled"}`}
+                    >
+                      <input
+                        type="file"
+                        accept={reportMediaAccept}
+                        multiple
+                        disabled={
+                          isEditing ||
+                          !mediaEnabled ||
+                          mediaFiles.length >= maxReportMediaFiles
+                        }
+                        onChange={(event) => {
+                          addMediaFiles(event.currentTarget.files);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                      <strong>파일 추가</strong>
+                      <em>{mediaFiles.length}/{maxReportMediaFiles}</em>
+                    </label>
+                    {isEditing ? (
+                      <p className="media-helper">첨부 변경은 새 기록에서 할 수 있어요.</p>
+                    ) : !mediaEnabled && (
+                      <p className="media-helper">로그인 후 첨부할 수 있어요.</p>
+                    )}
+                    {mediaFiles.length > 0 && (
+                      <div className="media-preview-grid">
+                        {mediaFiles.map((item) => (
+                          <div className="media-preview-card" key={item.id}>
+                            <div className="media-preview-thumb">
+                              <MediaThumbnail
+                                kind={item.kind}
+                                label={`${item.file.name} 미리보기`}
+                                src={item.previewUrl}
+                              />
+                            </div>
+                            <span>
+                              <strong>{item.file.name}</strong>
+                              <small>
+                                {item.kind === "image" ? "사진" : "영상"} ·{" "}
+                                {formatFileSize(item.file.size)}
+                              </small>
+                            </span>
+                            <button type="button" onClick={() => removeMediaFile(item.id)}>
+                              삭제
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {mediaError && <p className="media-error" role="alert">{mediaError}</p>}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        </section>
+        </section>}
         {error && (
           <div className="form-error" role="alert">
             {error}
           </div>
         )}
-        <div className="form-footer">
-          <button className="secondary-button" onClick={onBack}>
-            다음에 하기
-          </button>
+        {(showChanges || isEditing) && <div className="form-footer">
           <button
             className="primary-button"
-            onClick={onSubmit}
+            onClick={() => onSubmit()}
             disabled={loading}
           >
             {loading ? (
@@ -1997,11 +1888,11 @@ function CheckView({
             ) : (
               <>
                 <Icon name="spark" size={17} />{" "}
-                {isEditing ? "수정 완료하기" : "기록 완료하기"}
+                {isEditing ? "수정 저장" : "기록 저장"}
               </>
             )}
           </button>
-        </div>
+        </div>}
       </div>
     </div>
   );
@@ -2399,7 +2290,6 @@ function HistoryView({
   episodes,
   plans,
   progress,
-  petName,
   onBack,
   onSelect,
   onEdit,
@@ -2415,7 +2305,6 @@ function HistoryView({
   episodes: PetEpisode[];
   plans: EpisodePlan[];
   progress: EpisodeProgress[];
-  petName: string;
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
   onEdit: (record: HistoryRecord) => void;
@@ -2476,188 +2365,167 @@ function HistoryView({
         : null;
 
   return (
-    <div className="content-wrap">
+    <div className="content-wrap compact-flow-page">
       <div className="page-heading">
         <button className="back-button" onClick={onBack} aria-label="뒤로">
           <Icon name="arrow" size={20} />
         </button>
         <div>
-          <p className="eyebrow">HEALTH FLOW</p>
           <h1>건강 흐름</h1>
-          <p>최근 14일의 기록을 한 번에 정리했어요.</p>
         </div>
       </div>
-      <section className={`flow-summary ${flow.trend}`}>
-        <div>
-          <span>최근 14일 · {flow.recordCount}회 기록</span>
-          <h2>{flow.headline}</h2>
-          {flow.description && <p>{flow.description}</p>}
-        </div>
-        {flow.recordCount > 0 && <pre>{flow.vetBrief}</pre>}
-      </section>
       {history.length ? (
-        <div className="episode-list">
-          {episodeGroups.map((group) => {
-            const latest = group.records[0];
-            const episodeFlow = summarizeHealthFlow(
-              group.records,
-              petName || "반려동물",
-              new Date(latest.result.createdAt),
-            );
-            const isOpen = group.episode?.status === "open";
-            const hasEpisode = Boolean(group.episode);
-            const groupKey = group.episode?.id ?? latest.result.id;
-            const plan = group.episode
-              ? planByEpisode.get(group.episode.id)
-              : undefined;
-            const completedTasks = plan?.tasks.filter(
-              (task) => task.completedAt,
-            ).length ?? 0;
-            const progressCount = group.episode
-              ? progressCountByEpisode.get(group.episode.id) ?? 0
-              : 0;
-            const mediaCount = group.records.reduce(
-              (total, record) => total + (record.media?.length ?? 0),
-              0,
-            );
-            const isExpanded = activeEpisodeKey === groupKey;
-            return (
-              <section
-                className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
-                key={groupKey}
-              >
-                <div className="episode-head">
-                  <div>
-                    <span className={`episode-status ${isOpen ? "open" : "closed"}`}>
-                      {isOpen ? "진행 중" : hasEpisode ? "마무리됨" : "개별 기록"}
-                    </span>
-                    <h2>
-                      {isOpen
-                        ? "진행 중인 건강 기록"
-                        : `${new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" }).format(new Date(latest.result.createdAt))} 건강 기록`}
-                    </h2>
-                    <p>{episodeFlow.description}</p>
-                  </div>
-                  <div className="episode-actions">
-                    <span>
-                      {group.records.length}회 기록
-                      {plan
-                        ? ` · 계획 ${completedTasks}/${plan.tasks.length}`
-                        : hasEpisode
-                          ? " · 계획 미등록"
-                          : ""}
-                      {hasEpisode ? ` · 경과 ${progressCount}/3` : ""}
-                      {mediaCount ? ` · 첨부 ${mediaCount}개` : ""}
-                    </span>
-                    <button
-                      className="secondary-button compact episode-toggle-button"
-                      onClick={() =>
-                        setExpandedEpisodeKey(
-                          isExpanded ? collapsedEpisodeKey : groupKey,
-                        )
-                      }
-                      type="button"
-                    >
-                      {isExpanded ? "접기" : "자세히 보기"}
-                    </button>
-                    <button
-                      className="secondary-button compact"
-                      onClick={() => onOpenReport(group.records, group.episode)}
-                    >
-                      <Icon name="share" size={14} /> 요약 · 계획 · 경과
-                    </button>
-                    {isOpen && group.episode && (
-                      <button
-                        className="secondary-button compact"
-                        onClick={() => onCloseEpisode(group.episode?.id as string)}
-                        disabled={closingEpisodeId === group.episode.id}
-                      >
-                        <Icon name="check" size={14} />
-                        {closingEpisodeId === group.episode.id
-                          ? "마무리 중..."
-                          : "이번 기록 마무리"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {isExpanded ? (
-                  <div className="history-grid">
-                    {group.records.map((record) => (
-                      <article
-                        key={record.result.id}
-                        className="history-card"
-                      >
-                        <button
-                          className="history-card-main"
-                          onClick={() => onSelect(record)}
-                        >
-                          <span className="history-date">
-                            {new Date(record.result.createdAt).getDate()}일
-                          </span>
-                          <span>
-                            <h3>{record.result.headline}</h3>
-                            <p>
-                              {formatDate(record.result.createdAt)} · 증상{" "}
-                              {record.input.symptoms.length}개 기록
-                            </p>
-                          </span>
-                          <span className={`history-risk ${record.result.riskLevel}`}>
-                            {riskLabel[record.result.riskLevel]}
-                          </span>
-                        </button>
-                        <HistoryMediaPreview media={record.media} />
-                        <div className="history-card-actions">
-                          <button type="button" onClick={() => onEdit(record)}>
-                            수정
-                          </button>
-                          <button
-                            type="button"
-                            className="danger"
-                            onClick={() => onDelete(record)}
-                          >
-                            삭제
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
+        <>
+          <section className={`flow-summary compact ${flow.trend}`}>
+            <div>
+              <span>최근 14일 · {flow.recordCount}회</span>
+              <h2>{flow.headline}</h2>
+            </div>
+          </section>
+          <div className="episode-list">
+            {episodeGroups.map((group) => {
+              const latest = group.records[0];
+              const isOpen = group.episode?.status === "open";
+              const hasEpisode = Boolean(group.episode);
+              const episodeId = group.episode?.id;
+              const groupKey = episodeId ?? latest.result.id;
+              const plan = episodeId ? planByEpisode.get(episodeId) : undefined;
+              const completedTasks =
+                plan?.tasks.filter((task) => task.completedAt).length ?? 0;
+              const progressCount = episodeId
+                ? progressCountByEpisode.get(episodeId) ?? 0
+                : 0;
+              const mediaCount = group.records.reduce(
+                (total, record) => total + (record.media?.length ?? 0),
+                0,
+              );
+              const isExpanded = activeEpisodeKey === groupKey;
+              return (
+                <section
+                  className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
+                  key={groupKey}
+                >
                   <button
-                    className="episode-compact-preview"
-                    onClick={() => setExpandedEpisodeKey(groupKey)}
+                    className="episode-summary-button"
+                    onClick={() =>
+                      setExpandedEpisodeKey(
+                        isExpanded ? collapsedEpisodeKey : groupKey,
+                      )
+                    }
                     type="button"
+                    aria-expanded={isExpanded}
                   >
-                    <span>
-                      최근 기록 {formatDate(latest.result.createdAt)} ·{" "}
-                      {group.records.length}회
-                    </span>
-                    <strong>{latest.result.headline}</strong>
-                    <small>
-                      펼치면 기록, 첨부 사진, 수정·삭제를 확인할 수 있어요.
-                    </small>
+                    <div>
+                      <span
+                        className={`episode-status ${isOpen ? "open" : "closed"}`}
+                      >
+                        {isOpen
+                          ? "진행 중"
+                          : hasEpisode
+                            ? "마무리됨"
+                            : "개별 기록"}
+                      </span>
+                      <h2>
+                        {isOpen
+                          ? "진행 중인 건강 기록"
+                          : `${new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" }).format(new Date(latest.result.createdAt))} 건강 기록`}
+                      </h2>
+                      <p>
+                        {group.records.length}회
+                        {hasEpisode ? ` · 경과 ${progressCount}/3` : ""}
+                        {mediaCount ? ` · 첨부 ${mediaCount}개` : ""}
+                      </p>
+                    </div>
+                    <strong>{isExpanded ? "접기" : "보기"}</strong>
                   </button>
-                )}
-              </section>
-            );
-          })}
-          {episodeError && <p className="share-error" role="alert">{episodeError}</p>}
-        </div>
+                  {isExpanded && (
+                    <>
+                      <div className="episode-expanded-actions">
+                        {plan && (
+                          <span>
+                            계획 {completedTasks}/{plan.tasks.length}
+                          </span>
+                        )}
+                        <button
+                          className="secondary-button compact"
+                          onClick={() =>
+                            onOpenReport(group.records, group.episode)
+                          }
+                        >
+                          <Icon name="share" size={14} /> 병원 요약
+                        </button>
+                        {isOpen && episodeId && (
+                          <button
+                            className="secondary-button compact"
+                            onClick={() => onCloseEpisode(episodeId)}
+                            disabled={closingEpisodeId === episodeId}
+                          >
+                            <Icon name="check" size={14} />
+                            {closingEpisodeId === episodeId
+                              ? "마무리 중..."
+                              : "기록 마무리"}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="history-grid">
+                        {group.records.map((record) => (
+                          <article
+                            key={record.result.id}
+                            className="history-card"
+                          >
+                            <button
+                              className="history-card-main"
+                              onClick={() => onSelect(record)}
+                            >
+                              <span className="history-date">
+                                {new Date(record.result.createdAt).getDate()}일
+                              </span>
+                              <span>
+                                <h3>{record.result.headline}</h3>
+                                <p>
+                                  {formatDate(record.result.createdAt)} · 증상{" "}
+                                  {record.input.symptoms.length}개 기록
+                                </p>
+                              </span>
+                              <span
+                                className={`history-risk ${record.result.riskLevel}`}
+                              >
+                                {riskLabel[record.result.riskLevel]}
+                              </span>
+                            </button>
+                            <HistoryMediaPreview media={record.media} />
+                            <div className="history-card-actions">
+                              <button
+                                type="button"
+                                onClick={() => onEdit(record)}
+                              >
+                                수정
+                              </button>
+                              <button
+                                type="button"
+                                className="danger"
+                                onClick={() => onDelete(record)}
+                              >
+                                삭제
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </section>
+              );
+            })}
+            {episodeError && <p className="share-error" role="alert">{episodeError}</p>}
+          </div>
+        </>
       ) : (
-        <div
-          className="panel"
-          style={{ textAlign: "center", padding: "54px 20px" }}
-        >
-          <span className="stat-icon mint" style={{ margin: "0 auto 16px" }}>
-            <Icon name="history" size={18} />
-          </span>
-          <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>
-            아직 건강 흐름이 없어요
-          </h2>
-          <p style={{ fontSize: 12, color: "#81908b", margin: 0 }}>
-            오늘 상태를 남기면 흐름이 쌓여요.
-          </p>
+        <div className="panel flow-empty-state">
+          <h2>아직 기록이 없어요</h2>
           <button className="primary-button" onClick={onStart}>
-            <Icon name="plus" size={17} /> 첫 기록 남기기
+            <Icon name="plus" size={17} /> 첫 기록 시작
           </button>
         </div>
       )}
@@ -4401,8 +4269,9 @@ export function PetFlowApp() {
       });
     }
   }
-  async function submit() {
-    if (!input.petName.trim()) {
+  async function submit(overrideInput?: HealthCheckInput) {
+    const submissionInput = overrideInput ?? input;
+    if (!submissionInput.petName.trim()) {
       setError("반려동물 이름을 입력해 주세요.");
       return;
     }
@@ -4429,7 +4298,7 @@ export function PetFlowApp() {
               Authorization: `Bearer ${sessionData.session.access_token}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify(input),
+            body: JSON.stringify(submissionInput),
           });
           if (!response.ok) throw new Error("update failed");
           const payload = (await response.json()) as AnalysisResult & {
@@ -4448,7 +4317,7 @@ export function PetFlowApp() {
           petId = savedPetId ?? petId;
           episodeId = savedEpisodeId ?? undefined;
         } else {
-          const localResult = analyzeLocally(input);
+          const localResult = analyzeLocally(submissionInput);
           result = {
             ...localResult,
             id: editingRecord.result.id,
@@ -4459,7 +4328,7 @@ export function PetFlowApp() {
 
         const updated: HistoryRecord = {
           ...editingRecord,
-          input,
+          input: submissionInput,
           result,
           petId,
           episodeId,
@@ -4497,7 +4366,7 @@ export function PetFlowApp() {
             : {}),
           ...(selectedPetId ? { "x-petflow-pet-id": selectedPetId } : {}),
         },
-        body: JSON.stringify(input),
+        body: JSON.stringify(submissionInput),
       });
       if (!response.ok) throw new Error("analysis failed");
       const responsePayload = (await response.json()) as AnalysisResult & {
@@ -4534,7 +4403,7 @@ export function PetFlowApp() {
         }
       }
       const record: HistoryRecord = {
-        input,
+        input: submissionInput,
         result,
         petId: selectedPetId,
         episodeId: episodeId ?? undefined,
@@ -4874,11 +4743,6 @@ export function PetFlowApp() {
             onAccount={() => setView("account", { history: "replace" })}
             onLogin={() => openAuth("login")}
             onSignup={() => openAuth("signup")}
-            onSelectLatest={(record) => {
-              setMediaUploadWarning("");
-              setSelected(record);
-              setView("result");
-            }}
             flow={healthFlow}
             flowLoading={flowLoading}
             activeEpisode={activeEpisode}
@@ -4962,7 +4826,6 @@ export function PetFlowApp() {
             episodes={episodes}
             plans={plans}
             progress={progress}
-            petName={profile.name}
             onBack={() => setView("home", { history: "replace" })}
             onStart={startNew}
             onEdit={startEditRecord}

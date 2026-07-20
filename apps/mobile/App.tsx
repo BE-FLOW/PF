@@ -123,13 +123,6 @@ const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
   { id: "account", label: "계정" },
 ];
 
-const mainSectionDescriptions: Record<MainSection, string> = {
-  home: "최신 흐름과 다음 행동을 한눈에 봐요.",
-  record: "관찰한 변화만 빠르게 남겨요.",
-  reports: "건강 흐름과 병원 전달 요약을 확인해요.",
-  account: "로그인과 계정 설정을 관리해요.",
-};
-
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPolicy = [
   { id: "length", label: "8~64자", test: (value: string) => value.length >= 8 && value.length <= 64 },
@@ -696,21 +689,8 @@ export default function App() {
     if (!configured) return "앱 환경을 먼저 연결해요";
     if (!authReady) return "계정 확인 중";
     if (!user) return "계정으로 이어서 관리";
-    if (needsTesterProfile) return "필수 계정 정보를 확인해요";
-    if (!pets.length) return "함께할 아이를 알려주세요";
-    if (mainSection === "record") return "오늘의 건강 기록";
-    if (mainSection === "reports") return "건강 흐름";
-    if (mainSection === "account") return "내 계정";
-    return `${selectedPet?.name ?? "아이"}의 오늘을 살펴볼까요?`;
-  }, [
-    authReady,
-    configured,
-    mainSection,
-    needsTesterProfile,
-    pets.length,
-    selectedPet?.name,
-    user,
-  ]);
+    return "필수 계정 정보를 확인해요";
+  }, [authReady, configured, user]);
 
   const loadAccount = useCallback(async (nextUser: User | null) => {
     setUser(nextUser);
@@ -1916,15 +1896,16 @@ export default function App() {
     setPetMessage("반려동물 정보가 저장됐어요.");
   }
 
-  async function submitHealthCheck() {
-    if (!selectedPet?.id || !healthInput) {
+  async function submitHealthCheck(overrideInput?: HealthCheckInput) {
+    if (!selectedPet?.id || (!healthInput && !overrideInput)) {
       setHealthMessage("오늘 기록할 반려동물을 먼저 선택해 주세요.");
       return;
     }
     const petId = selectedPet.id;
+    const sourceInput = overrideInput ?? (healthInput as HealthCheckInput);
 
     const input: HealthCheckInput = {
-      ...healthInput,
+      ...sourceInput,
       petName: selectedPet.name,
       species: selectedPet.species,
       breed: selectedPet.breed || undefined,
@@ -2536,12 +2517,10 @@ export default function App() {
     }
   }
 
-  const appDescription =
-    user && !needsTesterProfile
-      ? mainSectionDescriptions[mainSection]
-      : user
-        ? "닉네임과 연락처를 한 번 확인하면 바로 기록할 수 있어요."
-        : "기록과 사진을 안전하게 이어서 관리하려면 계정으로 시작해요.";
+  const appDescription = user
+    ? "닉네임과 연락처를 한 번 확인하면 바로 기록할 수 있어요."
+    : "기록과 사진을 안전하게 이어서 관리하려면 계정으로 시작해요.";
+  const showPageIntro = !configured || !authReady || !user || needsTesterProfile;
 
   const accountCard = user ? (
     <AccountCard
@@ -2598,8 +2577,12 @@ export default function App() {
             </View>
           </TouchableOpacity>
 
-          <Text style={styles.title}>{headline}</Text>
-          <Text style={styles.description}>{appDescription}</Text>
+          {showPageIntro ? (
+            <>
+              <Text style={styles.title}>{headline}</Text>
+              <Text style={styles.description}>{appDescription}</Text>
+            </>
+          ) : null}
 
           {!configured ? (
             <ConfigurationCard />
@@ -2673,7 +2656,6 @@ export default function App() {
                           pendingMedia={pendingMedia}
                           result={latestResult}
                           episodeId={latestEpisodeId}
-                          pet={selectedPet}
                           aiAccess={aiAccess}
                           vetDraft={
                             latestEpisodeId ? vetDrafts[latestEpisodeId] : undefined
@@ -2724,6 +2706,7 @@ export default function App() {
                         vetDrafts={vetDrafts}
                         savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
                         onRefresh={() => loadPetHistory(selectedPet)}
+                        onGoRecord={startHealthRecord}
                         onShareReport={shareEpisodeReport}
                         onEditRecord={startEditingHealthRecord}
                         onDeleteRecord={confirmDeleteHealthRecord}
@@ -2880,159 +2863,123 @@ function HomeDashboard({
     <>
       <View style={styles.homePetCard}>
         <View style={styles.cardHeaderText}>
+          <Text style={styles.cardTitle}>오늘 상태</Text>
           <TouchableOpacity
             activeOpacity={0.85}
-            onPress={onEditPet}
-            style={styles.homePetIdentity}
+            onPress={onGoRecord}
+            style={styles.homePrimaryAction}
           >
-            <View style={styles.homePetIdentityText}>
-              <Text style={styles.homePetName}>
-                {selectedPet ? selectedPet.name : "반려동물 선택"}
-              </Text>
-              <Text style={styles.homePetMeta} numberOfLines={1}>
-                {petSummary || "정보를 조금 더 알려주세요"}
-              </Text>
-            </View>
-            <Text style={styles.homePetEdit}>{selectedPet ? "수정" : "등록"}</Text>
+            <Text style={styles.homePrimaryActionText}>기록하기</Text>
           </TouchableOpacity>
-          <Text style={styles.cardTitle}>
-            흐름을 남기면 빠르게 알 수 있어요
-          </Text>
-          {vaccination ? (
-            <View
+          <View style={styles.homeInlineStatusRow}>
+            {vaccination ? (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={onEditPet}
               style={[
-                styles.homeVaccinationLine,
-                vaccination.tone === "due" && styles.homeVaccinationLineDue,
-                vaccination.tone === "overdue" && styles.homeVaccinationLineOverdue,
+                  styles.homeInlineStatus,
+                  vaccination.tone === "due" && styles.homeInlineStatusDue,
+                  vaccination.tone === "overdue" && styles.homeInlineStatusOverdue,
               ]}
-            >
-              <Text style={styles.homeVaccinationLabel}>{vaccination.label}</Text>
-              <Text style={styles.homeVaccinationTitle}>{vaccination.title}</Text>
-              <Text style={styles.homeVaccinationText}>{vaccination.description}</Text>
-            </View>
-          ) : null}
-          {activeEpisodeGroup ? (
-            <TouchableOpacity
-              activeOpacity={0.86}
-              onPress={onGoReports}
-              style={styles.homeEpisodeLine}
-            >
-              <Text style={styles.homeEpisodeLabel}>진행 중 흐름</Text>
-              <Text style={styles.homeEpisodeTitle}>
-                기록 {activeEpisodeGroup.records.length}회 · 경과{" "}
-                {Math.min(initialProgressCount, 3)}/3
+              >
+                <Text style={styles.homeInlineStatusText} numberOfLines={1}>
+                  {vaccination.label} · {vaccination.title}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            {activeEpisodeGroup ? (
+              <TouchableOpacity
+                activeOpacity={0.86}
+                onPress={onGoReports}
+                style={styles.homeInlineStatus}
+              >
+                <Text style={styles.homeInlineStatusText} numberOfLines={1}>
+                  진행 중 · 기록 {activeEpisodeGroup.records.length}회 · 경과{" "}
+                  {Math.min(initialProgressCount, 3)}/3
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={onEditPet}
+          style={styles.homePetProfile}
+        >
+          <View style={styles.petPhotoSlot}>
+            {selectedPet?.photoUrl ? (
+              <Image source={{ uri: selectedPet.photoUrl }} style={styles.petPhotoSlotImage} />
+            ) : (
+              <Text style={styles.petPhotoSlotText}>
+                {avatarLabel(selectedPet?.name ?? "펫")}
               </Text>
-              <Text style={styles.homeEpisodeText}>병원 공유 요약 보기</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-        <View style={styles.petPhotoSlot}>
-          {selectedPet?.photoUrl ? (
-            <Image source={{ uri: selectedPet.photoUrl }} style={styles.petPhotoSlotImage} />
-          ) : (
-            <Text style={styles.petPhotoSlotText}>
-              {avatarLabel(selectedPet?.name ?? "펫")}
+            )}
+          </View>
+          <View style={styles.homePetProfileNameRow}>
+            <Text style={styles.homePetName} numberOfLines={1}>
+              {selectedPet ? selectedPet.name : "반려동물"}
             </Text>
-          )}
-        </View>
+            <Text style={styles.homePetEdit}>{selectedPet ? "수정" : "등록"}</Text>
+          </View>
+          <Text style={styles.homePetMeta} numberOfLines={1}>
+            {petSummary || "정보 없음"}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <View style={styles.homeGrid}>
-        <View
-          style={[
-            styles.homeScoreCard,
-            scoreTone.tone === "good" && styles.homeScoreCardGood,
-            scoreTone.tone === "watch" && styles.homeScoreCardWatch,
-            scoreTone.tone === "alert" && styles.homeScoreCardAlert,
-          ]}
-        >
-          <View style={styles.homeScoreTop}>
-            <View style={styles.homeScoreCopy}>
-              <Text style={styles.cardEyebrow}>CHECK SCORE</Text>
-              <Text style={styles.homeScoreTitle}>
-                {selectedPet
-                  ? `${selectedPet.name}의 최신 체크스코어`
-                  : "최신 체크스코어"}
-              </Text>
-              <Text style={styles.homeMutedText}>
-                {latestAt
-                  ? `${formatRecordedAt(latestAt)} 기준${riskLevel ? ` · ${riskLabels[riskLevel]}` : ""}`
-                  : "기록을 남기면 바로 보여요."}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.homeScoreBadge,
-                scoreTone.tone === "good" && styles.homeScoreBadgeGood,
-                scoreTone.tone === "watch" && styles.homeScoreBadgeWatch,
-                scoreTone.tone === "alert" && styles.homeScoreBadgeAlert,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.homeScoreValue,
-                  scoreTone.tone === "watch" && styles.homeScoreValueWatch,
-                  scoreTone.tone === "alert" && styles.homeScoreValueAlert,
-                ]}
-              >
-                {checkScore ?? "--"}
-              </Text>
-              <Text
-                style={[
-                  styles.homeScoreCaption,
-                  (scoreTone.tone === "watch" || scoreTone.tone === "alert") &&
-                    styles.homeScoreCaptionDark,
-                ]}
-              >
-                CHECK
-              </Text>
-            </View>
+      <View
+        style={[
+          styles.homeScoreCard,
+          scoreTone === "good" && styles.homeScoreCardGood,
+          scoreTone === "watch" && styles.homeScoreCardWatch,
+          scoreTone === "alert" && styles.homeScoreCardAlert,
+        ]}
+      >
+        <View style={styles.homeScoreTop}>
+          <View style={styles.homeScoreCopy}>
+            <Text style={styles.cardEyebrow}>현재 상태</Text>
+            <Text style={styles.homeScoreTitle}>
+              {riskLevel ? riskLabels[riskLevel] : "첫 기록 전"}
+            </Text>
+            <Text style={styles.homeMutedText}>
+              {latestAt
+                ? `${formatRecordedAt(latestAt)} · 최근 14일 ${flow.recordCount}회`
+                : "기록을 시작해 주세요."}
+            </Text>
+            <Text style={styles.homeFlowHeadline} numberOfLines={1}>
+              {flow.headline}
+            </Text>
+            <TouchableOpacity activeOpacity={0.85} onPress={onGoReports}>
+              <Text style={styles.homeFlowLink}>건강 흐름 보기</Text>
+            </TouchableOpacity>
           </View>
           <View
             style={[
-              styles.homeScoreStatus,
-              scoreTone.tone === "watch" && styles.homeScoreStatusWatch,
-              scoreTone.tone === "alert" && styles.homeScoreStatusAlert,
+              styles.homeScoreBadge,
+              scoreTone === "good" && styles.homeScoreBadgeGood,
+              scoreTone === "watch" && styles.homeScoreBadgeWatch,
+              scoreTone === "alert" && styles.homeScoreBadgeAlert,
             ]}
           >
             <Text
               style={[
-                styles.homeScoreLabel,
-                scoreTone.tone === "watch" && styles.homeScoreLabelWatch,
-                scoreTone.tone === "alert" && styles.homeScoreLabelAlert,
+                styles.homeScoreValue,
+                scoreTone === "watch" && styles.homeScoreValueWatch,
+                scoreTone === "alert" && styles.homeScoreValueAlert,
               ]}
             >
-              {scoreTone.title}
+              {checkScore ?? "--"}
             </Text>
-            <Text style={styles.homeScoreStatusText}>{scoreTone.description}</Text>
-          </View>
-          <View style={styles.homeCtaRow}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={onGoRecord}
-              style={styles.homePrimaryAction}
+            <Text
+              style={[
+                styles.homeScoreCaption,
+                (scoreTone === "watch" || scoreTone === "alert") &&
+                  styles.homeScoreCaptionDark,
+              ]}
             >
-              <Text style={styles.homePrimaryActionText}>기록하기</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={onGoReports}
-              style={styles.homeSecondaryAction}
-            >
-              <Text style={styles.homeSecondaryActionText}>요약 보기</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.homeFlowCard}>
-          <Text style={styles.cardEyebrow}>HEALTH FLOW</Text>
-          <Text style={styles.homeFlowTitle}>{flow.recordCount}회 기록</Text>
-          <Text style={styles.homeFlowHeadline}>{flow.headline}</Text>
-          {flow.description ? (
-            <Text style={styles.homeMutedText} numberOfLines={3}>
-              {flow.description}
+              CHECK
             </Text>
-          ) : null}
+          </View>
         </View>
       </View>
     </>
@@ -4041,7 +3988,6 @@ function HealthRecorder({
   pendingMedia,
   result,
   episodeId,
-  pet,
   aiAccess,
   vetDraft,
   vetDraftLoading,
@@ -4063,7 +4009,6 @@ function HealthRecorder({
   pendingMedia: PendingMediaAsset[];
   result: AnalysisResult | null;
   episodeId: string | null;
-  pet: PetProfile;
   aiAccess: AiAccessStatus | null;
   vetDraft?: VetReviewDraft;
   vetDraftLoading: boolean;
@@ -4071,40 +4016,48 @@ function HealthRecorder({
   onPickMedia: () => Promise<void>;
   onRemoveMedia: (id: string) => void;
   setInput: (input: HealthCheckInput) => void;
-  onSubmit: () => Promise<void>;
+  onSubmit: (overrideInput?: HealthCheckInput) => Promise<void>;
   onGoAccount: () => void;
   onCreateVetDraft: (episodeId: string) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(isEditing);
   const showDetails = isEditing || detailsOpen;
+  const allNormal =
+    input.symptoms.length === 0 &&
+    input.appetite === "normal" &&
+    input.energy === "normal" &&
+    input.duration === "today" &&
+    input.redFlags.length === 0 &&
+    !input.note;
 
   function markAsNormal() {
-    setInput(resetToNormal(input));
+    const nextInput = resetToNormal(input);
+    if (allNormal) {
+      void onSubmit(nextInput);
+      return;
+    }
+    setInput(nextInput);
     if (!isEditing) setDetailsOpen(false);
   }
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardEyebrow}>TODAY CHECK</Text>
       <Text style={styles.cardTitle}>
-        {isEditing ? `${pet.name} 기록 수정` : `${pet.name} 오늘 건강 기록`}
-      </Text>
-      <Text style={styles.cardText}>
-        {isEditing
-          ? "수정할 부분만 바꾼 뒤 저장해 주세요. 첨부 변경은 새 기록에서 다시 추가할 수 있어요."
-          : "특별한 변화가 없으면 평소 상태 버튼만 눌러도 충분해요. 달라진 점이 있을 때만 증상과 메모를 더해 주세요."}
+        {isEditing ? "기록 수정" : "오늘 기록"}
       </Text>
 
       <TouchableOpacity
         activeOpacity={0.85}
+        disabled={loading}
         onPress={markAsNormal}
-        style={styles.normalButton}
+        style={[styles.normalButton, loading && styles.buttonDisabled]}
       >
-        <Text style={styles.normalButtonTitle}>오늘은 평소와 같아요</Text>
-        <Text style={styles.normalButtonText}>
-          증상 없음, 식욕·활력 평소 상태로 빠르게 채워요.
+        <Text style={styles.normalButtonCheck}>{allNormal ? "✓" : "↺"}</Text>
+        <Text style={styles.normalButtonTitle}>
+          {allNormal ? "평소와 같음" : "평소 상태로 초기화"}
         </Text>
+        {allNormal ? <Text style={styles.normalButtonState}>바로 기록</Text> : null}
       </TouchableOpacity>
 
       {!isEditing ? (
@@ -4114,17 +4067,15 @@ function HealthRecorder({
           style={styles.detailToggleButton}
         >
           <Text style={styles.detailToggleTitle}>
-            {showDetails ? "상세 입력 접기" : "달라진 점 추가하기"}
+            {showDetails ? "상세 입력 닫기" : "변화가 있어요"}
           </Text>
-          <Text style={styles.detailToggleText}>
-            증상, 메모, 사진이 있을 때만 열어서 남겨요.
-          </Text>
+          <Text style={styles.detailToggleMark}>{showDetails ? "−" : "+"}</Text>
         </TouchableOpacity>
       ) : null}
 
       {showDetails ? (
         <View style={styles.healthDetailFields}>
-          <FieldLabel label="보이는 증상" />
+          <FieldLabel label="증상" />
           <MultiChipGroup
             options={symptomOptions}
             selected={input.symptoms}
@@ -4147,14 +4098,14 @@ function HealthRecorder({
             onSelect={(energy) => setInput({ ...input, energy })}
           />
 
-          <FieldLabel label="언제부터 이어졌나요?" />
+          <FieldLabel label="기간" />
           <ChipGroup
             options={durationOptions}
             selected={input.duration}
             onSelect={(duration) => setInput({ ...input, duration })}
           />
 
-          <FieldLabel label="바로 확인이 필요한 신호" />
+          <FieldLabel label="위험 신호" />
           <MultiChipGroup
             danger
             options={redFlagOptions}
@@ -4164,12 +4115,12 @@ function HealthRecorder({
             }
           />
 
-          <FieldLabel label="추가 메모" />
+          <FieldLabel label="메모" />
           <TextInput
             maxLength={1000}
             multiline
             onChangeText={(note) => setInput({ ...input, note })}
-            placeholder="언제, 어떤 상황에서 달라졌는지만 짧게 적어도 충분해요."
+            placeholder="달라진 상황을 짧게 적어주세요."
             placeholderTextColor={colors.placeholder}
             style={[styles.input, styles.textarea]}
             textAlignVertical="top"
@@ -4186,19 +4137,19 @@ function HealthRecorder({
         </View>
       ) : null}
 
-      <PrimaryButton
-        disabled={loading}
-        label={
-          loading
-            ? isEditing
-              ? "수정 중..."
-              : "기록 중..."
-            : isEditing
-              ? "수정 완료하기"
-              : "오늘 건강 기록 저장"
-        }
-        onPress={onSubmit}
-      />
+      {showDetails ? (
+        <PrimaryButton
+          disabled={loading}
+          label={
+            loading
+              ? "저장 중..."
+              : isEditing
+                ? "수정 저장"
+                : "기록 저장"
+          }
+          onPress={() => onSubmit()}
+        />
+      ) : null}
       <Message text={message} />
       <Message text={mediaUploadMessage} tone="success" />
 
@@ -4236,10 +4187,7 @@ function MediaPickerSection({
     <View style={styles.mediaBox}>
       <View style={styles.mediaHeader}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.mediaTitle}>사진·영상 첨부</Text>
-          <Text style={styles.mediaText}>
-            병원에 보여줄 참고 자료만 골라주세요. PetFlow가 내용을 판독하지는 않아요.
-          </Text>
+          <Text style={styles.mediaTitle}>사진·영상</Text>
         </View>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -4283,7 +4231,7 @@ function MediaPickerSection({
         </View>
       ) : (
         <Text style={styles.mediaEmptyText}>
-          최대 {maxReportMediaFiles}개, 파일 하나당 50MB까지 저장할 수 있어요.
+          0/{maxReportMediaFiles} · 파일당 50MB
         </Text>
       )}
       <Message text={mediaMessage} />
@@ -4534,6 +4482,7 @@ function HealthHistoryCard({
   onChangePlanDraft,
   onChangeProgressDraft,
   onCreateVetDraft,
+  onGoRecord,
   onRefresh,
   onSavePlan,
   onSaveProgress,
@@ -4577,6 +4526,7 @@ function HealthHistoryCard({
   onChangePlanDraft: (value: string) => void;
   onChangeProgressDraft: (draft: ProgressDraft | null) => void;
   onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onGoRecord: () => void;
   onRefresh: () => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
@@ -4597,6 +4547,7 @@ function HealthHistoryCard({
   const recent = history.slice(0, 5);
   const shareGroups = useMemo(() => episodeGroups.slice(0, 4), [episodeGroups]);
   const [expandedReportKey, setExpandedReportKey] = useState<string | null>(null);
+  const [recentOpen, setRecentOpen] = useState(false);
   const activeReportKey =
     shareGroups.some((group) => group.key === expandedReportKey)
         ? expandedReportKey
@@ -4613,12 +4564,20 @@ function HealthHistoryCard({
         ? styles.flowCard_watch
         : styles.flowCard_stable;
 
+  if (!history.length) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>아직 기록이 없어요</Text>
+        <SecondaryButton label="첫 기록 시작" onPress={onGoRecord} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardEyebrow}>HEALTH FLOW</Text>
-          <Text style={styles.cardTitle}>최근 14일 건강 흐름</Text>
+          <Text style={styles.cardTitle}>건강 흐름</Text>
         </View>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -4633,41 +4592,12 @@ function HealthHistoryCard({
       </View>
 
       <View style={[styles.flowCard, flowTone]}>
-        <View style={styles.flowHeader}>
-          <Text style={styles.flowCount}>{flow.recordCount}회</Text>
-          <Text style={styles.flowWindow}>최근 14일</Text>
-        </View>
+        <Text style={styles.flowWindow}>최근 14일 · {flow.recordCount}회</Text>
         <Text style={styles.flowTitle}>{flow.headline}</Text>
-        {flow.description ? (
-          <Text style={styles.flowDescription}>{flow.description}</Text>
-        ) : null}
-        <View style={styles.flowMetaRow}>
-          <Text style={styles.flowMeta}>
-            최고 단계 {flow.highestRisk ? riskLabels[flow.highestRisk] : "없음"}
-          </Text>
-          <Text style={styles.flowMeta}>
-            최근 기록 {flow.latestRecordedAt ? formatRecordedAt(flow.latestRecordedAt) : "없음"}
-          </Text>
-        </View>
-        <View style={styles.flowTags}>
-          {flow.repeatedSymptoms.length ? (
-            flow.repeatedSymptoms.map((item) => (
-              <Text key={item} style={styles.flowTag}>
-                {item}
-              </Text>
-            ))
-          ) : (
-            <Text style={styles.flowTag}>반복 증상 없음</Text>
-          )}
-        </View>
       </View>
 
       <Message text={message} />
 
-      <Text style={styles.historyTitle}>병원 전달 요약</Text>
-      <Text style={styles.sectionHint}>
-        같은 사건에 연결된 기록을 수의사가 보기 좋은 제출용 텍스트로 정리해요.
-      </Text>
       {shareGroups.length ? (
         <View style={styles.episodeList}>
           {shareGroups.map((group) => {
@@ -4717,14 +4647,21 @@ function HealthHistoryCard({
           })}
         </View>
       ) : (
-        <Text style={styles.emptyText}>
-          아직 공유할 기록이 없어요. 오늘 기록을 저장하면 요약을 만들 수 있어요.
-        </Text>
+        <Text style={styles.emptyText}>아직 기록이 없어요.</Text>
       )}
       <Message text={shareMessage} tone="success" />
 
-      <Text style={styles.historyTitle}>최근 기록</Text>
-      {recent.length ? (
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => setRecentOpen((current) => !current)}
+        style={styles.compactSectionToggle}
+      >
+        <Text style={styles.compactSectionToggleTitle}>최근 기록 {history.length}회</Text>
+        <Text style={styles.compactSectionToggleAction}>
+          {recentOpen ? "접기" : "보기"}
+        </Text>
+      </TouchableOpacity>
+      {recentOpen && recent.length ? (
         <View style={styles.historyList}>
           {recent.map((record) => (
             <HistoryRecordItem
@@ -4735,11 +4672,7 @@ function HealthHistoryCard({
             />
           ))}
         </View>
-      ) : (
-        <Text style={styles.emptyText}>
-          아직 저장된 기록이 없어요. 오늘 기록을 남기면 여기에 쌓여요.
-        </Text>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -4885,24 +4818,22 @@ function EpisodeReportItem({
             {expanded ? "접기" : "보기"}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => void onShareReport(group.report)}
-          style={styles.episodeShareButton}
-        >
-          <Text style={styles.episodeShareButtonText}>공유</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.episodeMetaRow}>
-        <Text style={styles.episodeMeta}>{planSummary}</Text>
-        <Text style={styles.episodeMeta}>초기 경과 {initialProgressCount}/3</Text>
-        <Text style={styles.episodeMeta}>장기 경과 {longTermProgressCount}/3</Text>
-        <Text style={styles.episodeMeta}>{mediaSummary}</Text>
       </View>
 
       {expanded ? (
         <>
+          <View style={styles.episodeExpandedActions}>
+            <Text style={styles.episodeExpandedMeta} numberOfLines={1}>
+              {planSummary} · 경과 {initialProgressCount + longTermProgressCount}회 · {mediaSummary}
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => void onShareReport(group.report)}
+              style={styles.episodeShareButton}
+            >
+              <Text style={styles.episodeShareButtonText}>병원 요약 공유</Text>
+            </TouchableOpacity>
+          </View>
           {episodeId ? (
             <View style={styles.planBox}>
           <View style={styles.planHeader}>
@@ -5410,18 +5341,7 @@ function EpisodeReportItem({
           </View>
           <Text style={styles.disclaimer}>{group.report.disclaimer}</Text>
         </>
-      ) : (
-        <TouchableOpacity
-          activeOpacity={0.86}
-          onPress={onToggleReport}
-          style={styles.episodeCompactBox}
-        >
-          <Text style={styles.episodeCompactTitle}>요약만 먼저 보여드려요</Text>
-          <Text style={styles.episodeCompactText}>
-            계획, 경과, GPT 초안, 제출 미리보기는 필요할 때 펼쳐서 확인해요.
-          </Text>
-        </TouchableOpacity>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -5663,37 +5583,11 @@ function displayCheckScore(riskScore: number) {
   return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
 }
 
-function getCheckScoreTone(checkScore?: number): {
-  tone: CheckScoreTone;
-  title: string;
-  description: string;
-} {
-  if (checkScore === undefined) {
-    return {
-      tone: "empty",
-      title: "첫 기록을 기다려요",
-      description: "기록을 남기면 흐름이 보여요.",
-    };
-  }
-  if (checkScore >= 70) {
-    return {
-      tone: "good",
-      title: "안정적으로 보여요",
-      description: "평소 흐름을 이어서 확인해요.",
-    };
-  }
-  if (checkScore >= 45) {
-    return {
-      tone: "watch",
-      title: "조금 지켜봐요",
-      description: "같은 변화가 이어지는지 확인해요.",
-    };
-  }
-  return {
-    tone: "alert",
-    title: "상담을 고려해요",
-    description: "기록을 챙겨 병원 상담을 준비해요.",
-  };
+function getCheckScoreTone(checkScore?: number): CheckScoreTone {
+  if (checkScore === undefined) return "empty";
+  if (checkScore >= 70) return "good";
+  if (checkScore >= 45) return "watch";
+  return "alert";
 }
 
 function speciesLabel(species: Species) {
@@ -5935,34 +5829,34 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 3,
   },
-  homePetIdentity: {
-    alignSelf: "flex-start",
-    maxWidth: "100%",
-    minHeight: 36,
+  homePetProfile: {
+    width: 104,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.82)",
+    borderRadius: 22,
+    backgroundColor: "rgba(255, 255, 255, 0.58)",
+    padding: 9,
+  },
+  homePetProfileNameRow: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
-    gap: 9,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#d8eadf",
-    borderRadius: 999,
-    backgroundColor: "rgba(255, 255, 255, 0.78)",
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-  },
-  homePetIdentityText: {
-    minWidth: 0,
+    gap: 4,
+    marginTop: 7,
   },
   homePetName: {
+    flex: 1,
     color: colors.ink,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "900",
   },
   homePetMeta: {
     marginTop: 2,
     color: colors.muted,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "800",
+    textAlign: "center",
   },
   homePetEdit: {
     flexShrink: 0,
@@ -5970,72 +5864,38 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     color: colors.green,
     backgroundColor: "#e6f6ee",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    fontSize: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    fontSize: 9,
     fontWeight: "900",
   },
-  homeVaccinationLine: {
-    alignSelf: "flex-start",
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: "#d8eadf",
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.72)",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  homeInlineStatusRow: {
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 8,
   },
-  homeVaccinationLineDue: {
+  homeInlineStatus: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    borderWidth: 1,
+    borderColor: "#cfe7dc",
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  homeInlineStatusDue: {
     borderColor: "#efd79d",
     backgroundColor: "#fff9ec",
   },
-  homeVaccinationLineOverdue: {
+  homeInlineStatusOverdue: {
     borderColor: "#e6b5a8",
     backgroundColor: "#fff4ef",
   },
-  homeVaccinationLabel: {
+  homeInlineStatusText: {
     color: colors.green,
     fontSize: 10,
     fontWeight: "900",
-  },
-  homeVaccinationTitle: {
-    marginTop: 3,
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  homeVaccinationText: {
-    marginTop: 2,
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  homeEpisodeLine: {
-    alignSelf: "flex-start",
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: "#cfe7dc",
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.72)",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  homeEpisodeLabel: {
-    color: colors.green,
-    fontSize: 10,
-    fontWeight: "900",
-  },
-  homeEpisodeTitle: {
-    marginTop: 3,
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  homeEpisodeText: {
-    marginTop: 2,
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
   },
   petPhotoSlot: {
     width: 72,
@@ -6059,16 +5919,13 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
-  homeGrid: {
-    gap: 14,
-    marginTop: 16,
-  },
   homeScoreCard: {
+    marginTop: 14,
     borderWidth: 1,
     borderColor: "#bfe5d1",
     borderRadius: 26,
     backgroundColor: "#f5fcf8",
-    padding: 20,
+    padding: 17,
   },
   homeScoreCardGood: {
     borderColor: "#b8decf",
@@ -6139,36 +5996,6 @@ const styles = StyleSheet.create({
   homeScoreCaptionDark: {
     color: colors.muted,
   },
-  homeScoreStatus: {
-    marginTop: 14,
-    borderRadius: 18,
-    backgroundColor: "rgba(255, 255, 255, 0.72)",
-    padding: 12,
-  },
-  homeScoreLabel: {
-    color: colors.green,
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  homeScoreLabelWatch: {
-    color: "#8b6220",
-  },
-  homeScoreLabelAlert: {
-    color: colors.danger,
-  },
-  homeScoreStatusWatch: {
-    backgroundColor: "#fff4d6",
-  },
-  homeScoreStatusAlert: {
-    backgroundColor: "#fff0ea",
-  },
-  homeScoreStatusText: {
-    marginTop: 4,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 17,
-  },
   homeMutedText: {
     marginTop: 7,
     color: colors.muted,
@@ -6176,14 +6003,10 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 19,
   },
-  homeCtaRow: {
-    flexDirection: "row",
-    gap: 9,
-    marginTop: 15,
-  },
   homePrimaryAction: {
-    flex: 1,
+    alignSelf: "flex-start",
     alignItems: "center",
+    marginTop: 12,
     borderRadius: 999,
     backgroundColor: colors.green,
     paddingHorizontal: 15,
@@ -6194,39 +6017,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
-  homeFlowCard: {
-    borderWidth: 1,
-    borderColor: "#f0dfad",
-    borderRadius: 26,
-    backgroundColor: "#fffaf0",
-    padding: 20,
-  },
-  homeFlowTitle: {
-    marginTop: 8,
-    color: colors.ink,
-    fontSize: 28,
-    fontWeight: "900",
-  },
   homeFlowHeadline: {
-    marginTop: 5,
-    color: colors.ink,
-    fontSize: 16,
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 12,
     fontWeight: "900",
-    lineHeight: 22,
+    lineHeight: 17,
   },
-  homeSecondaryAction: {
-    flex: 1,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#c8e4d7",
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 15,
-    paddingVertical: 11,
-  },
-  homeSecondaryActionText: {
+  homeFlowLink: {
+    marginTop: 8,
     color: colors.green,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: "900",
   },
   authTabs: {
@@ -6999,58 +6800,83 @@ const styles = StyleSheet.create({
     color: "#ffffff",
   },
   normalButton: {
-    marginTop: 18,
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    marginTop: 14,
     borderWidth: 1,
     borderColor: colors.green,
-    borderRadius: 20,
+    borderRadius: 18,
     backgroundColor: "#eefaf4",
-    padding: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+  },
+  normalButtonCheck: {
+    width: 34,
+    height: 34,
+    overflow: "hidden",
+    borderRadius: 12,
+    backgroundColor: colors.green,
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 34,
+    textAlign: "center",
   },
   normalButtonTitle: {
+    flex: 1,
     color: colors.ink,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "900",
   },
-  normalButtonText: {
-    marginTop: 5,
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "700",
-    lineHeight: 19,
+  normalButtonState: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#d9f3e6",
+    color: colors.green,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    fontSize: 10,
+    fontWeight: "900",
   },
   detailToggleButton: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
     marginTop: 12,
     borderWidth: 1,
     borderColor: colors.line,
     borderRadius: 18,
     backgroundColor: "#fbfefd",
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   detailToggleTitle: {
     color: colors.green,
     fontSize: 14,
     fontWeight: "900",
   },
-  detailToggleText: {
-    marginTop: 4,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
+  detailToggleMark: {
+    color: colors.green,
+    fontSize: 18,
+    fontWeight: "900",
   },
   healthDetailFields: {
-    marginTop: 8,
+    marginTop: 4,
   },
   textarea: {
     minHeight: 94,
   },
   mediaBox: {
-    marginTop: 18,
+    marginTop: 14,
     borderWidth: 1,
     borderColor: colors.line,
     borderRadius: 20,
     backgroundColor: "#f8fcfa",
-    padding: 14,
+    padding: 12,
   },
   mediaHeader: {
     flexDirection: "row",
@@ -7062,13 +6888,6 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontSize: 15,
     fontWeight: "900",
-  },
-  mediaText: {
-    marginTop: 5,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
   },
   mediaAddButton: {
     borderRadius: 999,
@@ -7257,10 +7076,10 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   flowCard: {
-    marginTop: 18,
+    marginTop: 14,
     borderWidth: 1,
     borderRadius: 22,
-    padding: 16,
+    padding: 15,
   },
   flowCard_stable: {
     borderColor: "#bfe5d1",
@@ -7274,19 +7093,8 @@ const styles = StyleSheet.create({
     borderColor: "#e9a99a",
     backgroundColor: "#fff0ec",
   },
-  flowHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  flowCount: {
-    color: colors.ink,
-    fontSize: 34,
-    fontWeight: "900",
-    lineHeight: 40,
-  },
   flowWindow: {
+    alignSelf: "flex-start",
     overflow: "hidden",
     borderRadius: 999,
     backgroundColor: colors.ink,
@@ -7302,51 +7110,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "900",
     lineHeight: 24,
-  },
-  flowDescription: {
-    marginTop: 7,
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "700",
-    lineHeight: 19,
-  },
-  flowMetaRow: {
-    gap: 5,
-    marginTop: 12,
-  },
-  flowMeta: {
-    color: colors.green,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  flowTags: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
-    marginTop: 13,
-  },
-  flowTag: {
-    overflow: "hidden",
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    color: colors.ink,
-    fontSize: 12,
-    fontWeight: "900",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  historyTitle: {
-    marginTop: 20,
-    color: colors.ink,
-    fontSize: 17,
-    fontWeight: "900",
-  },
-  sectionHint: {
-    marginTop: 6,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
   },
   episodeList: {
     gap: 12,
@@ -7414,41 +7177,43 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
-  episodeMetaRow: {
+  episodeExpandedActions: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
     marginTop: 13,
   },
-  episodeMeta: {
-    overflow: "hidden",
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    color: colors.ink,
+  episodeExpandedMeta: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.muted,
     fontSize: 11,
-    fontWeight: "900",
-    paddingHorizontal: 9,
-    paddingVertical: 6,
+    fontWeight: "800",
   },
-  episodeCompactBox: {
-    marginTop: 12,
+  compactSectionToggle: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 14,
     borderWidth: 1,
     borderColor: colors.line,
     borderRadius: 16,
-    backgroundColor: "#ffffff",
-    padding: 12,
+    backgroundColor: "#fbfefd",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
-  episodeCompactTitle: {
+  compactSectionToggleTitle: {
     color: colors.ink,
     fontSize: 13,
     fontWeight: "900",
   },
-  episodeCompactText: {
-    marginTop: 4,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
+  compactSectionToggleAction: {
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
   },
   planBox: {
     marginTop: 13,
@@ -8095,31 +7860,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 19,
-  },
-  stepRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingTop: 14,
-  },
-  stepNumber: {
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 15,
-    backgroundColor: colors.greenSoft,
-  },
-  stepNumberText: {
-    color: colors.green,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  stepText: {
-    flex: 1,
-    color: colors.ink,
-    fontSize: 15,
-    fontWeight: "800",
   },
   notice: {
     marginTop: 18,
