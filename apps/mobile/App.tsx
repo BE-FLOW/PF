@@ -3143,12 +3143,32 @@ function AuthForm({
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>
-        {appleEnabled ? "Google 또는 Apple로 시작하기" : "Google로 시작하기"}
-      </Text>
+      <View style={styles.authTabs} accessibilityLabel="계정 시작 방법">
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={[styles.tabButton, mode === "login" && styles.tabButtonActive]}
+          onPress={() => setMode("login")}
+        >
+          <Text style={[styles.tabText, mode === "login" && styles.tabTextActive]}>
+            로그인
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={[styles.tabButton, mode === "signup" && styles.tabButtonActive]}
+          onPress={() => setMode("signup")}
+        >
+          <Text style={[styles.tabText, mode === "signup" && styles.tabTextActive]}>
+            회원가입
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.cardTitle}>{mode === "login" ? "로그인" : "회원가입"}</Text>
       <Text style={styles.cardText}>
-        이메일 확인과 비밀번호 관리는 각 계정에서 맡기고, 펫플로우는 로그인 후
-        닉네임과 테스트 연락처만 한 번 확인해요.
+        {mode === "login"
+          ? "사용하던 계정으로 기록을 이어서 확인해요."
+          : "Google, Apple 또는 이메일 계정으로 새로 시작해요."}
       </Text>
 
       <View style={styles.oauthButtons}>
@@ -3160,7 +3180,11 @@ function AuthForm({
         >
           <Text style={styles.oauthButtonMark}>G</Text>
           <Text style={styles.oauthButtonText}>
-            {oauthLoading === "google" ? "Google 로그인 중..." : "Google로 계속하기"}
+            {oauthLoading === "google"
+              ? "Google 확인 중..."
+              : mode === "login"
+                ? "Google 계정으로 로그인"
+                : "Google 계정으로 회원가입"}
           </Text>
         </TouchableOpacity>
         {appleEnabled ? (
@@ -3176,7 +3200,11 @@ function AuthForm({
           >
             <Text style={[styles.oauthButtonMark, styles.oauthButtonMarkDark]}></Text>
             <Text style={[styles.oauthButtonText, styles.oauthButtonTextDark]}>
-              {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
+              {oauthLoading === "apple"
+                ? "Apple 확인 중..."
+                : mode === "login"
+                  ? "Apple 계정으로 로그인"
+                  : "Apple 계정으로 회원가입"}
             </Text>
           </TouchableOpacity>
         ) : null}
@@ -3194,33 +3222,16 @@ function AuthForm({
         style={styles.emailFallbackToggle}
       >
         <Text style={styles.emailFallbackText}>
-          {showEmailAuth ? "이메일 계정 접기" : "기존 이메일 계정으로 계속하기"}
+          {showEmailAuth
+            ? "이메일 입력 접기"
+            : mode === "login"
+              ? "이메일로 로그인"
+              : "이메일로 회원가입"}
         </Text>
       </TouchableOpacity>
 
       {showEmailAuth ? (
         <View style={styles.emailFallbackPanel}>
-          <View style={styles.authTabs}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={[styles.tabButton, mode === "login" && styles.tabButtonActive]}
-              onPress={() => setMode("login")}
-            >
-              <Text style={[styles.tabText, mode === "login" && styles.tabTextActive]}>
-                로그인
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={[styles.tabButton, mode === "signup" && styles.tabButtonActive]}
-              onPress={() => setMode("signup")}
-            >
-              <Text style={[styles.tabText, mode === "signup" && styles.tabTextActive]}>
-                회원가입
-              </Text>
-            </TouchableOpacity>
-          </View>
-
           <View style={styles.authDivider}>
             <View style={styles.authDividerLine} />
             <Text style={styles.authDividerText}>이메일과 비밀번호</Text>
@@ -3263,7 +3274,7 @@ function AuthForm({
 
           <PrimaryButton
             disabled={authBusy}
-            label={loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
+            label={loading ? "확인 중..." : mode === "login" ? "로그인" : "회원가입"}
             onPress={onSubmit}
           />
         </View>

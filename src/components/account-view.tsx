@@ -149,6 +149,7 @@ export function AccountView({
   pets,
   selectedPetId,
   authReady,
+  initialMode = "login",
   onBack,
   onAuth,
   onOAuth,
@@ -167,6 +168,7 @@ export function AccountView({
   pets: PetProfile[];
   selectedPetId?: string;
   authReady: boolean;
+  initialMode?: AuthMode;
   onBack: () => void;
   onAuth: (
     mode: AuthMode,
@@ -185,7 +187,7 @@ export function AccountView({
   onEditPet: (pet: PetProfile) => void;
   onSelectPet: (pet: PetProfile) => void;
 }) {
-  const [mode, setMode] = useState<AuthMode>("login");
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [draft, setDraft] = useState<TesterDraft>(() =>
@@ -563,10 +565,28 @@ export function AccountView({
         </div>
       ) : (
         <section className="form-panel auth-panel">
+          <div className="auth-tabs auth-entry-tabs" aria-label="계정 시작 방법">
+            <button
+              className={mode === "login" ? "active" : ""}
+              onClick={() => { setMode("login"); setMessage(""); }}
+              type="button"
+            >
+              로그인
+            </button>
+            <button
+              className={mode === "signup" ? "active" : ""}
+              onClick={() => { setMode("signup"); setMessage(""); }}
+              type="button"
+            >
+              회원가입
+            </button>
+          </div>
           <div className="auth-intro">
-            <h2>{enabledOAuthProviders.apple ? "Google 또는 Apple로 시작하기" : "Google로 시작하기"}</h2>
+            <h2>{mode === "login" ? "로그인" : "회원가입"}</h2>
             <p>
-              펫플로우는 로그인 후 닉네임과 테스트 연락처만 한 번 확인해요.
+              {mode === "login"
+                ? "사용하던 계정으로 기록을 이어서 확인해요."
+                : "Google, Apple 또는 이메일 계정으로 새로 시작해요."}
             </p>
           </div>
           <div className="oauth-button-group">
@@ -577,7 +597,11 @@ export function AccountView({
               type="button"
             >
               <span>G</span>
-              {oauthLoading === "google" ? "Google 로그인 중..." : "Google로 계속하기"}
+              {oauthLoading === "google"
+                ? "Google 확인 중..."
+                : mode === "login"
+                  ? "Google 계정으로 로그인"
+                  : "Google 계정으로 회원가입"}
             </button>
             {enabledOAuthProviders.apple ? (
               <button
@@ -587,7 +611,11 @@ export function AccountView({
                 type="button"
               >
                 <span></span>
-                {oauthLoading === "apple" ? "Apple 로그인 중..." : "Apple로 계속하기"}
+                {oauthLoading === "apple"
+                  ? "Apple 확인 중..."
+                  : mode === "login"
+                    ? "Apple 계정으로 로그인"
+                    : "Apple 계정으로 회원가입"}
               </button>
             ) : null}
           </div>
@@ -599,11 +627,7 @@ export function AccountView({
           </p>
           {message && <div className="form-error" role="alert">{message}</div>}
           <details className="password-auth-fallback">
-            <summary>기존 이메일 계정으로 계속하기</summary>
-            <div className="auth-tabs">
-              <button className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setMessage(""); }}>로그인</button>
-              <button className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setMessage(""); }}>회원가입</button>
-            </div>
+            <summary>{mode === "login" ? "이메일로 로그인" : "이메일로 회원가입"}</summary>
             <div className="auth-divider"><span>이메일과 비밀번호</span></div>
             <div className="field">
               <label htmlFor="authEmail">이메일</label>
@@ -628,7 +652,7 @@ export function AccountView({
               </>
             )}
             <button className="primary-button auth-submit" onClick={submitAuth} disabled={loading || oauthLoading !== null}>
-              {loading ? "확인 중..." : mode === "login" ? "로그인" : "가입하고 시작"}
+              {loading ? "확인 중..." : mode === "login" ? "로그인" : "회원가입"}
             </button>
           </details>
         </section>

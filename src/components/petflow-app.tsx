@@ -621,6 +621,7 @@ function SideNav({
   view,
   setView,
   onStart,
+  onAccount,
   authReady,
   signedIn,
   canUseApp,
@@ -628,6 +629,7 @@ function SideNav({
   view: View;
   setView: SetView;
   onStart: () => void;
+  onAccount: () => void;
   authReady: boolean;
   signedIn: boolean;
   canUseApp: boolean;
@@ -662,7 +664,7 @@ function SideNav({
         <button
           type="button"
           className={`nav-item account-nav ${view === "account" ? "active" : ""}`}
-          onClick={() => setView("account", { history: "replace" })}
+          onClick={onAccount}
           aria-label={authReady && signedIn ? "내 계정" : "로그인"}
         >
           <Icon name="user" size={19} />
@@ -724,10 +726,10 @@ function MobileNav({
   );
 }
 
-type HomeStage = "login" | "pet" | "record";
+type HomeStage = "account" | "pet" | "record";
 
 const homeStageSteps: Array<{ id: HomeStage; label: string }> = [
-  { id: "login", label: "로그인" },
+  { id: "account", label: "계정" },
   { id: "pet", label: "아이 등록" },
   { id: "record", label: "첫 기록" },
 ];
@@ -753,13 +755,17 @@ function HomeSteps({ current }: { current: HomeStage }) {
 function HomeSetup({
   stage,
   onAction,
+  onLogin,
+  onSignup,
 }: {
   stage: "login" | "account" | "pet";
   onAction: () => void;
+  onLogin: () => void;
+  onSignup: () => void;
 }) {
   const loginStage = stage === "login";
   const accountStage = stage === "account";
-  const currentStep: HomeStage = stage === "pet" ? "pet" : "login";
+  const currentStep: HomeStage = stage === "pet" ? "pet" : "account";
   return (
     <div className="content-wrap home-setup-wrap">
       <header className="home-page-heading">
@@ -777,33 +783,40 @@ function HomeSetup({
         <div className="home-setup-copy">
           <span className="home-stage-label">
             {loginStage
-              ? "1단계 · 로그인"
+              ? "1단계 · 계정"
               : accountStage
                 ? "로그인 완료 · 정보 확인"
                 : "2단계 · 아이 등록"}
           </span>
           <h2>
             {loginStage
-              ? "먼저 로그인해 주세요"
+              ? "계정으로 시작해 주세요"
               : accountStage
                 ? "필수 정보를 한 번만 확인해요"
                 : "이름과 종류부터 시작해요"}
           </h2>
           <p>
             {loginStage
-              ? "기록과 사진을 계정에 안전하게 이어서 저장해요."
+              ? "기존 계정은 로그인, 처음이라면 회원가입을 선택해요."
               : accountStage
                 ? "닉네임과 테스트 연락처를 확인하면 다음 단계로 이어져요."
                 : "기본 정보만 등록하면 바로 건강 기록을 남길 수 있어요."}
           </p>
-          <button className="primary-button" type="button" onClick={onAction}>
-            <Icon name={loginStage || accountStage ? "user" : "paw"} size={18} />
-            {loginStage
-              ? "로그인하고 시작"
-              : accountStage
-                ? "정보 확인하기"
-                : "첫 아이 등록"}
-          </button>
+          {loginStage ? (
+            <div className="home-auth-actions">
+              <button className="primary-button" type="button" onClick={onLogin}>
+                <Icon name="user" size={18} /> 로그인
+              </button>
+              <button className="secondary-button" type="button" onClick={onSignup}>
+                <Icon name="plus" size={17} /> 회원가입
+              </button>
+            </div>
+          ) : (
+            <button className="primary-button" type="button" onClick={onAction}>
+              <Icon name={accountStage ? "user" : "paw"} size={18} />
+              {accountStage ? "정보 확인하기" : "첫 아이 등록"}
+            </button>
+          )}
         </div>
         <span className="home-setup-symbol" aria-hidden="true">
           <Icon name={loginStage || accountStage ? "shield" : "paw"} size={38} />
@@ -829,6 +842,8 @@ function HomeView({
   activeEpisodeProgressCount,
   vaccinations,
   onAccount,
+  onLogin,
+  onSignup,
 }: {
   authReady: boolean;
   signedIn: boolean;
@@ -845,6 +860,8 @@ function HomeView({
   activeEpisodeProgressCount: number;
   vaccinations: VaccinationRecord[];
   onAccount: () => void;
+  onLogin: () => void;
+  onSignup: () => void;
 }) {
   const recent = history[0];
   const recentCheckScore = recent ? displayCheckScore(recent.result.riskScore) : undefined;
@@ -882,9 +899,36 @@ function HomeView({
       </div>
     );
   }
-  if (!signedIn) return <HomeSetup stage="login" onAction={onAccount} />;
-  if (!accountComplete) return <HomeSetup stage="account" onAction={onAccount} />;
-  if (!hasProfile) return <HomeSetup stage="pet" onAction={onProfile} />;
+  if (!signedIn) {
+    return (
+      <HomeSetup
+        stage="login"
+        onAction={onAccount}
+        onLogin={onLogin}
+        onSignup={onSignup}
+      />
+    );
+  }
+  if (!accountComplete) {
+    return (
+      <HomeSetup
+        stage="account"
+        onAction={onAccount}
+        onLogin={onLogin}
+        onSignup={onSignup}
+      />
+    );
+  }
+  if (!hasProfile) {
+    return (
+      <HomeSetup
+        stage="pet"
+        onAction={onProfile}
+        onLogin={onLogin}
+        onSignup={onSignup}
+      />
+    );
+  }
 
   return (
     <div className="content-wrap">
@@ -3463,6 +3507,7 @@ export function PetFlowApp() {
   const [testerProfile, setTesterProfile] = useState<TesterProfile | null>(null);
   const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [authEntryMode, setAuthEntryMode] = useState<"login" | "signup">("login");
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
@@ -3508,6 +3553,13 @@ export function PetFlowApp() {
     currentViewRef.current = nextView;
     setViewState(nextView);
   }, []);
+  const openAuth = useCallback(
+    (mode: "login" | "signup", history: "push" | "replace" = "replace") => {
+      setAuthEntryMode(mode);
+      setView("account", { history });
+    },
+    [setView],
+  );
   const currentView = useMemo(
     () =>
       view === "result" && !selected
@@ -4264,7 +4316,11 @@ export function PetFlowApp() {
     setView("home", { history: "replace" });
   }
   function startNew() {
-    if (!authReady || !user || !testerProfile) {
+    if (!authReady || !user) {
+      openAuth("login", "push");
+      return;
+    }
+    if (!testerProfile) {
       setView("account");
       return;
     }
@@ -4767,6 +4823,11 @@ export function PetFlowApp() {
         view={currentView}
         setView={setView}
         onStart={startNew}
+        onAccount={() =>
+          user
+            ? setView("account", { history: "replace" })
+            : openAuth("login")
+        }
         authReady={authReady}
         signedIn={Boolean(user)}
         canUseApp={Boolean(user && testerProfile)}
@@ -4775,7 +4836,11 @@ export function PetFlowApp() {
         <Brand small onClick={() => setView("home", { history: "replace" })} />
         <button
           className="mobile-account"
-          onClick={() => setView("account", { history: "replace" })}
+          onClick={() =>
+            user
+              ? setView("account", { history: "replace" })
+              : openAuth("login")
+          }
         >
           {authReady && user ? "내 계정" : "로그인"}
         </button>
@@ -4801,10 +4866,14 @@ export function PetFlowApp() {
             history={visibleHistory}
             onStart={startNew}
             onHistory={() =>
-              setView(user ? "history" : "account", { history: "replace" })
+              user
+                ? setView("history", { history: "replace" })
+                : openAuth("login")
             }
             onProfile={() => openProfile("home")}
             onAccount={() => setView("account", { history: "replace" })}
+            onLogin={() => openAuth("login")}
+            onSignup={() => openAuth("signup")}
             onSelectLatest={(record) => {
               setMediaUploadWarning("");
               setSelected(record);
@@ -4828,13 +4897,14 @@ export function PetFlowApp() {
         )}{" "}
         {currentView === "account" && (
           <AccountView
-            key={`${user?.id ?? "guest"}:${testerProfile?.consentVersion ?? "none"}:${testerProfile?.phone ?? "none"}`}
+            key={`${user?.id ?? "guest"}:${testerProfile?.consentVersion ?? "none"}:${testerProfile?.phone ?? "none"}:${authEntryMode}`}
             user={user}
             testerProfile={testerProfile}
             aiAccess={aiAccess}
             pets={pets}
             selectedPetId={selectedPetId}
             authReady={authReady}
+            initialMode={authEntryMode}
             onBack={() => setView("home", { history: "replace" })}
             onAuth={handleAuth}
             onOAuth={handleOAuth}

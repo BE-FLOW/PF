@@ -355,6 +355,17 @@ button {
 .home-setup-copy .primary-button {
   margin-top: 23px;
 }
+.home-auth-actions {
+  margin-top: 23px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.home-auth-actions .primary-button,
+.home-auth-actions .secondary-button {
+  min-width: 132px;
+  margin-top: 0;
+}
 .home-setup-symbol {
   position: relative;
   z-index: 1;
