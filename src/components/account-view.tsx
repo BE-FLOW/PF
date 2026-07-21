@@ -367,7 +367,7 @@ export function AccountView({
               <div>
                 <h3>로그인 연결</h3>
                 <p>
-                  기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 AI 초안 권한이
+                  기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 AI 요약 이용 내역이
                   그대로 이어져요.
                 </p>
               </div>
