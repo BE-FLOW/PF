@@ -39,6 +39,20 @@ interface OpenAiUsage {
   total_tokens?: number;
 }
 
+async function requestedReportIds(request: Request) {
+  try {
+    const body = (await request.json()) as { reportIds?: unknown };
+    if (!Array.isArray(body.reportIds)) return [];
+    return [...new Set(body.reportIds)]
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .slice(0, 60);
+  } catch {
+    return [];
+  }
+}
+
 async function enrichWithOpenAI(
   baseDraft: VetReviewDraft,
   apiKey: string,
@@ -210,6 +224,7 @@ export async function POST(
   context: { params: Promise<{ episodeId: string }> },
 ) {
   const { episodeId } = await context.params;
+  const reportIds = await requestedReportIds(request);
   const accessToken = accessTokenFromRequest(request);
   const access = await getAiReportAccess(accessToken);
   if (!access) {
@@ -245,6 +260,16 @@ export async function POST(
     );
   }
 
+  const reports = reportIds.length
+    ? bundle.reports.filter((report) => reportIds.includes(report.id))
+    : bundle.reports;
+  if (reportIds.length && reports.length !== reportIds.length) {
+    return NextResponse.json(
+      { error: "선택한 기록 범위를 확인하지 못했어요." },
+      { status: 400 },
+    );
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || "gpt-5.4-mini-2026-03-17";
   if (!apiKey) {
@@ -262,14 +287,15 @@ export async function POST(
     );
   }
 
-  const records = bundle.reports.map((report) =>
+  const records = reports.map((report) =>
     storedReportToHistoryRecord(report, bundle.pet),
   );
+  const isPartialSelection = reports.length !== bundle.reports.length;
   const localDraft = buildVetReviewDraft(
     records,
     bundle.pet.name,
-    bundle.plan,
-    bundle.progress,
+    isPartialSelection ? undefined : bundle.plan,
+    isPartialSelection ? [] : bundle.progress,
   );
   const reservation = await reserveAiReportUsage({
     userId: access.userId,

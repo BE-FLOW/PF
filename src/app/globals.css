@@ -2402,54 +2402,158 @@ p {
   display: grid;
   gap: 12px;
 }
-.episode-list {
-  display: grid;
-  gap: 16px;
-}
-.episode-card {
-  overflow: hidden;
-  padding: 0;
+.record-calendar-card,
+.record-calendar-selection {
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 24px;
   background: rgba(255, 255, 255, 0.94);
 }
-.episode-card.open {
-  border-color: #b8dccc;
-  background: #f7fcf9;
-  box-shadow: 0 10px 30px rgba(47, 93, 75, 0.06);
+.record-calendar-card {
+  padding: 20px;
 }
-.episode-summary-button {
-  width: 100%;
-  padding: 18px 20px;
-  border: 0;
-  background: transparent;
-  display: flex;
+.record-calendar-header {
+  display: grid;
+  grid-template-columns: 38px 1fr 38px;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+.record-calendar-header strong {
+  font-size: 17px;
+}
+.record-calendar-header button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+.record-calendar-next svg {
+  transform: rotate(180deg);
+}
+.record-calendar-weekdays,
+.record-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.record-calendar-weekdays {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+.record-calendar-day {
+  position: relative;
+  min-height: 58px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
   color: var(--ink);
   cursor: pointer;
   font: inherit;
-  text-align: left;
+  font-size: 12px;
+  font-weight: 800;
 }
-.episode-summary-button:hover {
-  background: rgba(255, 255, 255, 0.55);
+.record-calendar-day:hover {
+  background: #f0f7f3;
 }
-.episode-summary-button h2 {
-  margin: 8px 0 6px;
-  font-size: 17px;
+.record-calendar-day.outside {
+  color: #b2beba;
 }
-.episode-summary-button p {
-  margin: 0;
-  color: #6c7d77;
-  font-size: 11px;
-  line-height: 1.45;
+.record-calendar-day.selected {
+  border-radius: 0;
+  background: #eef8f3;
 }
-.episode-summary-button > strong {
-  flex: 0 0 auto;
+.record-calendar-day.edge {
+  border-radius: 16px;
+  background: var(--mint-soft);
   color: var(--mint-dark);
-  font-size: 11px;
+  box-shadow: inset 0 0 0 1px #b9dfce;
+}
+.record-calendar-day.today > span {
+  min-width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #8bcbb0;
+  border-radius: 999px;
+}
+.record-calendar-mark {
+  position: absolute;
+  bottom: 5px;
+  min-width: 7px;
+  height: 7px;
+  display: grid;
+  place-items: center;
+  padding: 0 2px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 7px;
+  line-height: 1;
+}
+.record-calendar-mark.watch {
+  background: #54b78c;
+}
+.record-calendar-mark.soon {
+  background: #d19b54;
+}
+.record-calendar-mark.urgent {
+  background: #ce7068;
+}
+.record-calendar-selection {
+  margin-top: 14px;
+  padding: 20px;
+}
+.record-calendar-selection-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.record-calendar-selection-head span {
+  color: var(--mint-dark);
+  font-size: 10px;
   font-weight: 900;
+}
+.record-calendar-selection-head h2 {
+  margin: 7px 0 5px;
+  font-size: 18px;
+}
+.record-calendar-selection-head p,
+.record-calendar-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.record-calendar-history {
+  margin-top: 16px;
+}
+.record-calendar-empty {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px dashed #cfe1d9;
+  border-radius: 16px;
+  text-align: center;
+}
+.record-calendar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.record-calendar-actions button {
+  min-height: 42px;
+}
+.record-calendar-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .episode-status {
   display: inline-flex;
@@ -2463,23 +2567,6 @@ p {
 .episode-status.open {
   background: var(--mint-soft);
   color: var(--mint-dark);
-}
-.episode-expanded-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 0 20px 14px;
-}
-.episode-expanded-actions > span {
-  margin-right: auto;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-}
-.episode-card > .history-grid {
-  padding: 0 20px 20px;
 }
 .secondary-button.compact {
   min-height: 36px;
@@ -3319,15 +3406,6 @@ p {
   .home-setup-copy h2 {
     font-size: 27px;
   }
-  .episode-expanded-actions {
-    justify-content: stretch;
-  }
-  .episode-expanded-actions > span {
-    width: 100%;
-  }
-  .episode-expanded-actions .secondary-button {
-    flex: 1 1 140px;
-  }
   .episode-report-hero,
   .episode-report-actions {
     flex-direction: column;
@@ -3447,6 +3525,46 @@ p {
   }
   .flow-summary {
     grid-template-columns: 1fr;
+  }
+  .record-calendar-card,
+  .record-calendar-selection {
+    border-radius: 21px;
+  }
+  .record-calendar-card {
+    padding: 13px 10px 12px;
+  }
+  .record-calendar-header {
+    margin: 0 4px 13px;
+  }
+  .record-calendar-day {
+    min-height: 46px;
+    border-radius: 13px;
+    font-size: 11px;
+  }
+  .record-calendar-day.edge {
+    border-radius: 13px;
+  }
+  .record-calendar-selection {
+    padding: 17px;
+  }
+  .record-calendar-selection-head {
+    align-items: center;
+  }
+  .record-calendar-selection-head h2 {
+    font-size: 16px;
+  }
+  .record-calendar-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .record-calendar-actions.single-action {
+    grid-template-columns: 1fr;
+  }
+  .record-calendar-actions button {
+    width: 100%;
+  }
+  .record-calendar-actions button:last-child:nth-child(3) {
+    grid-column: 1 / -1;
   }
   .panel {
     padding: 20px;

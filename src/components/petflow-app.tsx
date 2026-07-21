@@ -18,6 +18,15 @@ import { analyzeLocally, deriveAgeGroup, profileToHealthInput } from "@/lib/anal
 import { buildEpisodeReport } from "@/lib/episode-report";
 import { summarizeHealthFlow } from "@/lib/health-flow";
 import {
+  buildRecordCalendar,
+  isRecordDateInRange,
+  monthKeyFromDate,
+  normalizeRecordDateRange,
+  recordDateKeyToIso,
+  shiftRecordMonth,
+  toRecordDateKey,
+} from "@/lib/record-calendar";
+import {
   oauthLinkErrorMessage,
   oauthSignInErrorMessage,
   passwordAuthErrorMessage,
@@ -64,6 +73,7 @@ import type {
   RedFlagId,
   ReportMediaAttachment,
   ReportMediaKind,
+  RiskLevel,
   SymptomId,
   TesterProfile,
   VaccinationRecord,
@@ -310,6 +320,47 @@ function formatDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function dateFromRecordKey(dateKey: string) {
+  return new Date(`${dateKey}T12:00:00+09:00`);
+}
+
+function formatRecordMonth(monthKey: string) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return `${year}년 ${month}월`;
+}
+
+function formatRecordDateKey(dateKey: string) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  }).format(dateFromRecordKey(dateKey));
+}
+
+function formatRecordRange(start: string, end: string | null) {
+  if (!end || start === end) return formatRecordDateKey(start);
+  const startLabel = new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+  }).format(dateFromRecordKey(start));
+  return `${startLabel}–${formatRecordDateKey(end)}`;
+}
+
+const recordRiskWeight: Record<RiskLevel, number> = {
+  watch: 1,
+  soon: 2,
+  urgent: 3,
+};
+
+function highestRecordRisk(records: HistoryRecord[]) {
+  return records.reduce<RiskLevel | null>((highest, record) => {
+    if (!highest) return record.result.riskLevel;
+    return recordRiskWeight[record.result.riskLevel] > recordRiskWeight[highest]
+      ? record.result.riskLevel
+      : highest;
+  }, null);
 }
 
 function isToday(value: string) {
@@ -559,12 +610,16 @@ function mergePetHistory(
       record.petId === petId &&
       !remoteRecords.some((remote) => remote.result.id === record.result.id),
   );
-  const merged = [...remoteRecords, ...localOnly].sort(
+  const merged = sortHistoryRecords([...remoteRecords, ...localOnly]);
+  return [...merged, ...otherPets].slice(0, 100);
+}
+
+function sortHistoryRecords(records: HistoryRecord[]) {
+  return [...records].sort(
     (a, b) =>
       new Date(b.result.createdAt).getTime() -
       new Date(a.result.createdAt).getTime(),
   );
-  return [...merged, ...otherPets].slice(0, 100);
 }
 
 function ignoreLocalStorageFailure(action: () => void) {
@@ -1507,6 +1562,7 @@ function ProfileView({
 function CheckView({
   input,
   profile,
+  recordDateKey,
   setInput,
   isEditing,
   mediaFiles,
@@ -1522,6 +1578,7 @@ function CheckView({
 }: {
   input: HealthCheckInput;
   profile: PetProfile;
+  recordDateKey: string;
   setInput: (value: HealthCheckInput) => void;
   isEditing: boolean;
   mediaFiles: PendingMediaFile[];
@@ -1542,6 +1599,10 @@ function CheckView({
     input.duration === "today" &&
     input.redFlags.length === 0 &&
     !input.note;
+  const recordDateTitle =
+    recordDateKey === toRecordDateKey(new Date())
+      ? "오늘 기록"
+      : `${formatRecordDateKey(recordDateKey)} 기록`;
   const [showChanges, setShowChanges] = useState(
     isEditing || !allNormal || mediaFiles.length > 0,
   );
@@ -1632,7 +1693,7 @@ function CheckView({
           <Icon name="arrow" size={20} />
         </button>
         <div>
-          <h1>{isEditing ? "기록 수정" : "오늘 기록"}</h1>
+          <h1>{isEditing ? "기록 수정" : recordDateTitle}</h1>
         </div>
       </div>
       <div className="form-panel">
@@ -1921,6 +1982,7 @@ function ResultView({
   onFeedback: (value: HistoryRecord["feedback"]) => void;
   onCreateVetDraft: (
     episodeId: string,
+    reportIds?: string[],
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
 }) {
   const { result } = record;
@@ -2289,8 +2351,6 @@ function HistoryView({
   history,
   flow,
   episodes,
-  plans,
-  progress,
   onBack,
   onSelect,
   onEdit,
@@ -2304,232 +2364,253 @@ function HistoryView({
   history: HistoryRecord[];
   flow: HealthFlowSummary;
   episodes: PetEpisode[];
-  plans: EpisodePlan[];
-  progress: EpisodeProgress[];
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
   onEdit: (record: HistoryRecord) => void;
   onDelete: (record: HistoryRecord) => void;
-  onStart: () => void;
+  onStart: (dateKey: string) => void;
   onCloseEpisode: (episodeId: string) => void;
   onOpenReport: (records: HistoryRecord[], episode?: PetEpisode) => void;
   closingEpisodeId?: string;
   episodeError: string;
 }) {
-  const planByEpisode = useMemo(
-    () => new Map(plans.map((plan) => [plan.episodeId, plan])),
-    [plans],
+  const latestDateKey = toRecordDateKey(history[0]?.result.createdAt ?? new Date());
+  const [calendarMonth, setCalendarMonth] = useState(() =>
+    monthKeyFromDate(history[0]?.result.createdAt ?? new Date()),
   );
-  const progressCountByEpisode = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of progress) {
-      counts.set(item.episodeId, (counts.get(item.episodeId) ?? 0) + 1);
-    }
-    return counts;
-  }, [progress]);
-  const episodeGroups = useMemo(() => {
-    const episodeById = new Map(episodes.map((episode) => [episode.id, episode]));
-    const grouped = new Map<
-      string,
-      { episode?: PetEpisode; records: HistoryRecord[] }
-    >();
-
+  const [selectionStart, setSelectionStart] = useState(latestDateKey);
+  const [selectionEnd, setSelectionEnd] = useState<string | null>(latestDateKey);
+  const [rangeMode, setRangeMode] = useState(false);
+  const todayKey = toRecordDateKey(new Date());
+  const recordsByDate = useMemo(() => {
+    const grouped = new Map<string, HistoryRecord[]>();
     for (const record of history) {
-      const key = record.episodeId ?? `record:${record.result.id}`;
-      const group = grouped.get(key) ?? {
-        episode: record.episodeId ? episodeById.get(record.episodeId) : undefined,
-        records: [],
-      };
-      group.records.push(record);
-      grouped.set(key, group);
+      const key = toRecordDateKey(record.result.createdAt);
+      if (!key) continue;
+      grouped.set(key, [...(grouped.get(key) ?? []), record]);
     }
+    return grouped;
+  }, [history]);
+  const calendarDays = useMemo(
+    () => buildRecordCalendar(calendarMonth),
+    [calendarMonth],
+  );
+  const selectionReady = !rangeMode || Boolean(selectionEnd);
+  const selectedRecords = useMemo(
+    () =>
+      selectionReady
+        ? history.filter((record) =>
+            isRecordDateInRange(
+              toRecordDateKey(record.result.createdAt),
+              selectionStart,
+              selectionEnd,
+            ),
+          )
+        : [],
+    [history, selectionEnd, selectionReady, selectionStart],
+  );
+  const selectedEpisode = useMemo(() => {
+    const episodeId = selectedRecords[0]?.episodeId;
+    if (!episodeId || selectedRecords.some((record) => record.episodeId !== episodeId)) {
+      return undefined;
+    }
+    return episodes.find((episode) => episode.id === episodeId);
+  }, [episodes, selectedRecords]);
+  const selectedRisk = highestRecordRisk(selectedRecords);
 
-    return [...grouped.values()].sort((a, b) => {
-      if (a.episode?.status !== b.episode?.status) {
-        return a.episode?.status === "open" ? -1 : 1;
+  function selectCalendarDay(dateKey: string) {
+    setCalendarMonth(dateKey.slice(0, 7));
+    if (!rangeMode) {
+      setSelectionStart(dateKey);
+      setSelectionEnd(dateKey);
+      return;
+    }
+    if (!selectionStart || selectionEnd) {
+      setSelectionStart(dateKey);
+      setSelectionEnd(null);
+      return;
+    }
+    const range = normalizeRecordDateRange(selectionStart, dateKey);
+    setSelectionStart(range.start);
+    setSelectionEnd(range.end);
+  }
+
+  function toggleRangeMode() {
+    setRangeMode((current) => {
+      if (current) {
+        setSelectionEnd(selectionStart);
+        return false;
       }
-      const aTime = a.episode?.lastActivityAt ?? a.records[0]?.result.createdAt ?? "";
-      const bTime = b.episode?.lastActivityAt ?? b.records[0]?.result.createdAt ?? "";
-      return new Date(bTime).getTime() - new Date(aTime).getTime();
+      setSelectionEnd(null);
+      return true;
     });
-  }, [episodes, history]);
-  const [expandedEpisodeKey, setExpandedEpisodeKey] = useState<string | null>(null);
-  const collapsedEpisodeKey = "__petflow_collapsed__";
-  const activeEpisodeKey =
-    expandedEpisodeKey === collapsedEpisodeKey
-      ? null
-      : episodeGroups.some((group) => {
-          const key = group.episode?.id ?? group.records[0]?.result.id;
-          return key === expandedEpisodeKey;
-        })
-        ? expandedEpisodeKey
-        : null;
+  }
 
   return (
     <div className="content-wrap compact-flow-page">
       <div className="page-heading">
-        <button className="back-button" onClick={onBack} aria-label="뒤로">
+        <button className="back-button" onClick={onBack} aria-label="홈으로">
           <Icon name="arrow" size={20} />
         </button>
         <div>
-          <h1>건강 흐름</h1>
+          <h1>기록 달력</h1>
+          <p>
+            {history.length
+              ? `최근 14일 ${flow.recordCount}회 · ${flow.headline}`
+              : "날짜를 확인하고 오늘 기록을 시작해요."}
+          </p>
         </div>
       </div>
-      {history.length ? (
-        <>
-          <section className={`flow-summary compact ${flow.trend}`}>
-            <div>
-              <span>최근 14일 · {flow.recordCount}회</span>
-              <h2>{flow.headline}</h2>
-            </div>
-          </section>
-          <div className="episode-list">
-            {episodeGroups.map((group) => {
-              const latest = group.records[0];
-              const isOpen = group.episode?.status === "open";
-              const hasEpisode = Boolean(group.episode);
-              const episodeId = group.episode?.id;
-              const groupKey = episodeId ?? latest.result.id;
-              const plan = episodeId ? planByEpisode.get(episodeId) : undefined;
-              const completedTasks =
-                plan?.tasks.filter((task) => task.completedAt).length ?? 0;
-              const progressCount = episodeId
-                ? progressCountByEpisode.get(episodeId) ?? 0
-                : 0;
-              const mediaCount = group.records.reduce(
-                (total, record) => total + (record.media?.length ?? 0),
-                0,
-              );
-              const isExpanded = activeEpisodeKey === groupKey;
-              return (
-                <section
-                  className={`episode-card ${isOpen ? "open" : hasEpisode ? "closed" : "standalone"}`}
-                  key={groupKey}
-                >
-                  <button
-                    className="episode-summary-button"
-                    onClick={() =>
-                      setExpandedEpisodeKey(
-                        isExpanded ? collapsedEpisodeKey : groupKey,
-                      )
-                    }
-                    type="button"
-                    aria-expanded={isExpanded}
-                  >
-                    <div>
-                      <span
-                        className={`episode-status ${isOpen ? "open" : "closed"}`}
-                      >
-                        {isOpen
-                          ? "진행 중"
-                          : hasEpisode
-                            ? "마무리됨"
-                            : "개별 기록"}
-                      </span>
-                      <h2>
-                        {isOpen
-                          ? "진행 중인 건강 기록"
-                          : `${new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" }).format(new Date(latest.result.createdAt))} 건강 기록`}
-                      </h2>
-                      <p>
-                        {group.records.length}회
-                        {hasEpisode ? ` · 경과 ${progressCount}/3` : ""}
-                        {mediaCount ? ` · 첨부 ${mediaCount}개` : ""}
-                      </p>
-                    </div>
-                    <strong>{isExpanded ? "접기" : "보기"}</strong>
-                  </button>
-                  {isExpanded && (
-                    <>
-                      <div className="episode-expanded-actions">
-                        {plan && (
-                          <span>
-                            계획 {completedTasks}/{plan.tasks.length}
-                          </span>
-                        )}
-                        <button
-                          className="secondary-button compact"
-                          onClick={() =>
-                            onOpenReport(group.records, group.episode)
-                          }
-                        >
-                          <Icon name="share" size={14} /> 병원 요약
-                        </button>
-                        {isOpen && episodeId && (
-                          <button
-                            className="secondary-button compact"
-                            onClick={() => onCloseEpisode(episodeId)}
-                            disabled={closingEpisodeId === episodeId}
-                          >
-                            <Icon name="check" size={14} />
-                            {closingEpisodeId === episodeId
-                              ? "마무리 중..."
-                              : "기록 마무리"}
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="history-grid">
-                        {group.records.map((record) => (
-                          <article
-                            key={record.result.id}
-                            className="history-card"
-                          >
-                            <button
-                              className="history-card-main"
-                              onClick={() => onSelect(record)}
-                            >
-                              <span className="history-date">
-                                {new Date(record.result.createdAt).getDate()}일
-                              </span>
-                              <span>
-                                <h3>{record.result.headline}</h3>
-                                <p>
-                                  {formatDate(record.result.createdAt)} · 증상{" "}
-                                  {record.input.symptoms.length}개 기록
-                                </p>
-                              </span>
-                              <span
-                                className={`history-risk ${record.result.riskLevel}`}
-                              >
-                                {riskLabel[record.result.riskLevel]}
-                              </span>
-                            </button>
-                            <HistoryMediaPreview media={record.media} />
-                            <div className="history-card-actions">
-                              <button
-                                type="button"
-                                onClick={() => onEdit(record)}
-                              >
-                                수정
-                              </button>
-                              <button
-                                type="button"
-                                className="danger"
-                                onClick={() => onDelete(record)}
-                              >
-                                삭제
-                              </button>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </section>
-              );
-            })}
-            {episodeError && <p className="share-error" role="alert">{episodeError}</p>}
-          </div>
-        </>
-      ) : (
-        <div className="panel flow-empty-state">
-          <h2>아직 기록이 없어요</h2>
-          <button className="primary-button" onClick={onStart}>
-            <Icon name="plus" size={17} /> 첫 기록 시작
+      <section className="record-calendar-card">
+        <div className="record-calendar-header">
+          <button
+            type="button"
+            onClick={() => setCalendarMonth((current) => shiftRecordMonth(current, -1))}
+            aria-label="이전 달"
+          >
+            <Icon name="arrow" size={16} />
+          </button>
+          <strong>{formatRecordMonth(calendarMonth)}</strong>
+          <button
+            type="button"
+            onClick={() => setCalendarMonth((current) => shiftRecordMonth(current, 1))}
+            aria-label="다음 달"
+            className="record-calendar-next"
+          >
+            <Icon name="arrow" size={16} />
           </button>
         </div>
-      )}
+        <div className="record-calendar-weekdays" aria-hidden="true">
+          {['일', '월', '화', '수', '목', '금', '토'].map((day) => (
+            <span key={day}>{day}</span>
+          ))}
+        </div>
+        <div className="record-calendar-grid">
+          {calendarDays.map((day) => {
+            const dayRecords = recordsByDate.get(day.dateKey) ?? [];
+            const dayRisk = highestRecordRisk(dayRecords);
+            const selected = isRecordDateInRange(
+              day.dateKey,
+              selectionStart,
+              selectionEnd,
+            );
+            const isEdge =
+              day.dateKey === selectionStart || day.dateKey === selectionEnd;
+            return (
+              <button
+                type="button"
+                key={day.dateKey}
+                className={[
+                  "record-calendar-day",
+                  day.inCurrentMonth ? "" : "outside",
+                  selected ? "selected" : "",
+                  isEdge ? "edge" : "",
+                  day.dateKey === todayKey ? "today" : "",
+                ].filter(Boolean).join(" ")}
+                onClick={() => selectCalendarDay(day.dateKey)}
+                aria-pressed={selected}
+                aria-label={`${formatRecordDateKey(day.dateKey)}${dayRecords.length ? `, 기록 ${dayRecords.length}개` : ""}`}
+              >
+                <span>{day.day}</span>
+                {dayRecords.length > 0 && (
+                  <small className={`record-calendar-mark ${dayRisk ?? "watch"}`}>
+                    {dayRecords.length > 1 ? dayRecords.length : ""}
+                  </small>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="record-calendar-selection">
+        <div className="record-calendar-selection-head">
+          <div>
+            <span>{rangeMode ? "기간 선택" : "선택한 날짜"}</span>
+            <h2>{formatRecordRange(selectionStart, selectionEnd)}</h2>
+            <p>
+              {rangeMode && !selectionEnd
+                ? "종료일을 눌러 주세요."
+                : `${selectedRecords.length}개 기록${selectedRisk ? ` · ${riskLabel[selectedRisk]}` : ""}`}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="secondary-button compact"
+            onClick={toggleRangeMode}
+          >
+            {rangeMode ? "날짜 보기" : "기간 선택"}
+          </button>
+        </div>
+
+        {!rangeMode && selectedRecords.length > 0 && (
+          <div className="history-grid record-calendar-history">
+            {selectedRecords.map((record) => (
+              <article key={record.result.id} className="history-card">
+                <button className="history-card-main" onClick={() => onSelect(record)}>
+                  <span className="history-date">
+                    {Number(toRecordDateKey(record.result.createdAt).slice(-2))}일
+                  </span>
+                  <span>
+                    <h3>{record.result.headline}</h3>
+                    <p>
+                      {formatDate(record.result.createdAt)} · 증상 {record.input.symptoms.length}개
+                    </p>
+                  </span>
+                  <span className={`history-risk ${record.result.riskLevel}`}>
+                    {riskLabel[record.result.riskLevel]}
+                  </span>
+                </button>
+                <HistoryMediaPreview media={record.media} />
+                <div className="history-card-actions">
+                  <button type="button" onClick={() => onEdit(record)}>수정</button>
+                  <button type="button" className="danger" onClick={() => onDelete(record)}>
+                    삭제
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {!rangeMode && selectedRecords.length === 0 && (
+          <p className="record-calendar-empty">이 날짜에는 기록이 없어요.</p>
+        )}
+
+        <div
+          className={`record-calendar-actions ${rangeMode ? "single-action" : ""}`}
+        >
+          {!rangeMode && (
+            <button
+              className="primary-button"
+              onClick={() => onStart(selectionStart)}
+              disabled={selectionStart > todayKey}
+            >
+              <Icon name="plus" size={16} />
+              {selectionStart === todayKey ? "오늘 기록" : "기록 추가"}
+            </button>
+          )}
+          <button
+            className="secondary-button"
+            onClick={() => onOpenReport(selectedRecords, selectedEpisode)}
+            disabled={!selectionReady || selectedRecords.length === 0}
+          >
+            <Icon name="spark" size={15} />
+            {selectedEpisode ? "요약 · AI 요약" : "선택 요약"}
+          </button>
+          {selectedEpisode?.status === "open" && (
+            <button
+              className="secondary-button"
+              onClick={() => onCloseEpisode(selectedEpisode.id)}
+              disabled={closingEpisodeId === selectedEpisode.id}
+            >
+              <Icon name="check" size={15} />
+              {closingEpisodeId === selectedEpisode.id ? "마무리 중..." : "흐름 마무리"}
+            </button>
+          )}
+        </div>
+        {episodeError && <p className="share-error" role="alert">{episodeError}</p>}
+      </section>
     </div>
   );
 }
@@ -2570,6 +2651,7 @@ function EpisodeReportView({
   ) => Promise<string>;
   onCreateVetDraft: (
     episodeId: string,
+    reportIds?: string[],
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
   canUseAiReport: boolean;
   aiAccess: AiAccessStatus | null;
@@ -2710,7 +2792,10 @@ function EpisodeReportView({
     }
     setVetDraftState("loading");
     setVetDraftError("");
-    const result = await onCreateVetDraft(selection.episode.id);
+    const result = await onCreateVetDraft(
+      selection.episode.id,
+      selection.records.map((record) => record.result.id),
+    );
     if (!result.draft) {
       setVetDraftState("failed");
       setVetDraftError(result.error ?? "AI 병원 요약을 만들지 못했어요.");
@@ -3340,6 +3425,9 @@ export function PetFlowApp() {
   const [authReady, setAuthReady] = useState(false);
   const [authEntryMode, setAuthEntryMode] = useState<"login" | "signup">("login");
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
+  const [recordDateKey, setRecordDateKey] = useState(() =>
+    toRecordDateKey(new Date()),
+  );
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
   const [plans, setPlans] = useState<EpisodePlan[]>([]);
@@ -3501,6 +3589,21 @@ export function PetFlowApp() {
         : 0,
     [activeEpisode, progress],
   );
+  const selectedReportIsWholeEpisode = useMemo(() => {
+    const episodeId = selectedEpisodeReport?.episode?.id;
+    if (!episodeId || !selectedEpisodeReport.records.length) return false;
+    const episodeRecords = visibleHistory.filter(
+      (record) => record.episodeId === episodeId,
+    );
+    return (
+      episodeRecords.length === selectedEpisodeReport.records.length &&
+      episodeRecords.every((record) =>
+        selectedEpisodeReport.records.some(
+          (selectedRecord) => selectedRecord.result.id === record.result.id,
+        ),
+      )
+    );
+  }, [selectedEpisodeReport, visibleHistory]);
   const clearPendingMedia = useCallback(() => {
     setPendingMedia((current) => {
       current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
@@ -4115,10 +4218,11 @@ export function PetFlowApp() {
     setAiAccess(null);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
+    setRecordDateKey(toRecordDateKey(new Date()));
     removeLocalStorageItem("petflow-profile");
     setView("home", { history: "replace" });
   }
-  function startNew() {
+  function startNew(selectedDateKey?: string) {
     if (!authReady || !user) {
       openAuth("login", "push");
       return;
@@ -4132,6 +4236,11 @@ export function PetFlowApp() {
       return;
     }
     setEditingRecord(null);
+    setRecordDateKey(
+      typeof selectedDateKey === "string" && recordDateKeyToIso(selectedDateKey)
+        ? selectedDateKey
+        : toRecordDateKey(new Date()),
+    );
     clearPendingMedia();
     setMediaUploadWarning("");
     setInput(profileToHealthInput(profile));
@@ -4141,6 +4250,7 @@ export function PetFlowApp() {
 
   function startEditRecord(record: HistoryRecord) {
     setEditingRecord(record);
+    setRecordDateKey(toRecordDateKey(record.result.createdAt));
     setInput({
       ...record.input,
       petName: profile.name || record.input.petName,
@@ -4300,6 +4410,7 @@ export function PetFlowApp() {
             ? { Authorization: `Bearer ${sessionData.session.access_token}` }
             : {}),
           ...(selectedPetId ? { "x-petflow-pet-id": selectedPetId } : {}),
+          "x-petflow-observed-date": recordDateKey,
         },
         body: JSON.stringify(submissionInput),
       });
@@ -4345,7 +4456,7 @@ export function PetFlowApp() {
         media,
       };
       clearPendingMedia();
-      persist([record, ...history].slice(0, 100));
+      persist(sortHistoryRecords([record, ...history]).slice(0, 100));
       if (episodeId && selectedPetId) {
         setEpisodes((current) => {
           const existing = current.find((episode) => episode.id === episodeId);
@@ -4525,7 +4636,7 @@ export function PetFlowApp() {
       return "경과 기록을 저장하지 못했어요.";
     }
   }
-  async function createVetDraft(episodeId: string) {
+  async function createVetDraft(episodeId: string, reportIds?: string[]) {
     const supabase = getSupabaseBrowserClient();
     try {
       const { data } = supabase
@@ -4534,7 +4645,11 @@ export function PetFlowApp() {
       if (!data.session) return { error: "로그인 상태를 다시 확인해 주세요." };
       const response = await fetch(`/api/episodes/${episodeId}/vet-draft`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${data.session.access_token}` },
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ reportIds }),
       });
       const payload = (await response.json()) as {
         draft?: VetReviewDraft;
@@ -4723,6 +4838,7 @@ export function PetFlowApp() {
           <CheckView
             input={input}
             profile={profile}
+            recordDateKey={recordDateKey}
             setInput={setInput}
             isEditing={Boolean(editingRecord)}
             mediaFiles={pendingMedia}
@@ -4754,11 +4870,10 @@ export function PetFlowApp() {
         )}{" "}
         {currentView === "history" && (
           <HistoryView
+            key={selectedPetId ?? "local-history"}
             history={visibleHistory}
             flow={healthFlow}
             episodes={episodes}
-            plans={plans}
-            progress={progress}
             onBack={() => setView("home", { history: "replace" })}
             onStart={startNew}
             onEdit={startEditRecord}
@@ -4787,7 +4902,7 @@ export function PetFlowApp() {
             selection={selectedEpisodeReport}
             petName={profile.name}
             plan={
-              selectedEpisodeReport.episode
+              selectedReportIsWholeEpisode && selectedEpisodeReport.episode
                 ? plans.find(
                     (plan) =>
                       plan.episodeId === selectedEpisodeReport.episode?.id,
@@ -4795,7 +4910,7 @@ export function PetFlowApp() {
                 : undefined
             }
             progress={
-              selectedEpisodeReport.episode
+              selectedReportIsWholeEpisode && selectedEpisodeReport.episode
                 ? progress.filter(
                     (item) =>
                       item.episodeId === selectedEpisodeReport.episode?.id,

@@ -40,6 +40,15 @@ import {
   type OAuthProvider,
 } from "./src/lib/auth";
 import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
+import {
+  buildRecordCalendar,
+  isRecordDateInRange,
+  monthKeyFromDate,
+  normalizeRecordDateRange,
+  recordDateKeyToIso,
+  shiftRecordMonth,
+  toRecordDateKey,
+} from "./src/lib/record-calendar";
 import { getSupabaseClient, isSupabaseConfigured } from "./src/lib/supabase";
 import {
   analyzeLocally,
@@ -84,6 +93,7 @@ import {
   type PetSex,
   type ReportMediaAttachment,
   type ReportMediaKind,
+  type RiskLevel,
   type Species,
   type VetReviewDraft,
   type VaccinationRecord,
@@ -482,6 +492,9 @@ export default function App() {
   const [petLoading, setPetLoading] = useState(false);
   const [petMessage, setPetMessage] = useState("");
   const [healthInput, setHealthInput] = useState<HealthCheckInput | null>(null);
+  const [recordDateKey, setRecordDateKey] = useState(() =>
+    toRecordDateKey(new Date()),
+  );
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthMessage, setHealthMessage] = useState("");
   const [latestResult, setLatestResult] = useState<AnalysisResult | null>(null);
@@ -1606,10 +1619,15 @@ export default function App() {
     setMediaMessage("");
   }
 
-  function startHealthRecord() {
+  function startHealthRecord(selectedDateKey?: string) {
     if (selectedPet) {
       setHealthInput(profileToHealthInput(selectedPet));
     }
+    setRecordDateKey(
+      typeof selectedDateKey === "string" && recordDateKeyToIso(selectedDateKey)
+        ? selectedDateKey
+        : toRecordDateKey(new Date()),
+    );
     setEditingHealthRecord(null);
     setLatestResult(null);
     setLatestEpisodeId(null);
@@ -1623,6 +1641,7 @@ export default function App() {
   function startEditingHealthRecord(record: HistoryRecord) {
     if (!selectedPet) return;
     setEditingHealthRecord(record);
+    setRecordDateKey(toRecordDateKey(record.result.createdAt));
     setHealthInput({
       ...record.input,
       petName: selectedPet.name,
@@ -1894,7 +1913,15 @@ export default function App() {
       sex: selectedPet.sex,
       weight: selectedPet.weight || undefined,
     };
-    const localResult = analyzeLocally(input);
+    const observedAt = recordDateKeyToIso(recordDateKey);
+    if (!editingHealthRecord && !observedAt) {
+      setHealthMessage("기록 날짜를 다시 확인해 주세요.");
+      return;
+    }
+    const analyzed = analyzeLocally(input);
+    const localResult = observedAt
+      ? { ...analyzed, createdAt: observedAt }
+      : analyzed;
     setHealthLoading(true);
     setHealthMessage("");
     setMediaUploadMessage("");
@@ -1977,6 +2004,7 @@ export default function App() {
           "Content-Type": "application/json",
           "x-petflow-client-id": clientId,
           "x-petflow-pet-id": petId,
+          "x-petflow-observed-date": recordDateKey,
         },
         body: JSON.stringify(input),
       });
@@ -2052,7 +2080,9 @@ export default function App() {
       setMediaUploadMessage(mediaNotice);
       setHealthMessage(
         result.storage === "remote"
-          ? "오늘 기록이 저장됐어요."
+          ? recordDateKey === toRecordDateKey(new Date())
+            ? "오늘 기록이 저장됐어요."
+            : "선택한 날짜에 기록을 저장했어요."
           : "결과는 만들었지만 서버 저장은 확인하지 못했어요.",
       );
     } catch {
@@ -2311,7 +2341,7 @@ export default function App() {
     }
   }
 
-  async function createVetDraft(episodeId: string) {
+  async function createVetDraft(episodeId: string, reportIds?: string[]) {
     if (!aiAccess?.enabled) {
       setVetDraftNotice({
         episodeId,
@@ -2321,7 +2351,7 @@ export default function App() {
             : "AI 요약 사용량을 확인하지 못했어요.",
         tone: "error",
       });
-      return;
+      return false;
     }
 
     setVetDraftLoadingEpisodeId(episodeId);
@@ -2338,7 +2368,11 @@ export default function App() {
         `${apiBaseUrl}/api/episodes/${episodeId}/vet-draft`,
         {
           method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ reportIds }),
         },
       );
       const payload = (await response.json()) as {
@@ -2360,6 +2394,7 @@ export default function App() {
       });
       const nextAccess = await fetchAiAccessStatus(accessToken);
       if (nextAccess) setAiAccess(nextAccess);
+      return true;
     } catch (error) {
       setVetDraftNotice({
         episodeId,
@@ -2369,6 +2404,7 @@ export default function App() {
             : "AI 요약을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
         tone: "error",
       });
+      return false;
     } finally {
       setVetDraftLoadingEpisodeId(null);
     }
@@ -2579,8 +2615,9 @@ export default function App() {
                       />
                       {selectedPet && healthInput ? (
                         <HealthRecorder
-                          key={`${selectedPet.id ?? "pet"}:${editingHealthRecord?.result.id ?? "new"}`}
+                          key={`${selectedPet.id ?? "pet"}:${editingHealthRecord?.result.id ?? "new"}:${recordDateKey}`}
                           input={healthInput}
+                          recordDateKey={recordDateKey}
                           loading={healthLoading}
                           mediaMessage={mediaMessage}
                           mediaUploadMessage={mediaUploadMessage}
@@ -2616,6 +2653,7 @@ export default function App() {
                   {mainSection === "reports" ? (
                     selectedPet ? (
                       <HealthHistoryCard
+                        key={selectedPet.id}
                         aiAccess={aiAccess}
                         aiFeedbackDrafts={aiFeedbackDrafts}
                         aiFeedbackNotice={aiFeedbackNotice}
@@ -2625,6 +2663,7 @@ export default function App() {
                         history={selectedPetHistory}
                         loading={historyLoading}
                         message={historyMessage}
+                        petName={selectedPet.name}
                         editingPlanEpisodeId={editingPlanEpisodeId}
                         planDraft={planDraft}
                         planSavingEpisodeId={planSavingEpisodeId}
@@ -2760,7 +2799,7 @@ function HomeDashboard({
   selectedPet?: PetProfile;
   vaccinations: VaccinationRecord[];
   onEditPet: () => void;
-  onGoRecord: () => void;
+  onGoRecord: (dateKey?: string) => void;
   onGoReports: () => void;
 }) {
   const latestRecord = history[0];
@@ -2786,7 +2825,7 @@ function HomeDashboard({
         <Text style={styles.cardText}>
           이름과 종류만 저장하면 바로 기록할 수 있어요.
         </Text>
-        <SecondaryButton label="첫 아이 등록" onPress={onGoRecord} />
+        <SecondaryButton label="첫 아이 등록" onPress={() => onGoRecord()} />
       </View>
     );
   }
@@ -2798,7 +2837,7 @@ function HomeDashboard({
           <Text style={styles.cardTitle}>오늘 상태</Text>
           <TouchableOpacity
             activeOpacity={0.85}
-            onPress={onGoRecord}
+            onPress={() => onGoRecord()}
             style={styles.homePrimaryAction}
           >
             <Text style={styles.homePrimaryActionText}>기록하기</Text>
@@ -3879,6 +3918,7 @@ function ChipGroup<T extends string>({
 
 function HealthRecorder({
   input,
+  recordDateKey,
   loading,
   mediaMessage,
   mediaUploadMessage,
@@ -3899,6 +3939,7 @@ function HealthRecorder({
   onShareVetDraft,
 }: {
   input: HealthCheckInput;
+  recordDateKey: string;
   loading: boolean;
   mediaMessage: string;
   mediaUploadMessage: string;
@@ -3915,7 +3956,7 @@ function HealthRecorder({
   onRemoveMedia: (id: string) => void;
   setInput: (input: HealthCheckInput) => void;
   onSubmit: (overrideInput?: HealthCheckInput) => Promise<void>;
-  onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(isEditing);
@@ -3927,6 +3968,10 @@ function HealthRecorder({
     input.duration === "today" &&
     input.redFlags.length === 0 &&
     !input.note;
+  const recordDateTitle =
+    recordDateKey === toRecordDateKey(new Date())
+      ? "오늘 기록"
+      : `${formatCalendarDate(recordDateKey)} 기록`;
 
   function markAsNormal() {
     const nextInput = resetToNormal(input);
@@ -3941,7 +3986,7 @@ function HealthRecorder({
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>
-        {isEditing ? "기록 수정" : "오늘 기록"}
+        {isEditing ? "기록 수정" : recordDateTitle}
       </Text>
 
       <TouchableOpacity
@@ -4191,7 +4236,7 @@ function HealthResultCard({
   vetDraft?: VetReviewDraft;
   vetDraftLoading: boolean;
   vetDraftNotice: EpisodeNotice | null;
-  onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   const checkScore = displayCheckScore(result.riskScore);
@@ -4246,7 +4291,7 @@ function ResultVetDraftBox({
   vetDraft?: VetReviewDraft;
   vetDraftLoading: boolean;
   vetDraftNotice: EpisodeNotice | null;
-  onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   const canUseAiDraft = Boolean(aiAccess?.enabled);
@@ -4340,6 +4385,48 @@ function ResultVetDraftBox({
   );
 }
 
+const calendarWeekdays = ["일", "월", "화", "수", "목", "금", "토"];
+const calendarRiskWeight: Record<RiskLevel, number> = {
+  watch: 1,
+  soon: 2,
+  urgent: 3,
+};
+
+function calendarDate(dateKey: string) {
+  return new Date(`${dateKey}T12:00:00+09:00`);
+}
+
+function formatCalendarMonth(monthKey: string) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return `${year}년 ${month}월`;
+}
+
+function formatCalendarDate(dateKey: string) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  }).format(calendarDate(dateKey));
+}
+
+function formatCalendarRange(start: string, end: string | null) {
+  if (!end || start === end) return formatCalendarDate(start);
+  const startLabel = new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+  }).format(calendarDate(start));
+  return `${startLabel}–${formatCalendarDate(end)}`;
+}
+
+function highestCalendarRisk(records: HistoryRecord[]) {
+  return records.reduce<RiskLevel | null>((highest, record) => {
+    if (!highest) return record.result.riskLevel;
+    return calendarRiskWeight[record.result.riskLevel] > calendarRiskWeight[highest]
+      ? record.result.riskLevel
+      : highest;
+  }, null);
+}
+
 function HealthHistoryCard({
   aiAccess,
   aiFeedbackDrafts,
@@ -4351,6 +4438,7 @@ function HealthHistoryCard({
   history,
   loading,
   message,
+  petName,
   planDraft,
   planNotice,
   planSavingEpisodeId,
@@ -4392,6 +4480,7 @@ function HealthHistoryCard({
   history: HistoryRecord[];
   loading: boolean;
   message: string;
+  petName: string;
   planDraft: string;
   planNotice: EpisodeNotice;
   planSavingEpisodeId: string | null;
@@ -4411,8 +4500,8 @@ function HealthHistoryCard({
   ) => void;
   onChangePlanDraft: (value: string) => void;
   onChangeProgressDraft: (draft: ProgressDraft | null) => void;
-  onCreateVetDraft: (episodeId: string) => Promise<void>;
-  onGoRecord: () => void;
+  onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
+  onGoRecord: (dateKey?: string) => void;
   onRefresh: () => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
@@ -4430,31 +4519,173 @@ function HealthHistoryCard({
   ) => Promise<void>;
   shareMessage: string;
 }) {
-  const recent = history.slice(0, 5);
-  const shareGroups = useMemo(() => episodeGroups.slice(0, 4), [episodeGroups]);
-  const [expandedReportKey, setExpandedReportKey] = useState<string | null>(null);
-  const [recentOpen, setRecentOpen] = useState(false);
-  const activeReportKey =
-    shareGroups.some((group) => group.key === expandedReportKey)
-        ? expandedReportKey
-        : null;
+  const latestDateKey = toRecordDateKey(history[0]?.result.createdAt ?? new Date());
+  const [calendarMonth, setCalendarMonth] = useState(() =>
+    monthKeyFromDate(history[0]?.result.createdAt ?? new Date()),
+  );
+  const [selectionStart, setSelectionStart] = useState(latestDateKey);
+  const [selectionEnd, setSelectionEnd] = useState<string | null>(latestDateKey);
+  const [rangeMode, setRangeMode] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [draftScope, setDraftScope] = useState<string | null>(null);
+  const todayKey = toRecordDateKey(new Date());
+  const calendarDays = useMemo(
+    () => buildRecordCalendar(calendarMonth),
+    [calendarMonth],
+  );
+  const recordsByDate = useMemo(() => {
+    const grouped = new Map<string, HistoryRecord[]>();
+    for (const record of history) {
+      const key = toRecordDateKey(record.result.createdAt);
+      if (!key) continue;
+      grouped.set(key, [...(grouped.get(key) ?? []), record]);
+    }
+    return grouped;
+  }, [history]);
+  const selectionReady = !rangeMode || Boolean(selectionEnd);
+  const selectedRecords = useMemo(
+    () =>
+      selectionReady
+        ? history.filter((record) =>
+            isRecordDateInRange(
+              toRecordDateKey(record.result.createdAt),
+              selectionStart,
+              selectionEnd,
+            ),
+          )
+        : [],
+    [history, selectionEnd, selectionReady, selectionStart],
+  );
+  const relatedEpisodeGroup = useMemo(() => {
+    const episodeId = selectedRecords[0]?.episodeId;
+    if (!episodeId || selectedRecords.some((record) => record.episodeId !== episodeId)) {
+      return undefined;
+    }
+    return episodeGroups.find((group) => group.episode?.id === episodeId);
+  }, [episodeGroups, selectedRecords]);
+  const fullEpisodeSelection = Boolean(
+    relatedEpisodeGroup &&
+      relatedEpisodeGroup.records.length === selectedRecords.length &&
+      relatedEpisodeGroup.records.every((record) =>
+        selectedRecords.some((selected) => selected.result.id === record.result.id),
+      ),
+  );
+  const selectedGroup = useMemo<EpisodeReportGroup | null>(() => {
+    if (!selectedRecords.length) return null;
+    const plan = fullEpisodeSelection ? relatedEpisodeGroup?.plan : undefined;
+    const selectedProgress = fullEpisodeSelection
+      ? relatedEpisodeGroup?.progress ?? []
+      : [];
+    return {
+      key: `calendar:${selectionStart}:${selectionEnd ?? selectionStart}`,
+      episode: relatedEpisodeGroup?.episode,
+      records: selectedRecords,
+      plan,
+      progress: selectedProgress,
+      report: buildEpisodeReport(selectedRecords, petName, plan, selectedProgress),
+      latestAt: selectedRecords[0]?.result.createdAt ?? "",
+    };
+  }, [
+    fullEpisodeSelection,
+    petName,
+    relatedEpisodeGroup,
+    selectedRecords,
+    selectionEnd,
+    selectionStart,
+  ]);
+  const selectedRisk = highestCalendarRisk(selectedRecords);
+  const cachedVetDraft = selectedGroup?.episode
+    ? vetDrafts[selectedGroup.episode.id]
+    : undefined;
+  const selectedVetDraft =
+    selectedGroup && (fullEpisodeSelection || draftScope === selectedGroup.key)
+      ? cachedVetDraft
+      : undefined;
+  const aiFeedbackDraft = selectedVetDraft?.usageId
+    ? aiFeedbackDrafts[selectedVetDraft.usageId] ?? defaultAiFeedbackDraft
+    : defaultAiFeedbackDraft;
 
-  const getAiFeedbackDraft = (draft?: VetReviewDraft) =>
-    draft?.usageId
-      ? aiFeedbackDrafts[draft.usageId] ?? defaultAiFeedbackDraft
-      : defaultAiFeedbackDraft;
-  const flowTone =
-    flow.trend === "worsening"
-      ? styles.flowCard_worsening
-      : flow.trend === "watch"
-        ? styles.flowCard_watch
-        : styles.flowCard_stable;
+  function selectCalendarDay(dateKey: string) {
+    setCalendarMonth(dateKey.slice(0, 7));
+    setReportOpen(false);
+    if (!rangeMode) {
+      setSelectionStart(dateKey);
+      setSelectionEnd(dateKey);
+      return;
+    }
+    if (!selectionStart || selectionEnd) {
+      setSelectionStart(dateKey);
+      setSelectionEnd(null);
+      return;
+    }
+    const range = normalizeRecordDateRange(selectionStart, dateKey);
+    setSelectionStart(range.start);
+    setSelectionEnd(range.end);
+  }
 
-  if (!history.length) {
+  function toggleRangeMode() {
+    setReportOpen(false);
+    setRangeMode((current) => {
+      if (current) {
+        setSelectionEnd(selectionStart);
+        return false;
+      }
+      setSelectionEnd(null);
+      return true;
+    });
+  }
+
+  async function createSelectedVetDraft(episodeId: string, reportIds?: string[]) {
+    const scope = selectedGroup?.key ?? null;
+    const created = await onCreateVetDraft(episodeId, reportIds);
+    if (created) setDraftScope(scope);
+    return created;
+  }
+
+  if (reportOpen && selectedGroup) {
     return (
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>아직 기록이 없어요</Text>
-        <SecondaryButton label="첫 기록 시작" onPress={onGoRecord} />
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => setReportOpen(false)}
+          style={styles.calendarReportBack}
+        >
+          <Text style={styles.calendarReportBackText}>‹ 달력으로</Text>
+        </TouchableOpacity>
+        <EpisodeReportItem
+          aiAccess={aiAccess}
+          aiFeedbackDraft={aiFeedbackDraft}
+          aiFeedbackNotice={aiFeedbackNotice}
+          aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
+          editingPlanEpisodeId={editingPlanEpisodeId}
+          group={selectedGroup}
+          planDraft={planDraft}
+          planNotice={planNotice}
+          planSavingEpisodeId={planSavingEpisodeId}
+          planTogglingTaskId={planTogglingTaskId}
+          progressDraft={progressDraft}
+          progressNotice={progressNotice}
+          progressSavingKey={progressSavingKey}
+          vetDraft={selectedVetDraft}
+          vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
+          vetDraftNotice={vetDraftNotice}
+          savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
+          onCancelPlanEdit={onCancelPlanEdit}
+          onCancelProgressEdit={onCancelProgressEdit}
+          onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
+          onChangePlanDraft={onChangePlanDraft}
+          onChangeProgressDraft={onChangeProgressDraft}
+          onCreateVetDraft={createSelectedVetDraft}
+          onSaveAiFeedback={onSaveAiFeedback}
+          onSavePlan={onSavePlan}
+          onSaveProgress={onSaveProgress}
+          onShareReport={onShareReport}
+          onShareVetDraft={onShareVetDraft}
+          onStartPlanEdit={onStartPlanEdit}
+          onStartProgressEdit={onStartProgressEdit}
+          onTogglePlanTask={onTogglePlanTask}
+        />
+        <Message text={shareMessage} tone="success" />
       </View>
     );
   }
@@ -4463,7 +4694,12 @@ function HealthHistoryCard({
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>건강 흐름</Text>
+          <Text style={styles.cardTitle}>기록 달력</Text>
+          <Text style={styles.calendarFlowSummary}>
+            {history.length
+              ? `최근 14일 ${flow.recordCount}회 · ${flow.headline}`
+              : "오늘 기록부터 시작해요."}
+          </Text>
         </View>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -4471,85 +4707,143 @@ function HealthHistoryCard({
           onPress={() => void onRefresh()}
           style={[styles.smallButton, loading && styles.buttonDisabled]}
         >
-          <Text style={styles.smallButtonText}>
-            {loading ? "확인 중" : "새로고침"}
+          <Text style={styles.smallButtonText}>{loading ? "확인 중" : "새로고침"}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.recordCalendarBox}>
+        <View style={styles.recordCalendarHeader}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setCalendarMonth((current) => shiftRecordMonth(current, -1))}
+            style={styles.recordCalendarMonthButton}
+          >
+            <Text style={styles.recordCalendarMonthButtonText}>‹</Text>
+          </TouchableOpacity>
+          <Text style={styles.recordCalendarMonth}>{formatCalendarMonth(calendarMonth)}</Text>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setCalendarMonth((current) => shiftRecordMonth(current, 1))}
+            style={styles.recordCalendarMonthButton}
+          >
+            <Text style={styles.recordCalendarMonthButtonText}>›</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.recordCalendarWeekRow}>
+          {calendarWeekdays.map((day) => (
+            <Text key={day} style={styles.recordCalendarWeekday}>{day}</Text>
+          ))}
+        </View>
+        <View style={styles.recordCalendarGrid}>
+          {calendarDays.map((day) => {
+            const dayRecords = recordsByDate.get(day.dateKey) ?? [];
+            const dayRisk = highestCalendarRisk(dayRecords);
+            const selected = isRecordDateInRange(
+              day.dateKey,
+              selectionStart,
+              selectionEnd,
+            );
+            const edge = day.dateKey === selectionStart || day.dateKey === selectionEnd;
+            return (
+              <View key={day.dateKey} style={styles.recordCalendarDaySlot}>
+                <TouchableOpacity
+                  activeOpacity={0.82}
+                  onPress={() => selectCalendarDay(day.dateKey)}
+                  style={[
+                    styles.recordCalendarDay,
+                    selected && styles.recordCalendarDaySelected,
+                    edge && styles.recordCalendarDayEdge,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.recordCalendarDayText,
+                      !day.inCurrentMonth && styles.recordCalendarDayTextOutside,
+                      selected && styles.recordCalendarDayTextSelected,
+                      day.dateKey === todayKey && styles.recordCalendarDayTextToday,
+                    ]}
+                  >
+                    {day.day}
+                  </Text>
+                  {dayRecords.length ? (
+                    <View
+                      style={[
+                        styles.recordCalendarMark,
+                        dayRisk === "soon" && styles.recordCalendarMarkSoon,
+                        dayRisk === "urgent" && styles.recordCalendarMarkUrgent,
+                      ]}
+                    >
+                      {dayRecords.length > 1 ? (
+                        <Text style={styles.recordCalendarMarkText}>{dayRecords.length}</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.calendarSelectionHeader}>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.calendarSelectionMode}>
+            {rangeMode ? "기간 선택" : "선택한 날짜"}
+          </Text>
+          <Text style={styles.calendarSelectionTitle}>
+            {formatCalendarRange(selectionStart, selectionEnd)}
+          </Text>
+          <Text style={styles.calendarSelectionMeta}>
+            {rangeMode && !selectionEnd
+              ? "종료일을 눌러 주세요."
+              : `${selectedRecords.length}개 기록${selectedRisk ? ` · ${riskLabels[selectedRisk]}` : ""}`}
+          </Text>
+        </View>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={toggleRangeMode}
+          style={styles.calendarRangeButton}
+        >
+          <Text style={styles.calendarRangeButtonText}>
+            {rangeMode ? "날짜 보기" : "기간 선택"}
           </Text>
         </TouchableOpacity>
       </View>
 
-      <View style={[styles.flowCard, flowTone]}>
-        <Text style={styles.flowWindow}>최근 14일 · {flow.recordCount}회</Text>
-        <Text style={styles.flowTitle}>{flow.headline}</Text>
+      <View style={styles.calendarActionRow}>
+        {!rangeMode ? (
+          <TouchableOpacity
+            activeOpacity={0.86}
+            disabled={selectionStart > todayKey}
+            onPress={() => onGoRecord(selectionStart)}
+            style={[
+              styles.calendarPrimaryAction,
+              selectionStart > todayKey && styles.buttonDisabled,
+            ]}
+          >
+            <Text style={styles.calendarPrimaryActionText}>
+              + {selectionStart === todayKey ? "오늘 기록" : "기록 추가"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          activeOpacity={0.86}
+          disabled={!selectionReady || !selectedGroup}
+          onPress={() => setReportOpen(true)}
+          style={[
+            styles.calendarSecondaryAction,
+            (!selectionReady || !selectedGroup) && styles.buttonDisabled,
+          ]}
+        >
+          <Text style={styles.calendarSecondaryActionText}>
+            {selectedGroup?.episode ? "요약 · AI" : "선택 요약"}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <Message text={message} />
-
-      {shareGroups.length ? (
-        <View style={styles.episodeList}>
-          {shareGroups.map((group) => {
-            const expanded = activeReportKey === group.key;
-            return (
-              <EpisodeReportItem
-                aiAccess={aiAccess}
-                aiFeedbackDraft={getAiFeedbackDraft(
-                  group.episode ? vetDrafts[group.episode.id] : undefined,
-                )}
-                aiFeedbackNotice={aiFeedbackNotice}
-                aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
-                editingPlanEpisodeId={editingPlanEpisodeId}
-                expanded={expanded}
-                group={group}
-                key={group.key}
-                planDraft={planDraft}
-                planNotice={planNotice}
-                planSavingEpisodeId={planSavingEpisodeId}
-                planTogglingTaskId={planTogglingTaskId}
-                progressDraft={progressDraft}
-                progressNotice={progressNotice}
-                progressSavingKey={progressSavingKey}
-                vetDraft={group.episode ? vetDrafts[group.episode.id] : undefined}
-                vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
-                vetDraftNotice={vetDraftNotice}
-                savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
-                onCancelPlanEdit={onCancelPlanEdit}
-                onCancelProgressEdit={onCancelProgressEdit}
-                onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
-                onChangePlanDraft={onChangePlanDraft}
-                onChangeProgressDraft={onChangeProgressDraft}
-                onCreateVetDraft={onCreateVetDraft}
-                onSaveAiFeedback={onSaveAiFeedback}
-                onSavePlan={onSavePlan}
-                onSaveProgress={onSaveProgress}
-                onShareReport={onShareReport}
-                onShareVetDraft={onShareVetDraft}
-                onStartPlanEdit={onStartPlanEdit}
-                onStartProgressEdit={onStartProgressEdit}
-                onTogglePlanTask={onTogglePlanTask}
-                onToggleReport={() =>
-                  setExpandedReportKey(expanded ? null : group.key)
-                }
-              />
-            );
-          })}
-        </View>
-      ) : (
-        <Text style={styles.emptyText}>아직 기록이 없어요.</Text>
-      )}
-      <Message text={shareMessage} tone="success" />
-
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onPress={() => setRecentOpen((current) => !current)}
-        style={styles.compactSectionToggle}
-      >
-        <Text style={styles.compactSectionToggleTitle}>최근 기록 {history.length}회</Text>
-        <Text style={styles.compactSectionToggleAction}>
-          {recentOpen ? "접기" : "보기"}
-        </Text>
-      </TouchableOpacity>
-      {recentOpen && recent.length ? (
+      {!rangeMode && selectedRecords.length ? (
         <View style={styles.historyList}>
-          {recent.map((record) => (
+          {selectedRecords.map((record) => (
             <HistoryRecordItem
               key={record.result.id}
               record={record}
@@ -4558,7 +4852,11 @@ function HealthHistoryCard({
             />
           ))}
         </View>
+      ) : !rangeMode ? (
+        <Text style={styles.calendarEmptyText}>이 날짜에는 기록이 없어요.</Text>
       ) : null}
+      <Message text={message} />
+      <Message text={shareMessage} tone="success" />
     </View>
   );
 }
@@ -4569,7 +4867,6 @@ function EpisodeReportItem({
   aiFeedbackNotice,
   aiFeedbackSavingUsageId,
   editingPlanEpisodeId,
-  expanded,
   group,
   planDraft,
   planNotice,
@@ -4596,14 +4893,12 @@ function EpisodeReportItem({
   onStartPlanEdit,
   onStartProgressEdit,
   onTogglePlanTask,
-  onToggleReport,
 }: {
   aiAccess: AiAccessStatus | null;
   aiFeedbackDraft: AiFeedbackDraft;
   aiFeedbackNotice: EpisodeNotice;
   aiFeedbackSavingUsageId: string | null;
   editingPlanEpisodeId: string | null;
-  expanded: boolean;
   group: EpisodeReportGroup;
   planDraft: string;
   planNotice: EpisodeNotice;
@@ -4624,7 +4919,7 @@ function EpisodeReportItem({
   ) => void;
   onChangePlanDraft: (value: string) => void;
   onChangeProgressDraft: (draft: ProgressDraft | null) => void;
-  onCreateVetDraft: (episodeId: string) => Promise<void>;
+  onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
   onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onSaveProgress: () => Promise<void>;
@@ -4637,7 +4932,6 @@ function EpisodeReportItem({
     taskId: string,
     completed: boolean,
   ) => Promise<void>;
-  onToggleReport: () => void;
 }) {
   const episodeId = group.episode?.id;
   const isOpen = group.episode?.status === "open";
@@ -4695,19 +4989,9 @@ function EpisodeReportItem({
             {group.report.highestRiskLabel}
           </Text>
         </View>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={onToggleReport}
-          style={styles.episodeToggleButton}
-        >
-          <Text style={styles.episodeToggleButtonText}>
-            {expanded ? "접기" : "보기"}
-          </Text>
-        </TouchableOpacity>
       </View>
 
-      {expanded ? (
-        <>
+      <>
           <View style={styles.episodeExpandedActions}>
             <Text style={styles.episodeExpandedMeta} numberOfLines={1}>
               {planSummary} · 경과 {initialProgressCount + longTermProgressCount}회 · {mediaSummary}
@@ -5047,7 +5331,12 @@ function EpisodeReportItem({
                 <TouchableOpacity
                   activeOpacity={0.85}
                   disabled={isCreatingVetDraft}
-                  onPress={() => void onCreateVetDraft(episodeId)}
+                  onPress={() =>
+                    void onCreateVetDraft(
+                      episodeId,
+                      group.records.map((record) => record.result.id),
+                    )
+                  }
                   style={[
                     styles.vetDraftPrimaryButton,
                     isCreatingVetDraft && styles.buttonDisabled,
@@ -5186,8 +5475,7 @@ function EpisodeReportItem({
             </Text>
           </View>
           <Text style={styles.disclaimer}>{group.report.disclaimer}</Text>
-        </>
-      ) : null}
+      </>
     </View>
   );
 }
@@ -6900,45 +7188,225 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     lineHeight: 17,
   },
-  flowCard: {
+  calendarFlowSummary: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  recordCalendarBox: {
     marginTop: 14,
     borderWidth: 1,
-    borderRadius: 22,
-    padding: 15,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: "#fbfefd",
+    paddingHorizontal: 8,
+    paddingVertical: 12,
   },
-  flowCard_stable: {
-    borderColor: "#bfe5d1",
-    backgroundColor: "#f3fbf6",
+  recordCalendarHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 5,
+    marginBottom: 10,
   },
-  flowCard_watch: {
-    borderColor: "#f1d08b",
-    backgroundColor: "#fff8eb",
+  recordCalendarMonthButton: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
   },
-  flowCard_worsening: {
-    borderColor: "#e9a99a",
-    backgroundColor: "#fff0ec",
+  recordCalendarMonthButtonText: {
+    color: colors.ink,
+    fontSize: 24,
+    fontWeight: "700",
+    lineHeight: 27,
   },
-  flowWindow: {
-    alignSelf: "flex-start",
-    overflow: "hidden",
+  recordCalendarMonth: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  recordCalendarWeekRow: {
+    flexDirection: "row",
+    marginBottom: 3,
+  },
+  recordCalendarWeekday: {
+    width: "14.2857%",
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  recordCalendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  recordCalendarDaySlot: {
+    width: "14.2857%",
+    padding: 2,
+  },
+  recordCalendarDay: {
+    position: "relative",
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+  },
+  recordCalendarDaySelected: {
+    borderRadius: 0,
+    backgroundColor: "#eef8f3",
+  },
+  recordCalendarDayEdge: {
+    borderWidth: 1,
+    borderColor: "#b9dfce",
+    borderRadius: 12,
+    backgroundColor: colors.greenSoft,
+  },
+  recordCalendarDayText: {
+    minWidth: 25,
+    height: 25,
+    color: colors.ink,
+    fontSize: 11,
+    fontWeight: "800",
+    lineHeight: 25,
+    textAlign: "center",
+  },
+  recordCalendarDayTextOutside: {
+    color: "#b5c0bc",
+  },
+  recordCalendarDayTextSelected: {
+    color: colors.green,
+  },
+  recordCalendarDayTextToday: {
+    borderWidth: 1,
+    borderColor: "#79bea1",
     borderRadius: 999,
-    backgroundColor: colors.ink,
+  },
+  recordCalendarMark: {
+    position: "absolute",
+    bottom: 3,
+    minWidth: 7,
+    height: 7,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 2,
+    borderRadius: 999,
+    backgroundColor: "#54b78c",
+  },
+  recordCalendarMarkSoon: {
+    backgroundColor: "#d19b54",
+  },
+  recordCalendarMarkUrgent: {
+    backgroundColor: "#ce7068",
+  },
+  recordCalendarMarkText: {
     color: "#ffffff",
+    fontSize: 7,
+    fontWeight: "900",
+    lineHeight: 8,
+  },
+  calendarSelectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 15,
+  },
+  calendarSelectionMode: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  calendarSelectionTitle: {
+    marginTop: 5,
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  calendarSelectionMeta: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  calendarRangeButton: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  calendarRangeButtonText: {
+    color: colors.green,
     fontSize: 11,
     fontWeight: "900",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
   },
-  flowTitle: {
-    marginTop: 10,
-    color: colors.ink,
-    fontSize: 18,
+  calendarActionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+  calendarPrimaryAction: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 15,
+    backgroundColor: colors.green,
+  },
+  calendarPrimaryActionText: {
+    color: "#ffffff",
+    fontSize: 13,
     fontWeight: "900",
-    lineHeight: 24,
   },
-  episodeList: {
-    gap: 12,
+  calendarSecondaryAction: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: "#ffffff",
+  },
+  calendarSecondaryActionText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  calendarEmptyText: {
     marginTop: 12,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: colors.line,
+    borderRadius: 15,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    padding: 15,
+    textAlign: "center",
+  },
+  calendarReportBack: {
+    alignSelf: "flex-start",
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  calendarReportBackText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
   },
   episodeItem: {
     borderWidth: 1,
@@ -6978,19 +7446,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
   },
-  episodeToggleButton: {
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-  },
-  episodeToggleButtonText: {
-    color: colors.green,
-    fontSize: 12,
-    fontWeight: "900",
-  },
   episodeShareButton: {
     borderRadius: 999,
     backgroundColor: colors.green,
@@ -7015,30 +7470,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 11,
     fontWeight: "800",
-  },
-  compactSectionToggle: {
-    minHeight: 48,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 16,
-    backgroundColor: "#fbfefd",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  compactSectionToggleTitle: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  compactSectionToggleAction: {
-    color: colors.green,
-    fontSize: 11,
-    fontWeight: "900",
   },
   planBox: {
     marginTop: 13,

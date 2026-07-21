@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { accessTokenFromRequest } from "@/lib/api-auth";
 import { analyzeLocally, isHealthCheckInput } from "@/lib/analysis";
 import { extractResponseOutputText } from "@/lib/openai-response";
+import { recordDateKeyToIso } from "@/lib/record-calendar";
 import { getReportOwner, saveHealthReport } from "@/lib/supabase-admin";
 import type { AnalysisResult, HealthCheckInput } from "@/lib/types";
 
@@ -125,7 +126,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const localResult = analyzeLocally(body);
+  const observedDate = request.headers.get("x-petflow-observed-date")?.trim();
+  const observedAt = observedDate ? recordDateKeyToIso(observedDate) : null;
+  if (observedDate && !observedAt) {
+    return NextResponse.json(
+      { error: "기록 날짜를 다시 확인해 주세요." },
+      { status: 400 },
+    );
+  }
+
+  const analyzed = analyzeLocally(body);
+  const localResult = observedAt
+    ? { ...analyzed, createdAt: observedAt }
+    : analyzed;
   const result = await enrichWithOpenAI(body, localResult);
   const clientId = request.headers.get("x-petflow-client-id");
   const isTest = request.headers.get("x-petflow-test") === "true";
