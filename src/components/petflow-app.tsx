@@ -3529,9 +3529,8 @@ export function PetFlowApp() {
   }, [appNotice]);
 
   useEffect(() => {
-    if (isView(window.history.state?.petflowView)) {
-      currentViewRef.current = window.history.state.petflowView;
-    } else {
+    currentViewRef.current = "home";
+    if (window.history.state?.petflowView !== "home") {
       window.history.replaceState({ petflowView: "home" }, "", window.location.href);
     }
     function handlePopState(event: PopStateEvent) {
