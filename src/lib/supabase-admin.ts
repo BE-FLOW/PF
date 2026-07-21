@@ -859,6 +859,27 @@ export async function deleteHealthReport(
   }
 }
 
+export async function deleteAnonymousTestReport(
+  reportId: string | null,
+): Promise<boolean> {
+  if (!isUuid(reportId)) return false;
+
+  try {
+    const response = await supabaseRequest(
+      `health_reports?id=eq.${reportId}&user_id=is.null&is_test=eq.true&select=id`,
+      {
+        method: "DELETE",
+        headers: { Prefer: "return=representation" },
+      },
+    );
+    if (!response?.ok) return false;
+    const rows = (await response.json()) as Array<{ id: string }>;
+    return rows.some((row) => row.id === reportId);
+  } catch {
+    return false;
+  }
+}
+
 export async function getReportOwner(
   accessToken: string | null,
   petId: string | null,

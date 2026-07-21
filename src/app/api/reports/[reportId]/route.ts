@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { accessTokenFromRequest } from "@/lib/api-auth";
 import { analyzeLocally, isHealthCheckInput } from "@/lib/analysis";
 import {
+  deleteAnonymousTestReport,
   deleteHealthReport,
   updateHealthReport,
 } from "@/lib/supabase-admin";
@@ -72,10 +73,10 @@ export async function DELETE(
   context: { params: Promise<{ reportId: string }> },
 ) {
   const { reportId } = await context.params;
-  const deleted = await deleteHealthReport(
-    accessTokenFromRequest(request),
-    reportId,
-  );
+  const deleted =
+    request.headers.get("x-petflow-test") === "true"
+      ? await deleteAnonymousTestReport(reportId)
+      : await deleteHealthReport(accessTokenFromRequest(request), reportId);
 
   if (!deleted) {
     return NextResponse.json(

@@ -66,6 +66,15 @@ if (!feedback.saved) {
   throw new Error("Feedback endpoint did not persist the test feedback.");
 }
 
+const cleanup = await readJson(`/api/reports/${analysis.id}`, {
+  method: "DELETE",
+  headers: { "x-petflow-test": "true" },
+});
+
+if (!cleanup.deleted) {
+  throw new Error("Deployment test data was not cleaned up.");
+}
+
 console.log(
   JSON.stringify(
     {
