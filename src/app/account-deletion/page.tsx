@@ -30,7 +30,7 @@ export default function AccountDeletionPage() {
             <li>로그인 계정, 이메일, 닉네임, 휴대전화번호, 동의 기록</li>
             <li>반려동물 프로필, 건강 기록, 사진과 동영상 첨부 파일</li>
             <li>병원 공유용 요약, 경과 기록, 계획 체크 항목</li>
-            <li>GPT AI 리포트 권한, 사용량, 피드백, 계정 삭제 요청 기록</li>
+            <li>AI 병원 요약 사용량, 피드백, 계정 삭제 요청 기록</li>
           </ul>
         </section>
 

@@ -7,7 +7,7 @@ export default function PrivacyPage() {
       <div className="privacy-sheet">
         <p className="eyebrow">PETFLOW PRIVACY</p>
         <h1>개인정보 안내</h1>
-        <p>시행일: 2026년 6월 15일</p>
+        <p>시행일: 2026년 7월 21일</p>
 
         <section>
           <h2>수집 정보</h2>
@@ -34,6 +34,11 @@ export default function PrivacyPage() {
         <section>
           <h2>외부 서비스</h2>
           <p>계정과 데이터는 Supabase, 웹 배포는 Vercel을 사용합니다. 입력한 자유 메모와 반려동물 이름은 분석 통계 테이블에 저장하지 않습니다.</p>
+          <p>
+            사용자가 AI 병원 요약 만들기를 누르면 같은 건강 흐름의 구조화 기록을
+            OpenAI API에 전송해 요약합니다. 요청에는 저장 비활성화 설정을 사용하며,
+            생성된 요약 원문은 PetFlow 서버에 별도로 저장하지 않습니다.
+          </p>
         </section>
 
         <div className="privacy-actions">

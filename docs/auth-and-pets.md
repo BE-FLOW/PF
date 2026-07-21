@@ -49,28 +49,29 @@ PetFlow 안에서 수의사가 확인한 정보로 표시하지 않는다.
 `account_deletion_requests`에 저장하며 브라우저에서 직접 접근할 수 없다. 운영자는
 `account_deletion_management`에서 요청자 이메일, 닉네임, 전화번호를 확인한 뒤
 Supabase Authentication에서 Auth 사용자를 삭제한다. Auth 사용자 삭제 시 연결된
-테스터 정보, 반려동물, 사건, 기록, 계획, 경과, GPT 권한과 피드백은 cascade로 함께
+테스터 정보, 반려동물, 사건, 기록, 계획, 경과, AI 요약 사용량과 피드백은 cascade로 함께
 삭제된다.
 
-## GPT 리포트 권한과 참여코드
+## AI 병원 요약과 추가 사용 코드
 
-수의사 검토용 GPT 리포트는 로그인만으로 열지 않는다. 관리자가 Supabase SQL
-Editor에서 `create_ai_access_code(...)`를 실행해 참여코드를 만들고, 승인된
-테스터가 계정 화면에 코드를 입력하면 `ai_access_grants`에 권한을 저장한다.
-참여코드는 테스터 키처럼 운영한다. 원문 코드는 생성 직후 한 번만 공유하고,
-DB에는 해시와 앞 6자리 prefix만 남긴다.
+수의사 검토용 AI 요약은 모든 로그인 사용자에게 월 기본 사용량을 제공한다.
+`AI_REPORT_MONTHLY_LIMIT`이 없으면 월 5회이며, 생성 권한과 기록 소유권은 서버에서
+확인한다. 관리자는 `create_ai_access_code(...)`로 추가 사용 코드를 발급할 수 있고,
+사용자가 계정 화면에서 적용하면 `ai_access_grants`에 추가 사용권을 저장한다. 코드
+원문은 생성 직후 한 번만 공유하고 DB에는 해시와 앞 6자리 prefix만 남긴다.
 
 키마다 다음 값을 다르게 줄 수 있다.
 
 - `target_label`: 파일럿 그룹, 병원, 내부 리뷰어 등 운영용 이름
 - `target_max_redemptions`: 몇 명까지 같은 키를 사용할 수 있는지
-- `target_monthly_report_limit`: 사용자별 월간 GPT 초안 생성 횟수
+- `target_monthly_report_limit`: 코드로 추가되는 월간 AI 요약 횟수
 - `target_total_report_limit`: 사용자별 전체 생성 횟수
 - `target_expires_at`: 만료일
 - `disabled_at`: 회수 또는 일시 중지
 
-권한이 있는 테스터만 사건별 GPT 리포트 API를 호출할 수 있다. 생성 시
+로그인 사용자는 자신이 소유한 사건의 AI 요약 API만 호출할 수 있다. 생성 시
 `ai_report_usage`에 성공·실패, 모델, 토큰 사용량과 선택적 비용 추정값을 남긴다.
-리포트 원문은 저장하지 않는다. 생성 후 테스터가 남기는 유용성 점수, 지불의향,
+리포트 원문은 저장하지 않으며 OpenAI Responses 요청에는 `store: false`를 사용한다.
+생성 후 사용자가 남기는 유용성 점수, 지불의향,
 희망 가격, 짧은 의견은 웹과 모바일 모두 `/api/ai-report-feedback`를 통해
 `ai_report_feedback`에 저장해 파일럿 판단에 사용한다.

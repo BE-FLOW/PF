@@ -125,19 +125,22 @@ function PrivacyNotice() {
 }
 
 function aiAccessCopy(access: AiAccessStatus | null) {
-  if (!access || access.reason === "no_code") {
-    return "참여코드를 입력하면 수의사 검토용 GPT 초안을 만들 수 있어요.";
+  if (!access) {
+    return "AI 요약 사용량을 확인하고 있어요.";
+  }
+  if (access.reason === "unavailable") {
+    return "사용량을 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
   if (access.reason === "monthly_limit") {
-    return "이번 달 GPT 초안 사용량을 모두 사용했어요.";
+    return "이번 달 AI 요약 사용량을 모두 사용했어요.";
   }
   if (access.reason === "total_limit") {
-    return "이 참여코드의 전체 GPT 초안 사용량을 모두 사용했어요.";
+    return "추가 사용 코드의 전체 사용량을 모두 사용했어요.";
   }
   if (access.reason === "revoked") {
-    return "이 참여코드는 현재 사용할 수 없어요.";
+    return "추가 사용 코드가 만료됐어요.";
   }
-  return "수의사 검토용 GPT 초안을 만들 수 있어요.";
+  return "기록을 수의사가 보기 좋은 병원용 요약으로 정리해요.";
 }
 
 export function AccountView({
@@ -209,6 +212,7 @@ export function AccountView({
     defaultOAuthProviderStatus,
   );
   const [aiCode, setAiCode] = useState("");
+  const [showAiCode, setShowAiCode] = useState(false);
   const [aiCodeSaving, setAiCodeSaving] = useState(false);
   const [aiCodeMessage, setAiCodeMessage] = useState("");
   const [deletionSaving, setDeletionSaving] = useState(false);
@@ -299,20 +303,23 @@ export function AccountView({
 
   async function redeemAiCode() {
     if (!aiCode.trim()) {
-      setAiCodeMessage("참여코드를 입력해 주세요.");
+      setAiCodeMessage("추가 사용 코드를 입력해 주세요.");
       return;
     }
     setAiCodeSaving(true);
     const result = await onRedeemAiCode(aiCode);
     setAiCodeSaving(false);
-    setAiCodeMessage(result || "참여코드가 등록됐어요.");
-    if (!result) setAiCode("");
+    setAiCodeMessage(result || "추가 사용 코드가 적용됐어요.");
+    if (!result) {
+      setAiCode("");
+      setShowAiCode(false);
+    }
   }
 
   async function requestDeletion() {
     if (deletionRequested) return;
     const confirmed = window.confirm(
-      "계정, 함께하는 아이들, 건강 기록, 사진·영상, GPT 권한이 삭제됩니다. 이 작업은 되돌리기 어려워요. 계속할까요?",
+      "계정, 함께하는 아이들, 건강 기록, 사진·영상, AI 요약 기록이 삭제됩니다. 이 작업은 되돌리기 어려워요. 계속할까요?",
     );
     if (!confirmed) return;
 
@@ -430,14 +437,20 @@ export function AccountView({
           <section className={`panel ai-access-panel ${aiAccess?.enabled ? "enabled" : ""}`}>
             <div className="panel-head">
               <div>
-                <h3>GPT 초안 권한</h3>
+                <h3>AI 병원 요약</h3>
                 <p>{aiAccessCopy(aiAccess)}</p>
               </div>
               <span className={`ai-access-state ${aiAccess?.enabled ? "enabled" : ""}`}>
-                {aiAccess?.enabled ? "사용 가능" : "코드 필요"}
+                {!aiAccess
+                  ? "확인 중"
+                  : aiAccess.enabled
+                    ? "사용 가능"
+                    : aiAccess.reason === "monthly_limit"
+                      ? "이번 달 완료"
+                      : "확인 필요"}
               </span>
             </div>
-            {aiAccess?.enabled ? (
+            {aiAccess && aiAccess.reason !== "unavailable" && (
               <div className="ai-usage-row">
                 <div>
                   <span>이번 달</span>
@@ -446,39 +459,54 @@ export function AccountView({
                   </strong>
                 </div>
                 <div>
-                  <span>전체</span>
-                  <strong>
-                    {aiAccess.usedTotal}
-                    {aiAccess.totalReportLimit ? `/${aiAccess.totalReportLimit}` : ""}회
-                  </strong>
+                  <span>남은 요약</span>
+                  <strong>{aiAccess.remainingThisMonth}회</strong>
                 </div>
                 <div>
-                  <span>코드 그룹</span>
-                  <strong>{aiAccess.codeLabel ?? "사용자"}</strong>
+                  <span>이용 방식</span>
+                  <strong>
+                    {aiAccess.accessMode === "code"
+                      ? aiAccess.codeLabel ?? "추가 사용권"
+                      : "기본 제공"}
+                  </strong>
                 </div>
               </div>
-            ) : (
-              <div className="ai-code-form">
-                <input
-                  value={aiCode}
-                  onChange={(event) => {
-                    setAiCode(event.target.value.toUpperCase());
-                    setAiCodeMessage("");
-                  }}
-                  placeholder="PF-ABCD-1234-EFGH"
-                  autoComplete="off"
-                />
-                <button
-                  className="primary-button compact"
-                  onClick={redeemAiCode}
-                  disabled={aiCodeSaving}
-                >
-                  {aiCodeSaving ? "확인 중..." : "참여코드 등록"}
-                </button>
-              </div>
             )}
+            <div className="ai-extra-code">
+              <button
+                type="button"
+                className="ai-extra-code-toggle"
+                onClick={() => setShowAiCode((current) => !current)}
+              >
+                <span>추가 사용 코드</span>
+                <span>{showAiCode ? "접기" : "열기"}</span>
+              </button>
+              {showAiCode && (
+                <>
+                  <p>운영자가 발급한 코드가 있을 때만 입력해 주세요.</p>
+                  <div className="ai-code-form">
+                    <input
+                      value={aiCode}
+                      onChange={(event) => {
+                        setAiCode(event.target.value.toUpperCase());
+                        setAiCodeMessage("");
+                      }}
+                      placeholder="PF-ABCD-1234-EFGH"
+                      autoComplete="off"
+                    />
+                    <button
+                      className="primary-button compact"
+                      onClick={redeemAiCode}
+                      disabled={aiCodeSaving}
+                    >
+                      {aiCodeSaving ? "확인 중..." : "코드 적용"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             {aiCodeMessage && (
-              <p className={aiCodeMessage.includes("등록") ? "form-success" : "form-error"} role="alert">
+              <p className={aiCodeMessage.includes("적용됐어요") ? "form-success" : "form-error"} role="alert">
                 {aiCodeMessage}
               </p>
             )}
@@ -488,8 +516,8 @@ export function AccountView({
             <div>
               <h3>계정 탈퇴</h3>
               <p>
-                탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, GPT
-                권한이 삭제되고 현재 기기에서 로그아웃합니다.
+                탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, AI 요약
+                이용 기록이 삭제되고 현재 기기에서 로그아웃합니다.
               </p>
             </div>
             <button

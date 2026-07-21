@@ -1984,11 +1984,15 @@ function ResultView({
   }
   async function createResultVetDraft() {
     if (!record.episodeId) {
-      setVetDraftError("계정에 연결된 Episode 기록에서만 GPT 초안을 만들 수 있어요.");
+      setVetDraftError("계정에 연결된 건강 기록에서만 AI 요약을 만들 수 있어요.");
       return;
     }
     if (!canUseAiReport) {
-      setVetDraftError("참여코드를 등록한 계정만 GPT 초안을 만들 수 있어요.");
+      setVetDraftError(
+        aiAccess?.reason === "monthly_limit"
+          ? "이번 달 AI 요약 사용량을 모두 사용했어요."
+          : "AI 요약 사용량을 확인하지 못했어요.",
+      );
       return;
     }
     setVetDraftState("loading");
@@ -1996,7 +2000,7 @@ function ResultView({
     const payload = await onCreateVetDraft(record.episodeId);
     if (!payload.draft) {
       setVetDraftState("failed");
-      setVetDraftError(payload.error ?? "수의사 검토용 GPT 초안을 만들지 못했어요.");
+      setVetDraftError(payload.error ?? "AI 병원 요약을 만들지 못했어요.");
       return;
     }
     setVetDraft(payload.draft);
@@ -2009,7 +2013,7 @@ function ResultView({
       setVetDraftState("copied");
     } catch {
       setVetDraftState("failed");
-      setVetDraftError("GPT 초안을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
+      setVetDraftError("AI 요약을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
     }
   }
   return (
@@ -2145,7 +2149,7 @@ function ResultView({
               <div>
                 <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
                 <h3>
-                  <Icon name="spark" size={18} /> 수의사 검토용 GPT 초안
+                  <Icon name="spark" size={18} /> AI 병원 요약
                 </h3>
                 <p>
                   이 기록이 연결된 같은 Episode의 관찰, 병원 안내, 경과를 수의사가 보기
@@ -2153,29 +2157,35 @@ function ResultView({
                 </p>
               </div>
               <span className="vet-draft-badge">
-                {canUseAiReport ? "코드 확인됨" : "코드 필요"}
+                {canUseAiReport
+                  ? `${aiAccess?.remainingThisMonth ?? 0}회 남음`
+                  : aiAccess?.reason === "monthly_limit"
+                    ? "이번 달 완료"
+                    : "확인 필요"}
               </span>
             </div>
             {!record.episodeId ? (
               <p className="plan-empty">
-                서버에 저장되고 Episode에 연결된 기록에서만 GPT 초안을 만들 수 있어요.
+                서버에 저장되고 같은 건강 흐름에 연결된 기록에서 만들 수 있어요.
               </p>
             ) : !canUseAiReport ? (
               <div className="vet-draft-locked">
-                <strong>참여코드를 등록한 계정에서 GPT 초안을 만들 수 있어요.</strong>
+                <strong>
+                  {aiAccess?.reason === "monthly_limit"
+                    ? "이번 달 AI 요약 사용량을 모두 사용했어요."
+                    : "AI 요약 사용량을 확인하지 못했어요."}
+                </strong>
                 <p>
                   {aiAccess?.reason === "monthly_limit"
-                    ? "이번 달 GPT 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
-                    : aiAccess?.reason === "total_limit"
-                      ? "이 참여코드의 전체 GPT 사용량을 모두 사용했어요."
-                      : "계정 화면에서 참여코드를 입력하면 수의사 검토용 초안을 만들 수 있어요."}
+                    ? "다음 달에 다시 이용하거나 추가 사용 코드를 적용할 수 있어요."
+                    : "잠시 후 다시 시도해 주세요."}
                 </p>
                 <button
                   type="button"
                   className="secondary-button compact"
                   onClick={onOpenAccount}
                 >
-                  참여코드 입력하기
+                  추가 사용 코드
                 </button>
               </div>
             ) : (
@@ -2191,8 +2201,8 @@ function ResultView({
                     {vetDraftState === "loading"
                       ? "초안 만드는 중..."
                       : vetDraft
-                        ? "GPT 초안 다시 만들기"
-                        : "GPT 초안 만들기"}
+                      ? "AI 요약 다시 만들기"
+                      : "AI 요약 만들기"}
                   </button>
                   {vetDraft && (
                     <button
@@ -2201,14 +2211,14 @@ function ResultView({
                       onClick={copyResultVetDraft}
                     >
                       <Icon name={vetDraftState === "copied" ? "check" : "copy"} size={14} />
-                      {vetDraftState === "copied" ? "초안 복사 완료" : "초안 전체 복사"}
+                      {vetDraftState === "copied" ? "요약 복사 완료" : "요약 전체 복사"}
                     </button>
                   )}
                 </div>
                 {vetDraft && (
                   <div className="vet-draft-preview">
                     <div>
-                      <span>{vetDraft.source === "openai" ? "GPT 정리 · 확인 전" : "규칙 기반 정리"}</span>
+                      <span>{vetDraft.source === "openai" ? "AI 정리 · 확인 전" : "규칙 기반 정리"}</span>
                       <strong>{vetDraft.overview}</strong>
                     </div>
                     <div className="vet-draft-handoff">
@@ -2234,7 +2244,7 @@ function ResultView({
               <p className="share-error" role="alert">{vetDraftError}</p>
             )}
             <p className="plan-safety-note">
-              GPT 초안은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을
+              AI 요약은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을
               만들지 않으며 수의사 확인 전 자료로 표시됩니다.
             </p>
           </section>
@@ -2705,7 +2715,11 @@ function EpisodeReportView({
       return;
     }
     if (!canUseAiReport) {
-      setVetDraftError("참여코드를 등록한 계정만 GPT 초안을 만들 수 있어요.");
+      setVetDraftError(
+        aiAccess?.reason === "monthly_limit"
+          ? "이번 달 AI 요약 사용량을 모두 사용했어요."
+          : "AI 요약 사용량을 확인하지 못했어요.",
+      );
       return;
     }
     setVetDraftState("loading");
@@ -2713,7 +2727,7 @@ function EpisodeReportView({
     const result = await onCreateVetDraft(selection.episode.id);
     if (!result.draft) {
       setVetDraftState("failed");
-      setVetDraftError(result.error ?? "수의사 검토용 초안을 만들지 못했어요.");
+      setVetDraftError(result.error ?? "AI 병원 요약을 만들지 못했어요.");
       return;
     }
     setVetDraft(result.draft);
@@ -2727,7 +2741,7 @@ function EpisodeReportView({
       setVetDraftState("copied");
     } catch {
       setVetDraftState("failed");
-      setVetDraftError("초안을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
+      setVetDraftError("AI 요약을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
     }
   }
 
@@ -2815,16 +2829,16 @@ function EpisodeReportView({
           <div>
             <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
             <h3>
-              <Icon name="spark" size={18} /> 수의사 검토용 GPT 초안
+              <Icon name="spark" size={18} /> AI 병원 요약
             </h3>
             <p>
               기록해 둔 관찰, 병원 계획, 초기·장기 경과를 자동으로 묶어 다른 병원에도 바로 전달해요.
             </p>
           </div>
-          <span className="vet-draft-badge">GPT 작성 · 확인 전</span>
+          <span className="vet-draft-badge">AI 작성 · 확인 전</span>
         </div>
 
-        <div className="vet-draft-includes" aria-label="GPT 초안 자동 포함 자료">
+        <div className="vet-draft-includes" aria-label="AI 요약 자동 포함 자료">
           <span>자동 포함</span>
           <strong>관찰 {report.recordCount}회</strong>
           <strong>계획 {completedPlanTaskCount}/{totalPlanTaskCount}개</strong>
@@ -2840,20 +2854,22 @@ function EpisodeReportView({
           </p>
         ) : !canUseAiReport ? (
           <div className="vet-draft-locked">
-            <strong>참여코드를 등록한 계정에서 GPT 초안을 만들 수 있어요.</strong>
+            <strong>
+              {aiAccess?.reason === "monthly_limit"
+                ? "이번 달 AI 요약 사용량을 모두 사용했어요."
+                : "AI 요약 사용량을 확인하지 못했어요."}
+            </strong>
             <p>
               {aiAccess?.reason === "monthly_limit"
-                ? "이번 달 사용량을 모두 사용했어요. 다음 달에 다시 생성할 수 있습니다."
-                : aiAccess?.reason === "total_limit"
-                  ? "이 참여코드의 전체 사용량을 모두 사용했어요."
-                  : "계정 화면에서 참여코드를 입력하면 수의사 검토용 GPT 초안을 만들 수 있어요."}
+                ? "다음 달에 다시 이용하거나 추가 사용 코드를 적용할 수 있어요."
+                : "잠시 후 다시 시도해 주세요."}
             </p>
             <button
               type="button"
               className="secondary-button compact"
               onClick={onOpenAccount}
             >
-              참여코드 입력하기
+              추가 사용 코드
             </button>
           </div>
         ) : (
@@ -2869,8 +2885,8 @@ function EpisodeReportView({
                 {vetDraftState === "loading"
                   ? "초안 만드는 중..."
                   : vetDraft
-                    ? "GPT 초안 다시 만들기"
-                    : "GPT 초안 만들기"}
+                    ? "AI 요약 다시 만들기"
+                    : "AI 요약 만들기"}
               </button>
               {vetDraft && (
                 <button
@@ -2989,7 +3005,7 @@ function EpisodeReportView({
           <p className="share-error" role="alert">{vetDraftError}</p>
         )}
         <p className="plan-safety-note">
-          GPT 초안은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
+          AI 요약은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
           수의사 확인 전 정보로 표시합니다.
         </p>
       </section>
@@ -4152,12 +4168,12 @@ export function PetFlowApp() {
         error?: string;
       };
       if (!response.ok || !payload.access) {
-        return payload.error ?? "참여코드를 등록하지 못했어요.";
+        return payload.error ?? "추가 사용 코드를 적용하지 못했어요.";
       }
       setAiAccess(payload.access);
       return "";
     } catch {
-      return "참여코드를 등록하지 못했어요.";
+      return "추가 사용 코드를 적용하지 못했어요.";
     }
   }
   async function logout() {
@@ -4608,12 +4624,12 @@ export function PetFlowApp() {
       };
       if (!response.ok || !payload.draft) {
         if (payload.access) setAiAccess(payload.access);
-        return { error: payload.error ?? "수의사 검토용 초안을 만들지 못했어요." };
+        return { error: payload.error ?? "AI 병원 요약을 만들지 못했어요." };
       }
       setAiAccess(await fetchAiAccessStatus(data.session.access_token));
       return { draft: payload.draft };
     } catch {
-      return { error: "수의사 검토용 초안을 만들지 못했어요." };
+      return { error: "AI 병원 요약을 만들지 못했어요." };
     }
   }
   async function submitAiReportFeedback(input: AiReportFeedbackInput) {

@@ -1463,7 +1463,7 @@ export default function App() {
 
     Alert.alert(
       "계정 탈퇴",
-      "계정, 함께하는 아이들, 건강 기록, 사진·영상, GPT 권한이 삭제됩니다. 이 작업은 되돌리기 어려워요.",
+      "계정, 함께하는 아이들, 건강 기록, 사진·영상, AI 요약 이용 기록이 삭제됩니다. 이 작업은 되돌리기 어려워요.",
       [
         { text: "취소", style: "cancel" },
         {
@@ -2333,7 +2333,7 @@ export default function App() {
   async function redeemAiCode() {
     const code = aiCodeDraft.trim();
     if (!code) {
-      setAiCodeMessage("참여코드를 입력해 주세요.");
+      setAiCodeMessage("추가 사용 코드를 입력해 주세요.");
       return;
     }
 
@@ -2365,9 +2365,13 @@ export default function App() {
 
       setAiAccess(payload.access);
       setAiCodeDraft("");
-      setAiCodeMessage("참여코드가 등록됐어요.");
-    } catch {
-      setAiCodeMessage("참여코드를 등록하지 못했어요. 코드와 사용 가능 여부를 확인해 주세요.");
+      setAiCodeMessage("추가 사용 코드가 적용됐어요.");
+    } catch (error) {
+      setAiCodeMessage(
+        error instanceof Error
+          ? error.message
+          : "추가 사용 코드를 적용하지 못했어요.",
+      );
     } finally {
       setAiCodeLoading(false);
     }
@@ -2377,7 +2381,10 @@ export default function App() {
     if (!aiAccess?.enabled) {
       setVetDraftNotice({
         episodeId,
-        text: "참여코드를 등록한 계정만 GPT 초안을 만들 수 있어요.",
+        text:
+          aiAccess?.reason === "monthly_limit"
+            ? "이번 달 AI 요약 사용량을 모두 사용했어요."
+            : "AI 요약 사용량을 확인하지 못했어요.",
         tone: "error",
       });
       return;
@@ -2414,15 +2421,18 @@ export default function App() {
       setVetDrafts((current) => ({ ...current, [episodeId]: nextDraft }));
       setVetDraftNotice({
         episodeId,
-        text: "수의사 검토용 GPT 초안을 만들었어요.",
+        text: "AI 병원 요약을 만들었어요.",
         tone: "success",
       });
       const nextAccess = await fetchAiAccessStatus(accessToken);
       if (nextAccess) setAiAccess(nextAccess);
-    } catch {
+    } catch (error) {
       setVetDraftNotice({
         episodeId,
-        text: "GPT 초안을 만들지 못했어요. 참여코드 사용량을 확인해 주세요.",
+        text:
+          error instanceof Error
+            ? error.message
+            : "AI 요약을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
         tone: "error",
       });
     } finally {
@@ -2435,13 +2445,13 @@ export default function App() {
       await Share.share({ title: draft.title, message: draft.copyText });
       setVetDraftNotice({
         episodeId,
-        text: "GPT 초안을 공유했어요.",
+        text: "AI 요약을 공유했어요.",
         tone: "success",
       });
     } catch {
       setVetDraftNotice({
         episodeId,
-        text: "GPT 초안 공유 창을 열지 못했어요.",
+        text: "AI 요약 공유 창을 열지 못했어요.",
         tone: "error",
       });
     }
@@ -2503,7 +2513,7 @@ export default function App() {
       );
       setAiFeedbackNotice({
         episodeId,
-        text: "GPT 초안 피드백을 저장했어요.",
+        text: "AI 요약 피드백을 저장했어요.",
         tone: "success",
       });
     } catch {
@@ -2753,7 +2763,7 @@ export default function App() {
           )}
 
           <Text style={styles.notice}>
-            GPT 초안과 비밀키는 앱이 아니라 서버에서만 관리합니다.
+            AI 요약과 비밀키는 앱이 아니라 서버에서만 관리합니다.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -3356,6 +3366,7 @@ function AccountCard({
   onRequestAccountDeletion: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }) {
+  const [showAiCode, setShowAiCode] = useState(false);
   const googleLinked = hasLinkedProvider(user, "google");
   const appleLinked = hasLinkedProvider(user, "apple");
   const appleEnabled = enabledOAuthProviders.apple || appleLinked;
@@ -3464,7 +3475,7 @@ function AccountCard({
       <View style={[styles.aiAccessBox, aiAccess?.enabled && styles.aiAccessBoxEnabled]}>
         <View style={styles.aiAccessHeader}>
           <View style={styles.cardHeaderText}>
-            <Text style={styles.aiAccessTitle}>GPT 참여코드</Text>
+            <Text style={styles.aiAccessTitle}>AI 병원 요약</Text>
             <Text style={styles.aiAccessText}>{aiAccessCopy(aiAccess)}</Text>
           </View>
           <Text
@@ -3473,11 +3484,17 @@ function AccountCard({
               aiAccess?.enabled && styles.aiAccessBadgeEnabled,
             ]}
           >
-            {aiAccess?.enabled ? "사용 가능" : "코드 필요"}
+            {!aiAccess
+              ? "확인 중"
+              : aiAccess.enabled
+                ? "사용 가능"
+                : aiAccess.reason === "monthly_limit"
+                  ? "이번 달 완료"
+                  : "확인 필요"}
           </Text>
         </View>
 
-        {aiAccess?.enabled ? (
+        {aiAccess && aiAccess.reason !== "unavailable" ? (
           <View style={styles.aiUsageRow}>
             <View style={styles.aiUsageItem}>
               <Text style={styles.aiUsageLabel}>이번 달</Text>
@@ -3486,18 +3503,32 @@ function AccountCard({
               </Text>
             </View>
             <View style={styles.aiUsageItem}>
-              <Text style={styles.aiUsageLabel}>전체</Text>
-              <Text style={styles.aiUsageValue}>
-                {aiAccess.usedTotal}
-                {aiAccess.totalReportLimit ? `/${aiAccess.totalReportLimit}` : ""}회
-              </Text>
+              <Text style={styles.aiUsageLabel}>남은 요약</Text>
+              <Text style={styles.aiUsageValue}>{aiAccess.remainingThisMonth}회</Text>
             </View>
             <View style={styles.aiUsageItem}>
-              <Text style={styles.aiUsageLabel}>그룹</Text>
-              <Text style={styles.aiUsageValue}>{aiAccess.codeLabel ?? "사용자"}</Text>
+              <Text style={styles.aiUsageLabel}>이용 방식</Text>
+              <Text style={styles.aiUsageValue}>
+                {aiAccess.accessMode === "code"
+                  ? aiAccess.codeLabel ?? "추가 사용권"
+                  : "기본 제공"}
+              </Text>
             </View>
           </View>
-        ) : (
+        ) : null}
+
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => setShowAiCode((current) => !current)}
+          style={styles.aiCodeDisclosure}
+        >
+          <Text style={styles.aiCodeDisclosureText}>추가 사용 코드</Text>
+          <Text style={styles.aiCodeDisclosureText}>
+            {showAiCode ? "접기" : "열기"}
+          </Text>
+        </TouchableOpacity>
+
+        {showAiCode ? (
           <View style={styles.aiCodeForm}>
             <TextInput
               autoCapitalize="characters"
@@ -3515,22 +3546,22 @@ function AccountCard({
               style={[styles.aiCodeButton, aiCodeLoading && styles.buttonDisabled]}
             >
               <Text style={styles.aiCodeButtonText}>
-                {aiCodeLoading ? "확인 중" : "코드 등록"}
+                {aiCodeLoading ? "확인 중" : "코드 적용"}
               </Text>
             </TouchableOpacity>
           </View>
-        )}
+        ) : null}
         <Message
           text={aiCodeMessage}
-          tone={aiCodeMessage === "참여코드가 등록됐어요." ? "success" : "error"}
+          tone={aiCodeMessage === "추가 사용 코드가 적용됐어요." ? "success" : "error"}
         />
       </View>
 
       <View style={styles.accountDeletionBox}>
         <Text style={styles.accountDeletionTitle}>계정 탈퇴</Text>
         <Text style={styles.accountDeletionText}>
-          탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, GPT 권한이
-          삭제되고 현재 기기에서 로그아웃합니다.
+          탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, AI 요약 이용
+          기록이 삭제되고 현재 기기에서 로그아웃합니다.
         </Text>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -4364,7 +4395,7 @@ function ResultVetDraftBox({
       <View style={styles.planHeader}>
         <View style={styles.cardHeaderText}>
           <Text style={styles.vetDraftEyebrow}>AI DRAFT · VET REVIEW</Text>
-          <Text style={styles.planTitle}>수의사 검토용 GPT 초안</Text>
+          <Text style={styles.planTitle}>AI 병원 요약</Text>
           <Text style={styles.planSubtitle}>
             같은 사건의 기록을 수의사가 보기 좋은 제출용 문장으로 정리해요.
           </Text>
@@ -4375,13 +4406,17 @@ function ResultVetDraftBox({
             canUseAiDraft && styles.vetDraftBadgeEnabled,
           ]}
         >
-          {canUseAiDraft ? "코드 확인됨" : "코드 필요"}
+          {canUseAiDraft
+            ? `${aiAccess?.remainingThisMonth ?? 0}회 남음`
+            : aiAccess?.reason === "monthly_limit"
+              ? "이번 달 완료"
+              : "확인 필요"}
         </Text>
       </View>
 
       {!episodeId ? (
         <Text style={styles.planEmptyText}>
-          서버에 저장되고 사건에 연결된 기록에서만 GPT 초안을 만들 수 있어요.
+          서버에 저장되고 같은 건강 흐름에 연결된 기록에서 만들 수 있어요.
         </Text>
       ) : !canUseAiDraft ? (
         <>
@@ -4391,7 +4426,7 @@ function ResultVetDraftBox({
             onPress={onGoAccount}
             style={styles.vetDraftSecondaryButton}
           >
-            <Text style={styles.vetDraftSecondaryButtonText}>참여코드 확인</Text>
+            <Text style={styles.vetDraftSecondaryButtonText}>추가 사용 코드</Text>
           </TouchableOpacity>
         </>
       ) : (
@@ -4410,8 +4445,8 @@ function ResultVetDraftBox({
                 {vetDraftLoading
                   ? "초안 만드는 중"
                   : vetDraft
-                    ? "GPT 초안 다시 만들기"
-                    : "GPT 초안 만들기"}
+                    ? "AI 요약 다시 만들기"
+                    : "AI 요약 만들기"}
               </Text>
             </TouchableOpacity>
             {vetDraft ? (
@@ -4421,7 +4456,7 @@ function ResultVetDraftBox({
                 onPress={() => void onShareVetDraft(episodeId, vetDraft)}
                 style={styles.vetDraftSecondaryButton}
               >
-                <Text style={styles.vetDraftSecondaryButtonText}>초안 공유</Text>
+                <Text style={styles.vetDraftSecondaryButtonText}>요약 공유</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -4429,7 +4464,7 @@ function ResultVetDraftBox({
           {vetDraft ? (
             <View style={styles.vetDraftPreview}>
               <Text style={styles.vetDraftSource}>
-                {vetDraft.source === "openai" ? "GPT 정리 · 확인 전" : "규칙 기반 정리"}
+                {vetDraft.source === "openai" ? "AI 정리 · 확인 전" : "규칙 기반 정리"}
               </Text>
               <Text style={styles.vetDraftOverview}>{vetDraft.overview}</Text>
               <Text style={styles.vetDraftHandoffLabel}>다른 병원 첫 설명</Text>
@@ -4448,7 +4483,7 @@ function ResultVetDraftBox({
         <Message text={vetDraftNotice.text} tone={vetDraftNotice.tone} />
       ) : null}
       <Text style={styles.planLimitText}>
-        GPT 초안은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인 전 자료로 표시됩니다.
+        AI 요약은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인 전 자료로 표시됩니다.
       </Text>
     </View>
   );
@@ -5125,7 +5160,7 @@ function EpisodeReportItem({
           <View style={styles.planHeader}>
             <View style={styles.cardHeaderText}>
               <Text style={styles.vetDraftEyebrow}>AI DRAFT · VET REVIEW</Text>
-              <Text style={styles.planTitle}>수의사 검토용 GPT 초안</Text>
+              <Text style={styles.planTitle}>AI 병원 요약</Text>
               <Text style={styles.planSubtitle}>
                 여러 기록, 병원 안내, 경과를 수의사가 빠르게 볼 수 있는 초안으로
                 정리해요.
@@ -5137,7 +5172,11 @@ function EpisodeReportItem({
                 canUseAiDraft && styles.vetDraftBadgeEnabled,
               ]}
             >
-              {canUseAiDraft ? "코드 확인됨" : "코드 필요"}
+              {canUseAiDraft
+                ? `${aiAccess?.remainingThisMonth ?? 0}회 남음`
+                : aiAccess?.reason === "monthly_limit"
+                  ? "이번 달 완료"
+                  : "확인 필요"}
             </Text>
           </View>
 
@@ -5150,10 +5189,7 @@ function EpisodeReportItem({
           </View>
 
           {!canUseAiDraft ? (
-            <Text style={styles.planEmptyText}>
-              계정 화면에서 참여코드를 등록하면 GPT 초안을 만들 수
-              있어요. 코드별 월간·전체 사용량은 서버에서 관리됩니다.
-            </Text>
+            <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
           ) : (
             <>
               <View style={styles.vetDraftActions}>
@@ -5170,8 +5206,8 @@ function EpisodeReportItem({
                     {isCreatingVetDraft
                       ? "초안 만드는 중"
                       : vetDraft
-                        ? "GPT 초안 다시 만들기"
-                        : "GPT 초안 만들기"}
+                        ? "AI 요약 다시 만들기"
+                        : "AI 요약 만들기"}
                   </Text>
                 </TouchableOpacity>
                 {vetDraft ? (
@@ -5181,7 +5217,7 @@ function EpisodeReportItem({
                     onPress={() => void onShareVetDraft(episodeId, vetDraft)}
                     style={styles.vetDraftSecondaryButton}
                   >
-                    <Text style={styles.vetDraftSecondaryButtonText}>초안 공유</Text>
+                    <Text style={styles.vetDraftSecondaryButtonText}>요약 공유</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -5189,7 +5225,7 @@ function EpisodeReportItem({
               {vetDraft ? (
                 <View style={styles.vetDraftPreview}>
                   <Text style={styles.vetDraftSource}>
-                    {vetDraft.source === "openai" ? "GPT 정리 · 확인 전" : "규칙 기반 정리"}
+                    {vetDraft.source === "openai" ? "AI 정리 · 확인 전" : "규칙 기반 정리"}
                   </Text>
                   <Text style={styles.vetDraftOverview}>{vetDraft.overview}</Text>
                   <Text style={styles.vetDraftHandoffLabel}>다른 병원 첫 설명</Text>
@@ -5327,7 +5363,7 @@ function EpisodeReportItem({
             <Message text={itemVetDraftNotice.text} tone={itemVetDraftNotice.tone} />
           ) : null}
           <Text style={styles.planLimitText}>
-            GPT 초안은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인
+            AI 요약은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인
             전 자료로 표시됩니다.
           </Text>
         </View>
@@ -5523,19 +5559,22 @@ function formatIsoDate(date: Date) {
 }
 
 function aiAccessCopy(access: AiAccessStatus | null) {
-  if (!access || access.reason === "no_code") {
-    return "참여코드를 입력하면 GPT 초안을 만들 수 있어요.";
+  if (!access) {
+    return "AI 요약 사용량을 확인하고 있어요.";
+  }
+  if (access.reason === "unavailable") {
+    return "사용량을 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
   if (access.reason === "monthly_limit") {
-    return "이번 달 GPT 초안 사용량을 모두 사용했어요.";
+    return "이번 달 AI 요약 사용량을 모두 사용했어요.";
   }
   if (access.reason === "total_limit") {
-    return "이 참여코드의 전체 사용량을 모두 사용했어요.";
+    return "추가 사용 코드의 전체 사용량을 모두 사용했어요.";
   }
   if (access.reason === "revoked") {
-    return "이 참여코드는 현재 사용할 수 없어요.";
+    return "추가 사용 코드가 만료됐어요.";
   }
-  return "AI 초안 권한이 있는 계정이에요. 사용량은 서버에서 관리됩니다.";
+  return "기록을 수의사가 보기 좋은 병원용 요약으로 정리해요.";
 }
 
 function recordSymptomText(record: HistoryRecord) {
@@ -6409,6 +6448,19 @@ const styles = StyleSheet.create({
   aiUsageValue: {
     marginTop: 4,
     color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  aiCodeDisclosure: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(23, 76, 65, 0.1)",
+    paddingTop: 11,
+  },
+  aiCodeDisclosureText: {
+    color: colors.green,
     fontSize: 12,
     fontWeight: "900",
   },

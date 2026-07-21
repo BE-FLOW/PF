@@ -3,9 +3,11 @@ import { accessTokenFromRequest } from "@/lib/api-auth";
 import { extractResponseOutputText } from "@/lib/openai-response";
 import { storedReportToHistoryRecord } from "@/lib/report-storage";
 import {
+  completeAiReportUsage,
   getAiReportAccess,
   getEpisodeVetReviewBundle,
   recordAiReportUsage,
+  reserveAiReportUsage,
 } from "@/lib/supabase-admin";
 import {
   buildVetReviewDraft,
@@ -19,10 +21,16 @@ function cleanStringArray(value: unknown, minItems: number, maxItems: number) {
   if (!Array.isArray(value)) return null;
   const items = value
     .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
+    .map((item) => item.trim().slice(0, 320))
     .filter(Boolean)
     .slice(0, maxItems);
   return items.length >= minItems ? items : null;
+}
+
+function cleanString(value: unknown, fallback: string, maxLength: number) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maxLength)
+    : fallback;
 }
 
 interface OpenAiUsage {
@@ -49,6 +57,8 @@ async function enrichWithOpenAI(
       },
       body: JSON.stringify({
         model,
+        store: false,
+        max_output_tokens: 1800,
         reasoning: { effort: "low" },
         text: {
           verbosity: "low",
@@ -108,13 +118,15 @@ async function enrichWithOpenAI(
                 type: "input_text",
                 text:
                   "당신은 반려동물 병원 접수 전 보호자 관찰 기록을 수의사가 빠르게 검토할 수 있게 정리하는 보조자입니다. " +
-                  "사용자 친화적 설명보다 수의사 친화적인 문진/검토용 보고서 문체를 우선하세요. " +
+                  "수의사 친화적인 사전 문진 보고서 문체를 사용하되 짧고 객관적으로 작성하세요. " +
                   "입력된 사실만 사용하고 새 의학적 판단을 추가하지 마세요. " +
                   "진단명, 질병 확정, 약물명, 용량, 치료 처방, 치료 계획을 생성하지 마세요. " +
                   "보호자가 입력한 병원 계획과 경과는 수의사 확인 전 정보로 분리하세요. " +
                   "첨부 사진·영상은 종류와 개수만 요약하고 이미지·영상 내용을 판독하거나 해석하지 마세요. " +
-                  "다른 병원에 처음 방문해도 이전 경과를 다시 설명하는 시간을 줄일 수 있게 handoffNote를 작성하세요. " +
-                  "보고서는 진료 시간을 줄이기 위한 사전 문진 요약이며, 진단을 대신한다고 쓰지 마세요. 한국어로 짧고 밀도 있게 작성하세요.",
+                  "날짜별 변화, 반복 증상, 식욕·활력, 앱 안전 분류, 보호자 입력 계획, 3·7·14·30·60·90일 경과를 구분하세요. " +
+                  "다른 병원에 처음 방문해도 이전 경과를 다시 설명하는 시간을 줄일 수 있게 handoffNote를 시간 순서로 작성하세요. " +
+                  "SOAP-LOOP의 관찰·정리·계획·경과 구조를 반영하되 SOAP 같은 전문 약어를 제목으로 노출하지 마세요. " +
+                  "보고서는 진료 전 검토 시간을 줄이는 초안이며 진단을 대신하지 않습니다. 한국어로 짧고 밀도 있게 작성하세요.",
               },
             ],
           },
@@ -140,7 +152,7 @@ async function enrichWithOpenAI(
           },
         ],
       }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) return { errorCode: "openai_response_error" };
@@ -148,17 +160,15 @@ async function enrichWithOpenAI(
     const outputText = extractResponseOutputText(data);
     if (!outputText) return { errorCode: "openai_empty_response" };
     const generated = JSON.parse(outputText) as Record<string, unknown>;
-    const overview =
-      typeof generated.overview === "string" && generated.overview.trim()
-        ? generated.overview.trim()
-        : baseDraft.overview;
+    const overview = cleanString(generated.overview, baseDraft.overview, 500);
     const keyObservations =
       cleanStringArray(generated.keyObservations, 2, 5) ??
       baseDraft.keyObservations;
-    const handoffNote =
-      typeof generated.handoffNote === "string" && generated.handoffNote.trim()
-        ? generated.handoffNote.trim()
-        : baseDraft.handoffNote;
+    const handoffNote = cleanString(
+      generated.handoffNote,
+      baseDraft.handoffNote,
+      700,
+    );
     const planAndProgress =
       cleanStringArray(generated.planAndProgress, 1, 6) ??
       baseDraft.planAndProgress;
@@ -167,11 +177,11 @@ async function enrichWithOpenAI(
     const questionsForVet =
       cleanStringArray(generated.questionsForVet, 2, 4) ??
       baseDraft.questionsForVet;
-    const submissionNote =
-      typeof generated.submissionNote === "string" &&
-      generated.submissionNote.trim()
-        ? generated.submissionNote.trim()
-        : baseDraft.submissionNote;
+    const submissionNote = cleanString(
+      generated.submissionNote,
+      baseDraft.submissionNote,
+      500,
+    );
     const draftWithoutCopy: Omit<VetReviewDraft, "copyText"> = {
       ...baseDraft,
       source: "openai",
@@ -204,17 +214,20 @@ export async function POST(
   const access = await getAiReportAccess(accessToken);
   if (!access) {
     return NextResponse.json(
-      { error: "로그인 상태를 다시 확인해 주세요." },
+      { error: "로그인이 필요해요." },
       { status: 401 },
     );
   }
   if (!access.status.enabled) {
+    const unavailable = access.status.reason === "unavailable";
     return NextResponse.json(
       {
-        error: "참여코드를 등록한 계정만 GPT AI 리포트를 만들 수 있어요.",
+        error: unavailable
+          ? "AI 요약 사용량을 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
+          : "이번 달 AI 요약 사용량을 모두 사용했어요.",
         access: access.status,
       },
-      { status: 403 },
+      { status: unavailable ? 503 : 429 },
     );
   }
 
@@ -233,7 +246,7 @@ export async function POST(
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+  const model = process.env.OPENAI_MODEL || "gpt-5.4-mini-2026-03-17";
   if (!apiKey) {
     await recordAiReportUsage({
       userId: access.userId,
@@ -245,7 +258,7 @@ export async function POST(
       errorCode: "openai_unconfigured",
     });
     return NextResponse.json(
-      { error: "GPT API 키가 아직 설정되지 않았어요. 관리자 설정이 필요합니다." },
+      { error: "AI 요약을 잠시 사용할 수 없어요." },
       { status: 503 },
     );
   }
@@ -259,28 +272,44 @@ export async function POST(
     bundle.plan,
     bundle.progress,
   );
+  const reservation = await reserveAiReportUsage({
+    userId: access.userId,
+    grantId: access.status.grantId,
+    petId: bundle.episode.petId,
+    episodeId: bundle.episode.id,
+    model,
+    monthlyReportLimit: access.status.monthlyReportLimit,
+    totalReportLimit: access.status.totalReportLimit,
+  });
+  if (!reservation.usageId) {
+    return NextResponse.json(
+      {
+        error: reservation.unavailable
+          ? "AI 요약 사용량을 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
+          : "이번 달 AI 요약 사용량을 모두 사용했어요.",
+      },
+      { status: reservation.unavailable ? 503 : 429 },
+    );
+  }
+
   const result = await enrichWithOpenAI(localDraft, apiKey, model);
   if (!result.draft) {
-    await recordAiReportUsage({
+    await completeAiReportUsage({
+      usageId: reservation.usageId,
       userId: access.userId,
-      grantId: access.status.grantId,
-      petId: bundle.pet.id,
-      episodeId: bundle.episode.id,
       status: "failed",
       model,
       errorCode: result.errorCode ?? "openai_failed",
     });
     return NextResponse.json(
-      { error: "GPT AI 리포트를 만들지 못했어요. 잠시 후 다시 시도해 주세요." },
+      { error: "AI 요약을 만들지 못했어요. 잠시 후 다시 시도해 주세요." },
       { status: 502 },
     );
   }
 
-  const usageId = await recordAiReportUsage({
+  const usageCompleted = await completeAiReportUsage({
+    usageId: reservation.usageId,
     userId: access.userId,
-    grantId: access.status.grantId,
-    petId: bundle.pet.id,
-    episodeId: bundle.episode.id,
     status: "succeeded",
     model,
     promptTokens: result.usage?.input_tokens ?? null,
@@ -288,6 +317,9 @@ export async function POST(
     totalTokens: result.usage?.total_tokens ?? null,
   });
   return NextResponse.json({
-    draft: { ...result.draft, usageId: usageId ?? undefined },
+    draft: {
+      ...result.draft,
+      usageId: usageCompleted ? reservation.usageId : undefined,
+    },
   });
 }

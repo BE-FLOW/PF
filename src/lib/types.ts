@@ -57,12 +57,14 @@ export interface TesterProfile {
 
 export interface AiAccessStatus {
   enabled: boolean;
+  accessMode: "standard" | "code";
   reason:
     | "active"
     | "no_code"
     | "revoked"
     | "monthly_limit"
-    | "total_limit";
+    | "total_limit"
+    | "unavailable";
   grantId?: string;
   codeLabel?: string;
   monthlyReportLimit: number;

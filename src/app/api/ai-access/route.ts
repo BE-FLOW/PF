@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const status = await getAiAccessStatus(accessTokenFromRequest(request));
   if (!status) {
     return NextResponse.json(
-      { error: "로그인 상태를 다시 확인해 주세요." },
+      { error: "로그인이 필요해요." },
       { status: 401 },
     );
   }
@@ -24,13 +24,13 @@ export async function POST(request: Request) {
     body = (await request.json()) as { code?: unknown };
   } catch {
     return NextResponse.json(
-      { error: "요청 형식이 올바르지 않습니다." },
+      { error: "요청 내용을 확인해 주세요." },
       { status: 400 },
     );
   }
   if (typeof body.code !== "string" || body.code.trim().length < 6) {
     return NextResponse.json(
-      { error: "참여코드를 다시 확인해 주세요." },
+      { error: "추가 사용 코드를 확인해 주세요." },
       { status: 400 },
     );
   }
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
   );
   if (!status) {
     return NextResponse.json(
-      { error: "참여코드가 올바르지 않거나 사용할 수 없어요." },
+      { error: "추가 사용 코드가 올바르지 않거나 만료됐어요." },
       { status: 400 },
     );
   }

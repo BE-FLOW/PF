@@ -23,6 +23,10 @@ import {
   reportMediaBucket,
 } from "./report-media";
 import { petPhotoBucket } from "./pet-photo";
+import {
+  buildStandardAiAccessStatus,
+  resolveAiMonthlyReportLimit,
+} from "./ai-access";
 
 const requestTimeoutMs = 3500;
 
@@ -67,6 +71,27 @@ export interface AiReportUsageInput {
   episodeId?: string | null;
   status: "succeeded" | "failed";
   model?: string | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  errorCode?: string | null;
+}
+
+export interface AiReportReservationInput {
+  userId: string;
+  grantId?: string;
+  petId: string;
+  episodeId: string;
+  model: string;
+  monthlyReportLimit: number;
+  totalReportLimit?: number | null;
+}
+
+export interface AiReportCompletionInput {
+  usageId: string;
+  userId: string;
+  status: "succeeded" | "failed";
+  model: string;
   promptTokens?: number | null;
   completionTokens?: number | null;
   totalTokens?: number | null;
@@ -433,6 +458,7 @@ function monthStartIso(now = new Date()) {
 function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
   return {
     enabled: false,
+    accessMode: "standard",
     reason,
     monthlyReportLimit: 0,
     totalReportLimit: null,
@@ -445,13 +471,20 @@ function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
 async function countSucceededAiReports(
   userId: string,
   sinceIso?: string,
+  grantId?: string | null,
 ): Promise<number | null> {
   try {
     const sinceFilter = sinceIso
       ? `&generated_at=gte.${encodeURIComponent(sinceIso)}`
       : "";
+    const grantFilter =
+      grantId === null
+        ? "&grant_id=is.null"
+        : grantId
+          ? `&grant_id=eq.${grantId}`
+          : "";
     const response = await supabaseRequest(
-      `ai_report_usage?user_id=eq.${userId}&status=eq.succeeded${sinceFilter}&select=id`,
+      `ai_report_usage?user_id=eq.${userId}&status=eq.succeeded${sinceFilter}${grantFilter}&select=id`,
       { method: "GET" },
     );
     if (!response?.ok) return null;
@@ -462,13 +495,30 @@ async function countSucceededAiReports(
   }
 }
 
+async function buildStandardAccessStatus(
+  userId: string,
+): Promise<AiAccessStatus> {
+  const [usedThisMonth, usedTotal] = await Promise.all([
+    countSucceededAiReports(userId, monthStartIso(), null),
+    countSucceededAiReports(userId, undefined, null),
+  ]);
+  if (usedThisMonth === null || usedTotal === null) {
+    return emptyAiAccessStatus("unavailable");
+  }
+  return buildStandardAiAccessStatus(
+    usedThisMonth,
+    usedTotal,
+    resolveAiMonthlyReportLimit(process.env.AI_REPORT_MONTHLY_LIMIT),
+  );
+}
+
 async function buildAiAccessStatus(userId: string): Promise<AiAccessStatus> {
   try {
     const grantResponse = await supabaseRequest(
       `ai_access_grants?user_id=eq.${userId}&select=id,code_id,status,monthly_report_limit,total_report_limit,granted_at&limit=1`,
       { method: "GET" },
     );
-    if (!grantResponse?.ok) return emptyAiAccessStatus("no_code");
+    if (!grantResponse?.ok) return emptyAiAccessStatus("unavailable");
     const grants = (await grantResponse.json()) as Array<{
       id: string;
       code_id: string;
@@ -478,18 +528,18 @@ async function buildAiAccessStatus(userId: string): Promise<AiAccessStatus> {
       granted_at: string;
     }>;
     const grant = grants[0];
-    if (!grant) return emptyAiAccessStatus("no_code");
+    if (!grant) return buildStandardAccessStatus(userId);
 
     const [codeResponse, usedThisMonth, usedTotal] = await Promise.all([
       supabaseRequest(
         `ai_access_codes?id=eq.${grant.code_id}&select=label,disabled_at,expires_at&limit=1`,
         { method: "GET" },
       ),
-      countSucceededAiReports(userId, monthStartIso()),
-      countSucceededAiReports(userId),
+      countSucceededAiReports(userId, monthStartIso(), grant.id),
+      countSucceededAiReports(userId, undefined, grant.id),
     ]);
     if (!codeResponse?.ok || usedThisMonth === null || usedTotal === null) {
-      return emptyAiAccessStatus("no_code");
+      return emptyAiAccessStatus("unavailable");
     }
     const codes = (await codeResponse.json()) as Array<{
       label: string;
@@ -497,7 +547,7 @@ async function buildAiAccessStatus(userId: string): Promise<AiAccessStatus> {
       expires_at: string | null;
     }>;
     const code = codes[0];
-    if (!code) return emptyAiAccessStatus("no_code");
+    if (!code) return buildStandardAccessStatus(userId);
 
     const disabledOrExpired =
       Boolean(code.disabled_at) ||
@@ -508,18 +558,19 @@ async function buildAiAccessStatus(userId: string): Promise<AiAccessStatus> {
     );
     const totalLimitHit =
       grant.total_report_limit !== null && usedTotal >= grant.total_report_limit;
-    const reason: AiAccessStatus["reason"] =
-      grant.status === "revoked" || disabledOrExpired
-        ? "revoked"
-        : totalLimitHit
-          ? "total_limit"
-          : remainingThisMonth <= 0
-            ? "monthly_limit"
-            : "active";
+    if (
+      grant.status === "revoked" ||
+      disabledOrExpired ||
+      totalLimitHit ||
+      remainingThisMonth <= 0
+    ) {
+      return buildStandardAccessStatus(userId);
+    }
 
     return {
-      enabled: reason === "active",
-      reason,
+      enabled: true,
+      accessMode: "code",
+      reason: "active",
       grantId: grant.id,
       codeLabel: code.label,
       monthlyReportLimit: grant.monthly_report_limit,
@@ -530,7 +581,7 @@ async function buildAiAccessStatus(userId: string): Promise<AiAccessStatus> {
       grantedAt: grant.granted_at,
     };
   } catch {
-    return emptyAiAccessStatus("no_code");
+    return emptyAiAccessStatus("unavailable");
   }
 }
 
@@ -623,6 +674,76 @@ export async function recordAiReportUsage(
     return rows[0]?.id ?? null;
   } catch {
     return null;
+  }
+}
+
+export async function reserveAiReportUsage(
+  input: AiReportReservationInput,
+): Promise<{ usageId: string | null; unavailable: boolean }> {
+  if (
+    !isUuid(input.userId) ||
+    !isUuid(input.petId) ||
+    !isUuid(input.episodeId) ||
+    !Number.isInteger(input.monthlyReportLimit) ||
+    input.monthlyReportLimit < 1
+  ) {
+    return { usageId: null, unavailable: true };
+  }
+
+  try {
+    const response = await supabaseRequest("rpc/reserve_ai_report_usage", {
+      method: "POST",
+      body: JSON.stringify({
+        target_user_id: input.userId,
+        target_grant_id: isUuid(input.grantId) ? input.grantId : null,
+        target_pet_id: input.petId,
+        target_episode_id: input.episodeId,
+        target_model: input.model,
+        target_monthly_report_limit: input.monthlyReportLimit,
+        target_total_report_limit: input.totalReportLimit ?? null,
+      }),
+    });
+    if (!response?.ok) return { usageId: null, unavailable: true };
+    const usageId = (await response.json()) as unknown;
+    return {
+      usageId: typeof usageId === "string" && isUuid(usageId) ? usageId : null,
+      unavailable: false,
+    };
+  } catch {
+    return { usageId: null, unavailable: true };
+  }
+}
+
+export async function completeAiReportUsage(
+  input: AiReportCompletionInput,
+): Promise<boolean> {
+  if (!isUuid(input.usageId) || !isUuid(input.userId)) return false;
+
+  try {
+    const response = await supabaseRequest(
+      `ai_report_usage?id=eq.${input.usageId}&user_id=eq.${input.userId}&status=eq.pending`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: input.status,
+          model: input.model,
+          prompt_tokens: input.promptTokens ?? null,
+          completion_tokens: input.completionTokens ?? null,
+          total_tokens: input.totalTokens ?? null,
+          estimated_cost_usd:
+            input.status === "succeeded"
+              ? estimatedOpenAiCostUsd(
+                  input.promptTokens,
+                  input.completionTokens,
+                )
+              : null,
+          error_code: input.errorCode ?? null,
+        }),
+      },
+    );
+    return Boolean(response?.ok);
+  } catch {
+    return false;
   }
 }
 

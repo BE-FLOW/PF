@@ -47,8 +47,8 @@ select
 from public.episode_progress_logs progress
 order by progress.recorded_at desc;
 
--- Create a new GPT report participation code. Copy the returned code and share it
--- only with approved testers. The raw code is shown once and only its hash is stored.
+-- Create an additional AI summary allowance code. The raw code is shown once;
+-- share it only with the intended user because only its hash is stored.
 select *
 from public.create_ai_access_code(
   target_label => 'pilot-vet-report-001',
@@ -59,7 +59,7 @@ from public.create_ai_access_code(
   target_created_by => 'admin'
 );
 
--- Small one-off tester key for a single reviewer.
+-- Small one-off additional allowance for a single reviewer.
 select *
 from public.create_ai_access_code(
   target_label => 'single-reviewer-001',
@@ -70,7 +70,7 @@ from public.create_ai_access_code(
   target_created_by => 'admin'
 );
 
--- Revoke a tester key group. The raw code cannot be recovered later.
+-- Revoke an additional allowance group. The raw code cannot be recovered later.
 update public.ai_access_codes
 set disabled_at = now()
 where label = 'pilot-vet-report-001'
