@@ -2461,6 +2461,7 @@ function HistoryView({
           </p>
         </div>
       </div>
+      <div className="record-calendar-layout">
       <section className="record-calendar-card">
         <div className="record-calendar-header">
           <button
@@ -2611,6 +2612,7 @@ function HistoryView({
         </div>
         {episodeError && <p className="share-error" role="alert">{episodeError}</p>}
       </section>
+      </div>
     </div>
   );
 }

@@ -2402,6 +2402,12 @@ p {
   display: grid;
   gap: 12px;
 }
+.record-calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(330px, 0.92fr);
+  align-items: start;
+  gap: 14px;
+}
 .record-calendar-card,
 .record-calendar-selection {
   border: 1px solid var(--line);
@@ -2508,7 +2514,7 @@ p {
   background: #ce7068;
 }
 .record-calendar-selection {
-  margin-top: 14px;
+  margin-top: 0;
   padding: 20px;
 }
 .record-calendar-selection-head {
@@ -3530,6 +3536,9 @@ p {
   .record-calendar-selection {
     border-radius: 21px;
   }
+  .record-calendar-layout {
+    display: block;
+  }
   .record-calendar-card {
     padding: 13px 10px 12px;
   }
@@ -3545,6 +3554,7 @@ p {
     border-radius: 13px;
   }
   .record-calendar-selection {
+    margin-top: 14px;
     padding: 17px;
   }
   .record-calendar-selection-head {
