@@ -54,10 +54,12 @@ import {
   analyzeLocally,
   buildEpisodeReport,
   createUuid,
+  dailyObservationOptions,
   durationOptions,
   formatFileSize,
   formatReportMediaSummary,
   levelOptions,
+  hasDailyObservation,
   isAllowedPetPhotoMimeType,
   maxReportMediaFiles,
   maxReportMediaSizeBytes,
@@ -68,13 +70,11 @@ import {
   reportMediaBucket,
   reportMediaExtensionFromMimeType,
   reportMediaKindFromMimeType,
-  redFlagOptions,
-  resetToNormal,
   riskLabels,
   storedReportToHistoryRecord,
   symptomOptions,
   summarizeHealthFlow,
-  toggleItem,
+  toggleDailyObservation,
   type AiAccessStatus,
   type AiReportFeedbackInput,
   type AnalysisResult,
@@ -1555,36 +1555,47 @@ export default function App() {
     setPetMessage("");
   }
 
-  async function pickMedia() {
+  async function pickMedia(source: "camera" | "library" = "library") {
     setMediaMessage("");
-    if (editingHealthRecord) {
-      setMediaMessage("첨부 변경은 새 기록에서 다시 추가해 주세요.");
-      return;
-    }
-    if (pendingMedia.length >= maxReportMediaFiles) {
+    const existingMediaCount = editingHealthRecord?.media?.length ?? 0;
+    if (existingMediaCount + pendingMedia.length >= maxReportMediaFiles) {
       setMediaMessage(`사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`);
       return;
     }
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const permission = source === "camera"
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      setMediaMessage("사진·영상 접근 권한이 필요해요. 권한을 허용한 뒤 다시 시도해 주세요.");
+      setMediaMessage(
+        source === "camera"
+          ? "촬영하려면 카메라 권한이 필요해요."
+          : "사진·영상을 고르려면 앨범 접근 권한이 필요해요.",
+      );
       return;
     }
 
-    const remaining = maxReportMediaFiles - pendingMedia.length;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsMultipleSelection: true,
-      mediaTypes: ["images", "videos"],
-      quality: 0.8,
-      selectionLimit: remaining,
-    });
+    const remaining = maxReportMediaFiles - existingMediaCount - pendingMedia.length;
+    const result = source === "camera"
+      ? await ImagePicker.launchCameraAsync({
+          mediaTypes: ["images", "videos"],
+          quality: 0.8,
+        })
+      : await ImagePicker.launchImageLibraryAsync({
+          allowsMultipleSelection: true,
+          mediaTypes: ["images", "videos"],
+          quality: 0.8,
+          selectionLimit: remaining,
+        });
     if (result.canceled) return;
 
     const next: PendingMediaAsset[] = [];
     let nextMessage = "";
     for (const asset of result.assets) {
-      if (pendingMedia.length + next.length >= maxReportMediaFiles) {
+      if (
+        existingMediaCount + pendingMedia.length + next.length >=
+        maxReportMediaFiles
+      ) {
         nextMessage = `사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`;
         break;
       }
@@ -1935,6 +1946,7 @@ export default function App() {
       const session = data.session;
       const accessToken = session?.access_token;
       if (!accessToken) throw new Error("missing session");
+      const clientId = createUuid();
       if (editingHealthRecord) {
         let media = editingHealthRecord.media ?? [];
         let petIdForRecord = editingHealthRecord.petId ?? petId;
@@ -1978,6 +1990,36 @@ export default function App() {
           };
         }
 
+        if (pendingMedia.length) {
+          if (
+            editingHealthRecord.result.storage === "remote" &&
+            episodeId &&
+            petIdForRecord &&
+            session.user.id
+          ) {
+            try {
+              const addedMedia = await uploadPendingMediaFiles({
+                accessToken,
+                clientId,
+                files: pendingMedia,
+                petId: petIdForRecord,
+                reportId: editingHealthRecord.result.id,
+                userId: session.user.id,
+              });
+              media = [...media, ...addedMedia];
+              setMediaUploadMessage(
+                media.length ? `${formatReportMediaSummary(media)} 저장됐어요.` : "",
+              );
+            } catch {
+              setMediaUploadMessage("기록은 수정됐지만 새 사진·영상은 저장하지 못했어요.");
+            }
+          } else {
+            setMediaUploadMessage(
+              "새 사진·영상은 계정에 연결된 서버 기록에만 추가할 수 있어요.",
+            );
+          }
+        }
+
         const record: HistoryRecord = {
           ...editingHealthRecord,
           petId: petIdForRecord,
@@ -1995,7 +2037,6 @@ export default function App() {
         setHealthMessage("기록을 수정했어요.");
         return;
       }
-      const clientId = createUuid();
 
       const response = await fetch(`${apiBaseUrl}/api/analyze`, {
         method: "POST",
@@ -2623,6 +2664,11 @@ export default function App() {
                           mediaUploadMessage={mediaUploadMessage}
                           message={healthMessage}
                           isEditing={Boolean(editingHealthRecord)}
+                          mediaEnabled={
+                            !editingHealthRecord ||
+                            editingHealthRecord.result.storage === "remote"
+                          }
+                          existingMedia={editingHealthRecord?.media ?? []}
                           pendingMedia={pendingMedia}
                           result={latestResult}
                           episodeId={latestEpisodeId}
@@ -2642,6 +2688,7 @@ export default function App() {
                           }
                           onPickMedia={pickMedia}
                           onRemoveMedia={removePendingMedia}
+                          onStartNew={() => startHealthRecord()}
                           setInput={setHealthInput}
                           onSubmit={submitHealthCheck}
                           onCreateVetDraft={createVetDraft}
@@ -3924,6 +3971,8 @@ function HealthRecorder({
   mediaUploadMessage,
   message,
   isEditing,
+  mediaEnabled,
+  existingMedia,
   pendingMedia,
   result,
   episodeId,
@@ -3933,6 +3982,7 @@ function HealthRecorder({
   vetDraftNotice,
   onPickMedia,
   onRemoveMedia,
+  onStartNew,
   setInput,
   onSubmit,
   onCreateVetDraft,
@@ -3945,6 +3995,8 @@ function HealthRecorder({
   mediaUploadMessage: string;
   message: string;
   isEditing: boolean;
+  mediaEnabled: boolean;
+  existingMedia: ReportMediaAttachment[];
   pendingMedia: PendingMediaAsset[];
   result: AnalysisResult | null;
   episodeId: string | null;
@@ -3952,15 +4004,14 @@ function HealthRecorder({
   vetDraft?: VetReviewDraft;
   vetDraftLoading: boolean;
   vetDraftNotice: EpisodeNotice | null;
-  onPickMedia: () => Promise<void>;
+  onPickMedia: (source: "camera" | "library") => Promise<void>;
   onRemoveMedia: (id: string) => void;
+  onStartNew: () => void;
   setInput: (input: HealthCheckInput) => void;
   onSubmit: (overrideInput?: HealthCheckInput) => Promise<void>;
   onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(isEditing);
-  const showDetails = isEditing || detailsOpen;
   const allNormal =
     input.symptoms.length === 0 &&
     input.appetite === "normal" &&
@@ -3968,134 +4019,24 @@ function HealthRecorder({
     input.duration === "today" &&
     input.redFlags.length === 0 &&
     !input.note;
+  const totalMediaCount = existingMedia.length + pendingMedia.length;
+  const hasContent = !allNormal || totalMediaCount > 0;
   const recordDateTitle =
     recordDateKey === toRecordDateKey(new Date())
       ? "오늘 기록"
       : `${formatCalendarDate(recordDateKey)} 기록`;
 
-  function markAsNormal() {
-    const nextInput = resetToNormal(input);
-    if (allNormal) {
-      void onSubmit(nextInput);
-      return;
-    }
-    setInput(nextInput);
-    if (!isEditing) setDetailsOpen(false);
-  }
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>
-        {isEditing ? "기록 수정" : recordDateTitle}
-      </Text>
-
-      <TouchableOpacity
-        activeOpacity={0.85}
-        disabled={loading}
-        onPress={markAsNormal}
-        style={[styles.normalButton, loading && styles.buttonDisabled]}
-      >
-        <Text style={styles.normalButtonCheck}>{allNormal ? "✓" : "↺"}</Text>
-        <Text style={styles.normalButtonTitle}>
-          {allNormal ? "평소와 같음" : "평소 상태로 초기화"}
-        </Text>
-        {allNormal ? <Text style={styles.normalButtonState}>바로 기록</Text> : null}
-      </TouchableOpacity>
-
-      {!isEditing ? (
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setDetailsOpen((current) => !current)}
-          style={styles.detailToggleButton}
-        >
-          <Text style={styles.detailToggleTitle}>
-            {showDetails ? "상세 입력 닫기" : "변화가 있어요"}
-          </Text>
-          <Text style={styles.detailToggleMark}>{showDetails ? "−" : "+"}</Text>
-        </TouchableOpacity>
-      ) : null}
-
-      {showDetails ? (
-        <View style={styles.healthDetailFields}>
-          <FieldLabel label="증상" />
-          <MultiChipGroup
-            options={symptomOptions}
-            selected={input.symptoms}
-            onToggle={(symptom) =>
-              setInput({ ...input, symptoms: toggleItem(input.symptoms, symptom) })
-            }
-          />
-
-          <FieldLabel label="식욕" />
-          <ChipGroup
-            options={levelOptions}
-            selected={input.appetite}
-            onSelect={(appetite) => setInput({ ...input, appetite })}
-          />
-
-          <FieldLabel label="활력" />
-          <ChipGroup
-            options={levelOptions}
-            selected={input.energy}
-            onSelect={(energy) => setInput({ ...input, energy })}
-          />
-
-          <FieldLabel label="기간" />
-          <ChipGroup
-            options={durationOptions}
-            selected={input.duration}
-            onSelect={(duration) => setInput({ ...input, duration })}
-          />
-
-          <FieldLabel label="위험 신호" />
-          <MultiChipGroup
-            danger
-            options={redFlagOptions}
-            selected={input.redFlags}
-            onToggle={(flag) =>
-              setInput({ ...input, redFlags: toggleItem(input.redFlags, flag) })
-            }
-          />
-
-          <FieldLabel label="메모" />
-          <TextInput
-            maxLength={1000}
-            multiline
-            onChangeText={(note) => setInput({ ...input, note })}
-            placeholder="달라진 상황을 짧게 적어주세요."
-            placeholderTextColor={colors.placeholder}
-            style={[styles.input, styles.textarea]}
-            textAlignVertical="top"
-            value={input.note}
-          />
-
-          <MediaPickerSection
-            disabled={isEditing}
-            mediaMessage={mediaMessage}
-            onPickMedia={onPickMedia}
-            onRemoveMedia={onRemoveMedia}
-            pendingMedia={pendingMedia}
-          />
-        </View>
-      ) : null}
-
-      {showDetails ? (
+  if (result && !isEditing) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>기록했어요</Text>
+        <Message text={message} />
+        <Message text={mediaUploadMessage} tone="success" />
         <PrimaryButton
-          disabled={loading}
-          label={
-            loading
-              ? "저장 중..."
-              : isEditing
-                ? "수정 저장"
-                : "기록 저장"
-          }
-          onPress={() => onSubmit()}
+          disabled={false}
+          label="새 기록 남기기"
+          onPress={onStartNew}
         />
-      ) : null}
-      <Message text={message} />
-      <Message text={mediaUploadMessage} tone="success" />
-
-      {result ? (
         <HealthResultCard
           aiAccess={aiAccess}
           episodeId={episodeId}
@@ -4106,42 +4047,201 @@ function HealthRecorder({
           onCreateVetDraft={onCreateVetDraft}
           onShareVetDraft={onShareVetDraft}
         />
-      ) : null}
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>
+        {isEditing ? "기록 수정" : recordDateTitle}
+      </Text>
+
+      <View style={styles.recordComposer}>
+        <Text style={styles.composerPrompt}>
+          오늘 {input.petName || "반려동물"}는 어땠나요?
+        </Text>
+        <TextInput
+          maxLength={1000}
+          multiline
+          onChangeText={(note) => setInput({ ...input, note })}
+          placeholder="한 줄, 사진 한 장만 남겨도 충분해요."
+          placeholderTextColor={colors.placeholder}
+          style={[styles.input, styles.composerTextarea]}
+          textAlignVertical="top"
+          value={input.note}
+        />
+
+        <MediaPickerSection
+          disabled={
+            totalMediaCount >= maxReportMediaFiles || !mediaEnabled
+          }
+          existingMedia={existingMedia}
+          mediaMessage={mediaMessage}
+          onPickMedia={onPickMedia}
+          onRemoveMedia={onRemoveMedia}
+          pendingMedia={pendingMedia}
+        />
+
+        <View style={styles.composerSectionHeading}>
+          <Text style={styles.composerSectionTitle}>빠른 선택</Text>
+          <Text style={styles.composerSectionHint}>해당되는 변화만 눌러주세요</Text>
+        </View>
+        <ScrollView
+          horizontal
+          contentContainerStyle={styles.observationChipRow}
+          showsHorizontalScrollIndicator={false}
+        >
+          {dailyObservationOptions.map((option) => {
+            const selected = hasDailyObservation(input, option.id);
+            return (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                key={option.id}
+                onPress={() => setInput(toggleDailyObservation(input, option.id))}
+                style={[styles.chip, selected && styles.observationChipSelected]}
+              >
+                <Text style={[styles.chipText, selected && styles.observationChipTextSelected]}>
+                  {selected ? `✓ ${option.label}` : option.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {input.appetite !== "normal" ? (
+          <View style={styles.composerDetailBlock}>
+            <Text style={styles.composerDetailLabel}>식사량</Text>
+            <ChipGroup
+              options={levelOptions.filter((option) => option.id !== "normal")}
+              selected={input.appetite}
+              onSelect={(appetite) => setInput({ ...input, appetite })}
+            />
+          </View>
+        ) : null}
+        {input.energy !== "normal" ? (
+          <View style={styles.composerDetailBlock}>
+            <Text style={styles.composerDetailLabel}>활력</Text>
+            <ChipGroup
+              options={levelOptions.filter((option) => option.id !== "normal")}
+              selected={input.energy}
+              onSelect={(energy) => setInput({ ...input, energy })}
+            />
+          </View>
+        ) : null}
+
+        <View style={styles.composerDetailBlock}>
+          <Text style={styles.composerDetailLabel}>언제부터</Text>
+          <ChipGroup
+            options={durationOptions.map((option) => ({
+              ...option,
+              label: option.id === "today" ? "오늘" : option.label,
+            }))}
+            selected={input.duration}
+            onSelect={(duration) => setInput({ ...input, duration })}
+          />
+        </View>
+
+        {input.redFlags.length ? (
+          <Text style={styles.legacySafetyText}>
+            기존 기록의 위험 신호 {input.redFlags.length}개가 유지됩니다.
+          </Text>
+        ) : null}
+        <Text style={styles.composerSafetyText}>
+          호흡 곤란·의식 저하·경련·지속 출혈은 기록보다 병원 연락이 먼저예요.
+        </Text>
+      </View>
+
+      <PrimaryButton
+        disabled={loading}
+        label={
+          loading
+            ? "저장 중..."
+            : isEditing
+              ? "수정 저장"
+              : hasContent
+                ? "기록하기"
+                : "평소처럼 기록"
+        }
+        onPress={() => onSubmit()}
+      />
+      <Message text={message} />
+      <Message text={mediaUploadMessage} tone="success" />
+
     </View>
   );
 }
 
 function MediaPickerSection({
   disabled = false,
+  existingMedia,
   mediaMessage,
   onPickMedia,
   onRemoveMedia,
   pendingMedia,
 }: {
   disabled?: boolean;
+  existingMedia: ReportMediaAttachment[];
   mediaMessage: string;
-  onPickMedia: () => Promise<void>;
+  onPickMedia: (source: "camera" | "library") => Promise<void>;
   onRemoveMedia: (id: string) => void;
   pendingMedia: PendingMediaAsset[];
 }) {
   return (
     <View style={styles.mediaBox}>
       <View style={styles.mediaHeader}>
-        <View style={styles.cardHeaderText}>
-          <Text style={styles.mediaTitle}>사진·영상</Text>
-        </View>
+        <Text style={styles.mediaTitle}>사진·영상</Text>
+        <Text style={styles.mediaCountText}>
+          {existingMedia.length + pendingMedia.length}/{maxReportMediaFiles}
+        </Text>
+      </View>
+
+      <View style={styles.mediaActionRow}>
         <TouchableOpacity
           activeOpacity={0.85}
           disabled={disabled}
-          onPress={() => void onPickMedia()}
+          onPress={() => void onPickMedia("camera")}
           style={[styles.mediaAddButton, disabled && styles.buttonDisabled]}
         >
-          <Text style={styles.mediaAddButtonText}>추가</Text>
+          <Text style={styles.mediaAddButtonText}>카메라</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          disabled={disabled}
+          onPress={() => void onPickMedia("library")}
+          style={[styles.mediaAddButton, styles.mediaLibraryButton, disabled && styles.buttonDisabled]}
+        >
+          <Text style={[styles.mediaAddButtonText, styles.mediaLibraryButtonText]}>
+            사진·영상
+          </Text>
         </TouchableOpacity>
       </View>
 
-      {pendingMedia.length ? (
+      {existingMedia.length || pendingMedia.length ? (
         <View style={styles.mediaList}>
+          {existingMedia.map((item) => (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={!item.signedUrl}
+              key={item.id}
+              onPress={() => item.signedUrl && void Linking.openURL(item.signedUrl)}
+              style={styles.mediaItem}
+            >
+              {item.kind === "image" && item.signedUrl ? (
+                <Image source={{ uri: item.signedUrl }} style={styles.mediaThumb} />
+              ) : (
+                <View style={[styles.mediaThumb, styles.videoThumb]}>
+                  <Text style={styles.videoThumbText}>영상</Text>
+                </View>
+              )}
+              <View style={styles.mediaItemText}>
+                <Text numberOfLines={1} style={styles.mediaFileName}>
+                  {item.fileName}
+                </Text>
+                <Text style={styles.mediaFileMeta}>저장됨 · 눌러서 보기</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
           {pendingMedia.map((item) => (
             <View key={item.id} style={styles.mediaItem}>
               {item.kind === "image" ? (
@@ -4171,51 +4271,9 @@ function MediaPickerSection({
           ))}
         </View>
       ) : (
-        <Text style={styles.mediaEmptyText}>
-          0/{maxReportMediaFiles} · 파일당 50MB
-        </Text>
+        <Text style={styles.mediaEmptyText}>촬영하거나 앨범에서 바로 추가하세요.</Text>
       )}
       <Message text={mediaMessage} />
-    </View>
-  );
-}
-
-function MultiChipGroup<T extends string>({
-  danger = false,
-  options,
-  selected,
-  onToggle,
-}: {
-  danger?: boolean;
-  options: Array<{ id: T; label: string }>;
-  selected: T[];
-  onToggle: (value: T) => void;
-}) {
-  return (
-    <View style={styles.chipGroup}>
-      {options.map((option) => {
-        const isSelected = selected.includes(option.id);
-        return (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            key={option.id}
-            onPress={() => onToggle(option.id)}
-            style={[
-              styles.chip,
-              isSelected && (danger ? styles.chipDangerSelected : styles.chipSelected),
-            ]}
-          >
-            <Text
-              style={[
-                styles.chipText,
-                isSelected && styles.chipTextSelected,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
     </View>
   );
 }
@@ -5764,7 +5822,7 @@ function PrimaryButton({
 }: {
   disabled: boolean;
   label: string;
-  onPress: () => Promise<void>;
+  onPress: () => void | Promise<void>;
 }) {
   return (
     <TouchableOpacity
@@ -6900,10 +6958,6 @@ const styles = StyleSheet.create({
     borderColor: colors.green,
     backgroundColor: colors.green,
   },
-  chipDangerSelected: {
-    borderColor: colors.danger,
-    backgroundColor: colors.danger,
-  },
   chipText: {
     color: colors.muted,
     fontSize: 13,
@@ -6912,73 +6966,67 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: "#ffffff",
   },
-  normalButton: {
-    minHeight: 58,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 11,
+  recordComposer: {
     marginTop: 14,
-    borderWidth: 1,
-    borderColor: colors.green,
-    borderRadius: 18,
-    backgroundColor: "#eefaf4",
-    paddingHorizontal: 13,
-    paddingVertical: 11,
+    gap: 14,
   },
-  normalButtonCheck: {
-    width: 34,
-    height: 34,
-    overflow: "hidden",
-    borderRadius: 12,
-    backgroundColor: colors.green,
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "900",
-    lineHeight: 34,
-    textAlign: "center",
-  },
-  normalButtonTitle: {
-    flex: 1,
+  composerPrompt: {
     color: colors.ink,
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: "900",
   },
-  normalButtonState: {
-    overflow: "hidden",
-    borderRadius: 999,
-    backgroundColor: "#d9f3e6",
+  composerTextarea: {
+    minHeight: 104,
+  },
+  composerSectionHeading: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  composerSectionTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  composerSectionHint: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  observationChipSelected: {
+    borderColor: colors.green,
+    backgroundColor: colors.greenSoft,
+  },
+  observationChipTextSelected: {
     color: colors.green,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
+    fontWeight: "900",
+  },
+  observationChipRow: {
+    gap: 8,
+    paddingRight: 10,
+  },
+  composerDetailBlock: {
+    gap: 7,
+    borderRadius: 16,
+    backgroundColor: "#f7faf8",
+    padding: 11,
+  },
+  composerDetailLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  composerSafetyText: {
+    color: "#8b6b4d",
+    fontSize: 10,
+    lineHeight: 16,
+  },
+  legacySafetyText: {
+    color: colors.danger,
     fontSize: 10,
     fontWeight: "900",
-  },
-  detailToggleButton: {
-    minHeight: 48,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 18,
-    backgroundColor: "#fbfefd",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  detailToggleTitle: {
-    color: colors.green,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  detailToggleMark: {
-    color: colors.green,
-    fontSize: 18,
-    fontWeight: "900",
-  },
-  healthDetailFields: {
-    marginTop: 4,
+    lineHeight: 16,
   },
   textarea: {
     minHeight: 94,
@@ -6993,7 +7041,7 @@ const styles = StyleSheet.create({
   },
   mediaHeader: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
   },
@@ -7002,16 +7050,34 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "900",
   },
+  mediaCountText: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  mediaActionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
   mediaAddButton: {
-    borderRadius: 999,
+    borderRadius: 13,
     backgroundColor: colors.green,
     paddingHorizontal: 13,
-    paddingVertical: 9,
+    paddingVertical: 10,
   },
   mediaAddButtonText: {
     color: "#ffffff",
     fontSize: 13,
     fontWeight: "900",
+  },
+  mediaLibraryButton: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: "#ffffff",
+  },
+  mediaLibraryButtonText: {
+    color: colors.green,
   },
   mediaList: {
     gap: 9,

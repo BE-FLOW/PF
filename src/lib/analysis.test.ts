@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeLocally,
+  hasDailyObservation,
   deriveAgeGroup,
   profileToHealthInput,
+  toggleDailyObservation,
 } from "./analysis";
 import type { HealthCheckInput } from "./types";
 
@@ -57,5 +59,17 @@ describe("analyzeLocally", () => {
     expect(input.petName).toBe("보리");
     expect(input.breed).toBe("말티즈");
     expect(input.symptoms).toEqual([]);
+  });
+
+  it("turns a daily observation into the existing health input safely", () => {
+    const appetiteChanged = toggleDailyObservation(base, "appetite");
+    expect(appetiteChanged.appetite).toBe("slight");
+    expect(hasDailyObservation(appetiteChanged, "appetite")).toBe(true);
+
+    const withSkinChange = toggleDailyObservation(appetiteChanged, "itching");
+    expect(withSkinChange.symptoms).toContain("itching");
+    expect(toggleDailyObservation(withSkinChange, "itching").symptoms).not.toContain(
+      "itching",
+    );
   });
 });

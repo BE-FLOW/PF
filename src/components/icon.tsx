@@ -14,6 +14,8 @@ export type IconName =
   | "user"
   | "copy"
   | "share"
+  | "camera"
+  | "image"
   | "spark"
   | "paw"
   | "stethoscope";
@@ -94,6 +96,19 @@ export function Icon({
         <circle cx="6" cy="12" r="3" />
         <circle cx="18" cy="19" r="3" />
         <path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" />
+      </>
+    ),
+    camera: (
+      <>
+        <path d="M5 7h3l1.5-2h5L16 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+        <circle cx="12" cy="13" r="4" />
+      </>
+    ),
+    image: (
+      <>
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <circle cx="8.5" cy="9" r="1.5" />
+        <path d="m21 15-5-5L5 20" />
       </>
     ),
     spark: (

@@ -31,6 +31,57 @@ export const levelLabels: Record<HealthCheckInput["appetite"], string> = {
   none: "거의 없음",
 };
 
+export type DailyObservationId = "appetite" | "energy" | SymptomId;
+
+export const dailyObservationOptions: Array<{
+  id: DailyObservationId;
+  label: string;
+}> = [
+  { id: "appetite", label: "식사를 덜 해요" },
+  { id: "energy", label: "기운이 덜해요" },
+  { id: "vomiting", label: "토했어요" },
+  { id: "diarrhea", label: "변이 달라요" },
+  { id: "itching", label: "피부·털이 달라요" },
+  { id: "eye", label: "눈·귀가 달라요" },
+  { id: "limping", label: "움직임이 달라요" },
+  { id: "urination", label: "소변이 달라요" },
+  { id: "cough", label: "기침해요" },
+  { id: "pain", label: "만지면 불편해해요" },
+];
+
+export function hasDailyObservation(
+  input: HealthCheckInput,
+  observation: DailyObservationId,
+) {
+  if (observation === "appetite") return input.appetite !== "normal";
+  if (observation === "energy") return input.energy !== "normal";
+  return input.symptoms.includes(observation);
+}
+
+export function toggleDailyObservation(
+  input: HealthCheckInput,
+  observation: DailyObservationId,
+): HealthCheckInput {
+  if (observation === "appetite") {
+    return {
+      ...input,
+      appetite: input.appetite === "normal" ? "slight" : "normal",
+    };
+  }
+  if (observation === "energy") {
+    return {
+      ...input,
+      energy: input.energy === "normal" ? "slight" : "normal",
+    };
+  }
+  return {
+    ...input,
+    symptoms: input.symptoms.includes(observation)
+      ? input.symptoms.filter((item) => item !== observation)
+      : [...input.symptoms, observation],
+  };
+}
+
 export const ageGroupLabels: Record<HealthCheckInput["ageGroup"], string> = {
   young: "어린 반려동물",
   adult: "성견·성묘",

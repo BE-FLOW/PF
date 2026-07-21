@@ -3,6 +3,8 @@ const apiBaseUrl =
 
 const photoPermissionMessage =
   "반려동물 건강 기록에 보호자가 선택한 사진과 영상을 첨부하기 위해 사진 보관함 접근 권한을 사용합니다.";
+const cameraPermissionMessage =
+  "반려동물의 현재 모습을 건강 기록에 바로 남기기 위해 카메라 접근 권한을 사용합니다.";
 
 module.exports = {
   expo: {
@@ -29,7 +31,7 @@ module.exports = {
       [
         "expo-image-picker",
         {
-          cameraPermission: false,
+          cameraPermission: cameraPermissionMessage,
           microphonePermission: false,
           photosPermission: photoPermissionMessage,
         },
@@ -40,6 +42,7 @@ module.exports = {
       supportsTablet: false,
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
+        NSCameraUsageDescription: cameraPermissionMessage,
         NSPhotoLibraryUsageDescription: photoPermissionMessage,
       },
     },

@@ -921,7 +921,7 @@ export async function registerHealthReportMedia(
 
   try {
     const reportResponse = await supabaseRequest(
-      `health_reports?id=eq.${reportId}&client_id=eq.${clientId}&user_id=eq.${userId}&select=id,client_id,user_id,pet_id,episode_id&limit=1`,
+      `health_reports?id=eq.${reportId}&user_id=eq.${userId}&select=id,client_id,user_id,pet_id,episode_id&limit=1`,
       { method: "GET" },
     );
     if (!reportResponse?.ok) return null;

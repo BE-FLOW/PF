@@ -14,7 +14,14 @@ import {
 import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
-import { analyzeLocally, deriveAgeGroup, profileToHealthInput } from "@/lib/analysis";
+import {
+  analyzeLocally,
+  dailyObservationOptions,
+  deriveAgeGroup,
+  hasDailyObservation,
+  profileToHealthInput,
+  toggleDailyObservation,
+} from "@/lib/analysis";
 import { buildEpisodeReport } from "@/lib/episode-report";
 import { summarizeHealthFlow } from "@/lib/health-flow";
 import {
@@ -70,11 +77,9 @@ import type {
   Level,
   PetEpisode,
   PetProfile,
-  RedFlagId,
   ReportMediaAttachment,
   ReportMediaKind,
   RiskLevel,
-  SymptomId,
   TesterProfile,
   VaccinationRecord,
   VetReviewDraft,
@@ -185,29 +190,11 @@ const breedOptions = {
   other: [],
 } as const;
 
-const symptoms: Array<{ id: SymptomId; label: string; glyph: string }> = [
-  { id: "vomiting", label: "구토", glyph: "V" },
-  { id: "diarrhea", label: "설사", glyph: "D" },
-  { id: "cough", label: "기침", glyph: "C" },
-  { id: "itching", label: "가려움", glyph: "S" },
-  { id: "limping", label: "절뚝거림", glyph: "L" },
-  { id: "eye", label: "눈·귀 이상", glyph: "E" },
-  { id: "urination", label: "배뇨 변화", glyph: "U" },
-  { id: "pain", label: "통증 반응", glyph: "P" },
-];
-
 const levels: Array<{ id: Level; label: string }> = [
   { id: "normal", label: "평소와 같음" },
   { id: "slight", label: "조금 줄었음" },
   { id: "low", label: "많이 줄었음" },
   { id: "none", label: "거의 없음" },
-];
-
-const redFlags: Array<{ id: RedFlagId; label: string }> = [
-  { id: "breathing", label: "호흡이 매우 힘들어 보여요" },
-  { id: "collapse", label: "의식이 흐리거나 쓰러졌어요" },
-  { id: "seizure", label: "경련이 있어요" },
-  { id: "bleeding", label: "출혈이 멈추지 않아요" },
 ];
 
 const riskLabel = {
@@ -305,12 +292,6 @@ function followUpDate(startedAt: string, day: FollowUpDay) {
     month: "long",
     day: "numeric",
   }).format(date);
-}
-
-function toggle<T>(items: T[], item: T) {
-  return items.includes(item)
-    ? items.filter((value) => value !== item)
-    : [...items, item];
 }
 
 function formatDate(value: string) {
@@ -1565,6 +1546,7 @@ function CheckView({
   recordDateKey,
   setInput,
   isEditing,
+  existingMedia,
   mediaFiles,
   setMediaFiles,
   mediaEnabled,
@@ -1581,6 +1563,7 @@ function CheckView({
   recordDateKey: string;
   setInput: (value: HealthCheckInput) => void;
   isEditing: boolean;
+  existingMedia: ReportMediaAttachment[];
   mediaFiles: PendingMediaFile[];
   setMediaFiles: (files: PendingMediaFile[]) => void;
   mediaEnabled: boolean;
@@ -1599,17 +1582,12 @@ function CheckView({
     input.duration === "today" &&
     input.redFlags.length === 0 &&
     !input.note;
+  const totalMediaCount = existingMedia.length + mediaFiles.length;
+  const hasContent = !allNormal || totalMediaCount > 0;
   const recordDateTitle =
     recordDateKey === toRecordDateKey(new Date())
       ? "오늘 기록"
       : `${formatRecordDateKey(recordDateKey)} 기록`;
-  const [showChanges, setShowChanges] = useState(
-    isEditing || !allNormal || mediaFiles.length > 0,
-  );
-  const [showSafety, setShowSafety] = useState(input.redFlags.length > 0);
-  const [showExtras, setShowExtras] = useState(
-    Boolean(input.note || mediaFiles.length),
-  );
   const profileDetails = [
     input.species === "dog"
       ? "강아지"
@@ -1621,34 +1599,8 @@ function CheckView({
   ]
     .filter(Boolean)
     .join(" · ");
-  function normalInput(): HealthCheckInput {
-    return {
-      ...input,
-      symptoms: [],
-      appetite: "normal",
-      energy: "normal",
-      duration: "today",
-      redFlags: [],
-      note: "",
-    };
-  }
-  function handleNormal() {
-    const nextInput = normalInput();
-    if (allNormal) {
-      onSubmit(nextInput);
-      return;
-    }
-    setInput(nextInput);
-    setShowChanges(false);
-    setShowSafety(false);
-    setShowExtras(false);
-  }
   function addMediaFiles(fileList: FileList | null) {
     if (!fileList?.length) return;
-    if (isEditing) {
-      setMediaError("첨부 변경은 새 기록에서 다시 추가해 주세요.");
-      return;
-    }
     if (!mediaEnabled) {
       setMediaError("사진·영상 저장은 로그인 후 등록된 반려동물 기록에서 사용할 수 있어요.");
       return;
@@ -1657,7 +1609,7 @@ function CheckView({
     const nextFiles: PendingMediaFile[] = [];
     let nextError = "";
     for (const file of files) {
-      if (mediaFiles.length + nextFiles.length >= maxReportMediaFiles) {
+      if (totalMediaCount + nextFiles.length >= maxReportMediaFiles) {
         nextError = `사진·영상은 한 기록에 ${maxReportMediaFiles}개까지만 저장할 수 있어요.`;
         break;
       }
@@ -1708,234 +1660,190 @@ function CheckView({
           </span>
           <em>정보 수정</em>
         </button>
-        <button
-          type="button"
-          className={`normal-shortcut ${allNormal ? "selected" : ""}`}
-          onClick={handleNormal}
-          aria-pressed={allNormal}
-          disabled={loading}
-        >
-          <span className="normal-check" aria-hidden="true">
-            <Icon name={allNormal ? "check" : "history"} size={18} />
-          </span>
-          <strong>{allNormal ? "평소와 같음" : "평소 상태로 초기화"}</strong>
-          {allNormal && <em className="normal-state">바로 기록</em>}
-        </button>
-        {!isEditing && (
-          <button
-            type="button"
-            className={`detail-toggle ${showChanges ? "open" : ""}`}
-            onClick={() => setShowChanges((current) => !current)}
-            aria-expanded={showChanges}
-          >
-            <strong>{showChanges ? "상세 입력 닫기" : "변화가 있어요"}</strong>
-            <span aria-hidden="true">{showChanges ? "−" : "+"}</span>
-          </button>
-        )}
-        {showChanges && <section className="form-section compact-section">
-          <div className="section-title compact-title">
-            <h2>달라진 점</h2>
+        <section className="record-composer" aria-label="건강 기록 작성">
+          <label className="composer-prompt" htmlFor="record-note">
+            오늘 {input.petName || "반려동물"}는 어땠나요?
+          </label>
+          <textarea
+            id="record-note"
+            className="composer-note"
+            maxLength={1000}
+            value={input.note}
+            onChange={(event) => setInput({ ...input, note: event.target.value })}
+            placeholder="한 줄, 사진 한 장만 남겨도 충분해요."
+          />
+
+          <div className="composer-media">
+            <div className="composer-media-actions">
+              <label className={`composer-media-button ${mediaEnabled && totalMediaCount < maxReportMediaFiles ? "" : "disabled"}`}>
+                <Icon name="camera" size={17} /> 카메라
+                <input
+                  type="file"
+                  accept="image/*,video/*"
+                  capture="environment"
+                  disabled={!mediaEnabled || totalMediaCount >= maxReportMediaFiles}
+                  onChange={(event) => {
+                    addMediaFiles(event.currentTarget.files);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+              <label className={`composer-media-button ${mediaEnabled && totalMediaCount < maxReportMediaFiles ? "" : "disabled"}`}>
+                <Icon name="image" size={17} /> 사진·영상
+                <input
+                  type="file"
+                  accept={reportMediaAccept}
+                  multiple
+                  disabled={!mediaEnabled || totalMediaCount >= maxReportMediaFiles}
+                  onChange={(event) => {
+                    addMediaFiles(event.currentTarget.files);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+              <span>{totalMediaCount}/{maxReportMediaFiles}</span>
+            </div>
+            {!mediaEnabled && <p className="media-helper">로그인 후 사진·영상을 함께 저장할 수 있어요.</p>}
+            {isEditing && mediaEnabled && <p className="media-helper">기존 첨부는 유지되고 새 파일만 추가돼요.</p>}
+            {(existingMedia.length > 0 || mediaFiles.length > 0) && (
+              <div className="media-preview-grid composer-preview-grid">
+                {existingMedia.map((item) => (
+                  <a
+                    className="media-preview-card existing"
+                    href={item.signedUrl}
+                    key={item.id}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    <div className="media-preview-thumb">
+                      <MediaThumbnail
+                        kind={item.kind}
+                        label={`${item.fileName} 미리보기`}
+                        src={item.signedUrl ?? ""}
+                      />
+                    </div>
+                    <span>
+                      <strong>{item.fileName}</strong>
+                      <small>저장됨 · 눌러서 보기</small>
+                    </span>
+                  </a>
+                ))}
+                {mediaFiles.map((item) => (
+                  <div className="media-preview-card" key={item.id}>
+                    <div className="media-preview-thumb">
+                      <MediaThumbnail
+                        kind={item.kind}
+                        label={`${item.file.name} 미리보기`}
+                        src={item.previewUrl}
+                      />
+                    </div>
+                    <span>
+                      <strong>{item.file.name}</strong>
+                      <small>{item.kind === "image" ? "사진" : "영상"} · {formatFileSize(item.file.size)}</small>
+                    </span>
+                    <button type="button" onClick={() => removeMediaFile(item.id)}>삭제</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {mediaError && <p className="media-error" role="alert">{mediaError}</p>}
           </div>
-          <div className="field">
-            <span className="field-label">증상</span>
-            <div className="symptom-grid">
-              {symptoms.map((item) => (
+
+          <div className="composer-observations">
+            <div className="composer-section-heading">
+              <strong>빠른 선택</strong>
+              <span>해당되는 변화만 눌러주세요</span>
+            </div>
+            <div className="observation-chip-list">
+              {dailyObservationOptions.map((item) => {
+                const selected = hasDailyObservation(input, item.id);
+                return (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={`observation-chip ${selected ? "selected" : ""}`}
+                    onClick={() => setInput(toggleDailyObservation(input, item.id))}
+                    aria-pressed={selected}
+                  >
+                    {selected && <Icon name="check" size={14} />}
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {(input.appetite !== "normal" || input.energy !== "normal") && (
+            <div className="composer-levels">
+              {input.appetite !== "normal" && (
+                <div className="composer-detail-row">
+                  <strong>식사량</strong>
+                  <div className="compact-choice-list" role="group" aria-label="식사량 변화">
+                    {levels.filter((item) => item.id !== "normal").map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={input.appetite === item.id ? "selected" : ""}
+                        onClick={() => setInput({ ...input, appetite: item.id })}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {input.energy !== "normal" && (
+                <div className="composer-detail-row">
+                  <strong>활력</strong>
+                  <div className="compact-choice-list" role="group" aria-label="활력 변화">
+                    {levels.filter((item) => item.id !== "normal").map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={input.energy === item.id ? "selected" : ""}
+                        onClick={() => setInput({ ...input, energy: item.id })}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="composer-duration">
+            <strong>언제부터</strong>
+            <div className="compact-choice-list" role="group" aria-label="지속 기간 선택">
+              {[
+                { id: "today", label: "오늘" },
+                { id: "2-3days", label: "2~3일" },
+                { id: "4-7days", label: "4~7일" },
+                { id: "over-week", label: "1주 이상" },
+              ].map((item) => (
                 <button
+                  type="button"
                   key={item.id}
-                  className={`symptom-chip ${input.symptoms.includes(item.id) ? "selected" : ""}`}
-                  onClick={() =>
-                    setInput({
-                      ...input,
-                      symptoms: toggle(input.symptoms, item.id),
-                    })
-                  }
-                  aria-pressed={input.symptoms.includes(item.id)}
+                  className={input.duration === item.id ? "selected" : ""}
+                  onClick={() => setInput({ ...input, duration: item.id as HealthCheckInput["duration"] })}
                 >
-                  <span className="stat-icon mint" style={{ margin: 0 }}>
-                    {item.glyph}
-                  </span>
                   {item.label}
                 </button>
               ))}
             </div>
           </div>
-          <div className="form-grid" style={{ marginTop: 22 }}>
-            <div className="field full">
-              <span className="field-label">식욕</span>
-              <div className="choice-grid" role="group" aria-label="식욕 선택">
-                {levels.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`choice-card ${input.appetite === item.id ? "selected" : ""}`}
-                    onClick={() => setInput({ ...input, appetite: item.id })}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="field full">
-              <span className="field-label">활력</span>
-              <div className="choice-grid" role="group" aria-label="활력 선택">
-                {levels.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`choice-card ${input.energy === item.id ? "selected" : ""}`}
-                    onClick={() => setInput({ ...input, energy: item.id })}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="field full">
-              <span className="field-label">기간</span>
-              <div
-                className="choice-grid"
-                role="group"
-                aria-label="지속 기간 선택"
-              >
-                {[
-                  { id: "today", label: "오늘부터" },
-                  { id: "2-3days", label: "2~3일" },
-                  { id: "4-7days", label: "4~7일" },
-                  { id: "over-week", label: "1주 이상" },
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    className={`choice-card ${input.duration === item.id ? "selected" : ""}`}
-                    onClick={() =>
-                      setInput({
-                        ...input,
-                        duration: item.id as HealthCheckInput["duration"],
-                      })
-                    }
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="field full">
-              <button
-                type="button"
-                className={`detail-disclosure safety ${showSafety ? "open" : ""}`}
-                onClick={() => setShowSafety((current) => !current)}
-                aria-expanded={showSafety}
-              >
-                <strong>위험 신호</strong>
-                <span>{input.redFlags.length ? `${input.redFlags.length}개 선택` : "확인"}</span>
-              </button>
-              {showSafety && (
-                <div className="urgent-box">
-                  <div className="check-list">
-                    {redFlags.map((item) => (
-                      <label key={item.id} className="check-item">
-                        <input
-                          type="checkbox"
-                          checked={input.redFlags.includes(item.id)}
-                          onChange={() =>
-                            setInput({
-                              ...input,
-                              redFlags: toggle(input.redFlags, item.id),
-                            })
-                          }
-                        />
-                        {item.label}
-                      </label>
-                    ))}
-                  </div>
-                  <p className="helper">선택한 항목이 있으면 가까운 동물병원에 먼저 연락하세요.</p>
-                </div>
-              )}
-            </div>
-            <div className="field full">
-              <button
-                type="button"
-                className={`detail-disclosure ${showExtras ? "open" : ""}`}
-                onClick={() => setShowExtras((current) => !current)}
-                aria-expanded={showExtras}
-              >
-                <strong>메모·사진</strong>
-                <span>{input.note || mediaFiles.length ? "추가됨" : "선택"}</span>
-              </button>
-              {showExtras && (
-                <div className="optional-inputs">
-                  <label htmlFor="note">메모</label>
-                  <textarea
-                    id="note"
-                    maxLength={1000}
-                    value={input.note}
-                    onChange={(event) =>
-                      setInput({ ...input, note: event.target.value })
-                    }
-                    placeholder="달라진 상황을 짧게 적어주세요."
-                  />
-                  <span className="field-label">사진·영상</span>
-                  <div className="media-uploader">
-                    <label
-                      className={`media-dropzone ${mediaEnabled && !isEditing ? "" : "disabled"}`}
-                    >
-                      <input
-                        type="file"
-                        accept={reportMediaAccept}
-                        multiple
-                        disabled={
-                          isEditing ||
-                          !mediaEnabled ||
-                          mediaFiles.length >= maxReportMediaFiles
-                        }
-                        onChange={(event) => {
-                          addMediaFiles(event.currentTarget.files);
-                          event.currentTarget.value = "";
-                        }}
-                      />
-                      <strong>파일 추가</strong>
-                      <em>{mediaFiles.length}/{maxReportMediaFiles}</em>
-                    </label>
-                    {isEditing ? (
-                      <p className="media-helper">첨부 변경은 새 기록에서 할 수 있어요.</p>
-                    ) : !mediaEnabled && (
-                      <p className="media-helper">로그인 후 첨부할 수 있어요.</p>
-                    )}
-                    {mediaFiles.length > 0 && (
-                      <div className="media-preview-grid">
-                        {mediaFiles.map((item) => (
-                          <div className="media-preview-card" key={item.id}>
-                            <div className="media-preview-thumb">
-                              <MediaThumbnail
-                                kind={item.kind}
-                                label={`${item.file.name} 미리보기`}
-                                src={item.previewUrl}
-                              />
-                            </div>
-                            <span>
-                              <strong>{item.file.name}</strong>
-                              <small>
-                                {item.kind === "image" ? "사진" : "영상"} ·{" "}
-                                {formatFileSize(item.file.size)}
-                              </small>
-                            </span>
-                            <button type="button" onClick={() => removeMediaFile(item.id)}>
-                              삭제
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {mediaError && <p className="media-error" role="alert">{mediaError}</p>}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>}
+
+          {input.redFlags.length > 0 && (
+            <p className="legacy-safety-note">기존 기록의 위험 신호 {input.redFlags.length}개가 유지됩니다.</p>
+          )}
+          <p className="composer-safety-note">호흡 곤란·의식 저하·경련·지속 출혈은 기록보다 병원 연락이 먼저예요.</p>
+        </section>
         {error && (
           <div className="form-error" role="alert">
             {error}
           </div>
         )}
-        {(showChanges || isEditing) && <div className="form-footer">
+        <div className="form-footer composer-footer">
           <button
             className="primary-button"
             onClick={() => onSubmit()}
@@ -1944,16 +1852,16 @@ function CheckView({
             {loading ? (
               <>
                 <span className="loading-dot" />{" "}
-                {isEditing ? "수정 반영 중" : "리포트 정리 중"}
+                저장 중
               </>
             ) : (
               <>
-                <Icon name="spark" size={17} />{" "}
-                {isEditing ? "수정 저장" : "기록 저장"}
+                <Icon name="check" size={17} />{" "}
+                {isEditing ? "수정 저장" : hasContent ? "기록하기" : "평소처럼 기록"}
               </>
             )}
           </button>
-        </div>}
+        </div>
       </div>
     </div>
   );
@@ -4372,6 +4280,36 @@ export function PetFlowApp() {
           };
         }
 
+        if (pendingMedia.length) {
+          if (
+            editingRecord.result.storage === "remote" &&
+            episodeId &&
+            petId &&
+            sessionData.session?.access_token &&
+            sessionData.session.user.id
+          ) {
+            try {
+              const addedMedia = await uploadPendingMediaFiles({
+                reportId: editingRecord.result.id,
+                clientId,
+                accessToken: sessionData.session.access_token,
+                userId: sessionData.session.user.id,
+                petId,
+                files: pendingMedia,
+              });
+              media = [...media, ...addedMedia];
+            } catch {
+              setMediaUploadWarning(
+                "기록은 수정됐지만 새 사진·영상은 저장하지 못했어요.",
+              );
+            }
+          } else {
+            setMediaUploadWarning(
+              "새 사진·영상은 계정에 연결된 서버 기록에만 추가할 수 있어요.",
+            );
+          }
+        }
+
         const updated: HistoryRecord = {
           ...editingRecord,
           input: submissionInput,
@@ -4842,9 +4780,14 @@ export function PetFlowApp() {
             recordDateKey={recordDateKey}
             setInput={setInput}
             isEditing={Boolean(editingRecord)}
+            existingMedia={editingRecord?.media ?? []}
             mediaFiles={pendingMedia}
             setMediaFiles={setPendingMedia}
-            mediaEnabled={Boolean(user && selectedPetId)}
+            mediaEnabled={Boolean(
+              user &&
+                selectedPetId &&
+                (!editingRecord || editingRecord.result.storage === "remote"),
+            )}
             mediaError={mediaError}
             setMediaError={setMediaError}
             onBack={() => setView("home", { history: "replace" })}
