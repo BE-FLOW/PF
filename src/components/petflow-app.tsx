@@ -1908,7 +1908,6 @@ function ResultView({
   onEdit,
   onDelete,
   onFeedback,
-  onOpenAccount,
   onCreateVetDraft,
 }: {
   record: HistoryRecord;
@@ -1920,7 +1919,6 @@ function ResultView({
   onEdit: (record: HistoryRecord) => void;
   onDelete: (record: HistoryRecord) => void;
   onFeedback: (value: HistoryRecord["feedback"]) => void;
-  onOpenAccount: () => void;
   onCreateVetDraft: (
     episodeId: string,
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
@@ -2177,16 +2175,9 @@ function ResultView({
                 </strong>
                 <p>
                   {aiAccess?.reason === "monthly_limit"
-                    ? "다음 달에 다시 이용하거나 추가 사용 코드를 적용할 수 있어요."
+                    ? "다음 달에 자동으로 다시 이용할 수 있어요."
                     : "잠시 후 다시 시도해 주세요."}
                 </p>
-                <button
-                  type="button"
-                  className="secondary-button compact"
-                  onClick={onOpenAccount}
-                >
-                  추가 사용 코드
-                </button>
               </div>
             ) : (
               <>
@@ -2556,7 +2547,6 @@ function EpisodeReportView({
   onCreateVetDraft,
   canUseAiReport,
   aiAccess,
-  onOpenAccount,
   onSaveAiFeedback,
 }: {
   selection: EpisodeReportSelection;
@@ -2583,7 +2573,6 @@ function EpisodeReportView({
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
   canUseAiReport: boolean;
   aiAccess: AiAccessStatus | null;
-  onOpenAccount: () => void;
   onSaveAiFeedback: (input: AiReportFeedbackInput) => Promise<string>;
 }) {
   const report = useMemo(
@@ -2622,9 +2611,6 @@ function EpisodeReportView({
   const [vetDraftError, setVetDraftError] = useState("");
   const [feedbackScore, setFeedbackScore] =
     useState<AiReportFeedbackInput["usefulnessScore"]>(5);
-  const [feedbackPay, setFeedbackPay] =
-    useState<AiReportFeedbackInput["wouldPay"]>("maybe");
-  const [feedbackPrice, setFeedbackPrice] = useState("");
   const [feedbackComment, setFeedbackComment] = useState("");
   const [feedbackState, setFeedbackState] = useState<
     "idle" | "saving" | "saved" | "failed"
@@ -2749,18 +2735,10 @@ function EpisodeReportView({
     if (!vetDraft?.usageId) return;
     setFeedbackState("saving");
     setFeedbackError("");
-    const parsedPrice = feedbackPrice.trim()
-      ? Number(feedbackPrice.replace(/[^0-9]/g, ""))
-      : null;
     const message = await onSaveAiFeedback({
       usageId: vetDraft.usageId,
       episodeId: selection.episode?.id,
       usefulnessScore: feedbackScore,
-      wouldPay: feedbackPay,
-      willingnessToPayKrw:
-        parsedPrice !== null && Number.isFinite(parsedPrice)
-          ? parsedPrice
-          : null,
       comment: feedbackComment.trim() || undefined,
     });
     if (message) {
@@ -2861,16 +2839,9 @@ function EpisodeReportView({
             </strong>
             <p>
               {aiAccess?.reason === "monthly_limit"
-                ? "다음 달에 다시 이용하거나 추가 사용 코드를 적용할 수 있어요."
+                ? "다음 달에 자동으로 다시 이용할 수 있어요."
                 : "잠시 후 다시 시도해 주세요."}
             </p>
-            <button
-              type="button"
-              className="secondary-button compact"
-              onClick={onOpenAccount}
-            >
-              추가 사용 코드
-            </button>
           </div>
         ) : (
           <>
@@ -2945,30 +2916,6 @@ function EpisodeReportView({
                           <option value={2}>2점 · 부족</option>
                           <option value={1}>1점 · 거의 도움 안 됨</option>
                         </select>
-                      </label>
-                      <label>
-                        비용을 낼 의향
-                        <select
-                          value={feedbackPay}
-                          onChange={(event) =>
-                            setFeedbackPay(event.target.value as AiReportFeedbackInput["wouldPay"])
-                          }
-                        >
-                          <option value="maybe">상황에 따라 가능</option>
-                          <option value="yes">낼 의향 있음</option>
-                          <option value="no">아직 없음</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="ai-feedback-grid">
-                      <label>
-                        적정 가격 (선택)
-                        <input
-                          value={feedbackPrice}
-                          onChange={(event) => setFeedbackPrice(event.target.value)}
-                          inputMode="numeric"
-                          placeholder="예: 3000"
-                        />
                       </label>
                       <label>
                         짧은 의견 (선택)
@@ -4148,34 +4095,6 @@ export function PetFlowApp() {
     });
     return "";
   }
-  async function redeemAiCode(code: string) {
-    const supabase = getSupabaseBrowserClient();
-    try {
-      const { data } = supabase
-        ? await supabase.auth.getSession()
-        : { data: { session: null } };
-      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
-      const response = await fetch("/api/ai-access", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${data.session.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ code }),
-      });
-      const payload = (await response.json()) as {
-        access?: AiAccessStatus;
-        error?: string;
-      };
-      if (!response.ok || !payload.access) {
-        return payload.error ?? "추가 사용 코드를 적용하지 못했어요.";
-      }
-      setAiAccess(payload.access);
-      return "";
-    } catch {
-      return "추가 사용 코드를 적용하지 못했어요.";
-    }
-  }
   async function logout() {
     const supabase = getSupabaseBrowserClient();
     try {
@@ -4790,7 +4709,6 @@ export function PetFlowApp() {
             onOAuth={handleOAuth}
             onLinkOAuth={handleLinkOAuth}
             onSaveTesterProfile={saveTesterProfile}
-            onRedeemAiCode={redeemAiCode}
             onRequestAccountDeletion={requestAccountDeletion}
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
@@ -4831,7 +4749,6 @@ export function PetFlowApp() {
             onEdit={startEditRecord}
             onDelete={(record) => void deleteRecord(record)}
             onFeedback={updateFeedback}
-            onOpenAccount={() => setView("account")}
             onCreateVetDraft={createVetDraft}
           />
         )}{" "}
@@ -4892,7 +4809,6 @@ export function PetFlowApp() {
             onCreateVetDraft={createVetDraft}
             canUseAiReport={Boolean(aiAccess?.enabled)}
             aiAccess={aiAccess}
-            onOpenAccount={() => setView("account")}
             onSaveAiFeedback={submitAiReportFeedback}
             onSelectRecord={(record) => {
               setMediaUploadWarning("");

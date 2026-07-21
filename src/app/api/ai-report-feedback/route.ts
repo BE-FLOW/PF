@@ -18,8 +18,7 @@ export async function POST(request: Request) {
 
   if (
     typeof body.usageId !== "string" ||
-    typeof body.usefulnessScore !== "number" ||
-    typeof body.wouldPay !== "string"
+    typeof body.usefulnessScore !== "number"
   ) {
     return NextResponse.json(
       { error: "AI 리포트 피드백을 다시 확인해 주세요." },
@@ -31,8 +30,6 @@ export async function POST(request: Request) {
     usageId: body.usageId,
     episodeId: body.episodeId,
     usefulnessScore: body.usefulnessScore,
-    wouldPay: body.wouldPay,
-    willingnessToPayKrw: body.willingnessToPayKrw,
     comment: body.comment,
   } as AiReportFeedbackInput);
   if (!saved) {

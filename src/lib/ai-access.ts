@@ -24,10 +24,8 @@ export function buildStandardAiAccessStatus(
 
   return {
     enabled: remainingThisMonth > 0,
-    accessMode: "standard",
     reason: remainingThisMonth > 0 ? "active" : "monthly_limit",
     monthlyReportLimit,
-    totalReportLimit: null,
     usedThisMonth: normalizedUsedThisMonth,
     usedTotal: normalizedUsedTotal,
     remainingThisMonth,

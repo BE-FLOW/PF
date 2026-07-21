@@ -21,7 +21,7 @@ That section collected the minimum account information required after sign-in: n
 
 After signing in with the review account, please complete the required account information screen, add a pet, and create a health record. You can then access pet management, health records, image/video attachments, vaccination records, check score, 14-day health flow, hospital-sharing summaries, account linking, sign-out, and account deletion request flows.
 
-The AI veterinary summary is available to every signed-in user within the monthly allowance shown in the account screen. No participation code is required for App Review. The feature creates an unreviewed handoff draft from the user's own structured records and does not provide diagnosis, prescriptions, medication names, dosage, or treatment plans.
+The AI veterinary summary is included free for every signed-in user within the same monthly fair-use allowance shown in the account screen. PetFlow does not use participation codes, purchases, subscriptions, external payments, or account tiers to unlock this feature. The feature creates an unreviewed handoff draft from the user's own structured records and does not provide diagnosis, prescriptions, medication names, dosage, or treatment plans.
 
 Best regards,
 PetFlow Team

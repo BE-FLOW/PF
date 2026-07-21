@@ -132,13 +132,7 @@ function aiAccessCopy(access: AiAccessStatus | null) {
     return "사용량을 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
   if (access.reason === "monthly_limit") {
-    return "이번 달 AI 요약 사용량을 모두 사용했어요.";
-  }
-  if (access.reason === "total_limit") {
-    return "추가 사용 코드의 전체 사용량을 모두 사용했어요.";
-  }
-  if (access.reason === "revoked") {
-    return "추가 사용 코드가 만료됐어요.";
+    return "이번 달 제공량을 모두 사용했어요. 다음 달 자동으로 다시 이용할 수 있어요.";
   }
   return "기록을 수의사가 보기 좋은 병원용 요약으로 정리해요.";
 }
@@ -156,7 +150,6 @@ export function AccountView({
   onOAuth,
   onLinkOAuth,
   onSaveTesterProfile,
-  onRedeemAiCode,
   onRequestAccountDeletion,
   onLogout,
   onAddPet,
@@ -181,7 +174,6 @@ export function AccountView({
   onOAuth: (provider: OAuthProvider) => Promise<string>;
   onLinkOAuth: (provider: OAuthProvider) => Promise<string>;
   onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
-  onRedeemAiCode: (code: string) => Promise<string>;
   onRequestAccountDeletion: () => Promise<string>;
   onLogout: () => Promise<void>;
   onAddPet: () => void;
@@ -211,10 +203,6 @@ export function AccountView({
   const [enabledOAuthProviders, setEnabledOAuthProviders] = useState(
     defaultOAuthProviderStatus,
   );
-  const [aiCode, setAiCode] = useState("");
-  const [showAiCode, setShowAiCode] = useState(false);
-  const [aiCodeSaving, setAiCodeSaving] = useState(false);
-  const [aiCodeMessage, setAiCodeMessage] = useState("");
   const [deletionSaving, setDeletionSaving] = useState(false);
   const [deletionMessage, setDeletionMessage] = useState("");
   const [deletionRequested, setDeletionRequested] = useState(false);
@@ -299,21 +287,6 @@ export function AccountView({
     setConsented(testerProfile?.consentVersion === testerConsentVersion);
     setMessage("");
     setEditingTester(true);
-  }
-
-  async function redeemAiCode() {
-    if (!aiCode.trim()) {
-      setAiCodeMessage("추가 사용 코드를 입력해 주세요.");
-      return;
-    }
-    setAiCodeSaving(true);
-    const result = await onRedeemAiCode(aiCode);
-    setAiCodeSaving(false);
-    setAiCodeMessage(result || "추가 사용 코드가 적용됐어요.");
-    if (!result) {
-      setAiCode("");
-      setShowAiCode(false);
-    }
   }
 
   async function requestDeletion() {
@@ -464,51 +437,9 @@ export function AccountView({
                 </div>
                 <div>
                   <span>이용 방식</span>
-                  <strong>
-                    {aiAccess.accessMode === "code"
-                      ? aiAccess.codeLabel ?? "추가 사용권"
-                      : "기본 제공"}
-                  </strong>
+                  <strong>모든 회원 무료</strong>
                 </div>
               </div>
-            )}
-            <div className="ai-extra-code">
-              <button
-                type="button"
-                className="ai-extra-code-toggle"
-                onClick={() => setShowAiCode((current) => !current)}
-              >
-                <span>추가 사용 코드</span>
-                <span>{showAiCode ? "접기" : "열기"}</span>
-              </button>
-              {showAiCode && (
-                <>
-                  <p>운영자가 발급한 코드가 있을 때만 입력해 주세요.</p>
-                  <div className="ai-code-form">
-                    <input
-                      value={aiCode}
-                      onChange={(event) => {
-                        setAiCode(event.target.value.toUpperCase());
-                        setAiCodeMessage("");
-                      }}
-                      placeholder="PF-ABCD-1234-EFGH"
-                      autoComplete="off"
-                    />
-                    <button
-                      className="primary-button compact"
-                      onClick={redeemAiCode}
-                      disabled={aiCodeSaving}
-                    >
-                      {aiCodeSaving ? "확인 중..." : "코드 적용"}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-            {aiCodeMessage && (
-              <p className={aiCodeMessage.includes("적용됐어요") ? "form-success" : "form-error"} role="alert">
-                {aiCodeMessage}
-              </p>
             )}
           </section>
 

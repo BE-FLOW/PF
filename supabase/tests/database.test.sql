@@ -19,8 +19,8 @@ select has_table(
   'episode progress logs table exists'
 );
 select has_view('public', 'tester_management', 'tester management view exists');
-select has_table('public', 'ai_access_codes', 'ai access codes table exists');
-select has_table('public', 'ai_access_grants', 'ai access grants table exists');
+select hasnt_table('public', 'ai_access_codes', 'AI access codes were removed');
+select hasnt_table('public', 'ai_access_grants', 'AI access grants were removed');
 select has_table('public', 'ai_report_usage', 'ai report usage table exists');
 select has_table('public', 'ai_report_feedback', 'ai report feedback table exists');
 select has_view('public', 'ai_usage_management', 'ai usage management view exists');
@@ -239,16 +239,6 @@ select is(
 );
 
 select is(
-  (select relrowsecurity from pg_class where oid = 'public.ai_access_codes'::regclass),
-  true,
-  'RLS is enabled for AI access codes'
-);
-select is(
-  (select relrowsecurity from pg_class where oid = 'public.ai_access_grants'::regclass),
-  true,
-  'RLS is enabled for AI access grants'
-);
-select is(
   (select relrowsecurity from pg_class where oid = 'public.ai_report_usage'::regclass),
   true,
   'RLS is enabled for AI report usage'
@@ -260,56 +250,60 @@ select is(
 );
 select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename in (
-    'ai_access_codes',
-    'ai_access_grants',
     'ai_report_usage',
     'ai_report_feedback'
   )),
   0,
   'AI access and usage data has no browser-facing policies'
 );
-select has_column('public', 'ai_access_codes', 'code_hash', 'AI access code hash is stored');
-select has_column('public', 'ai_access_codes', 'monthly_report_limit', 'AI code monthly limit is stored');
-select has_column('public', 'ai_access_grants', 'monthly_report_limit', 'AI grant monthly limit is stored');
+select hasnt_column('public', 'ai_report_usage', 'grant_id', 'AI usage has no code grant');
 select has_column('public', 'ai_report_usage', 'total_tokens', 'AI report token usage is stored');
 select has_column('public', 'ai_report_usage', 'estimated_cost_usd', 'AI report cost estimate is stored');
 select has_column('public', 'ai_report_feedback', 'usefulness_score', 'AI report usefulness score is stored');
-select has_column('public', 'ai_report_feedback', 'would_pay', 'AI report willingness to pay is stored');
+select hasnt_column('public', 'ai_report_feedback', 'would_pay', 'payment intent is not collected');
+select hasnt_column(
+  'public',
+  'ai_report_feedback',
+  'willingness_to_pay_krw',
+  'price willingness is not collected'
+);
+select hasnt_function('public', 'normalize_ai_access_code', array['text'], 'code normalization was removed');
+select hasnt_function('public', 'hash_ai_access_code', array['text'], 'code hashing was removed');
+select hasnt_function(
+  'public',
+  'create_ai_access_code',
+  array['text', 'integer', 'integer', 'integer', 'timestamp with time zone', 'text'],
+  'code creation was removed'
+);
+select hasnt_function(
+  'public',
+  'redeem_ai_access_code',
+  array['uuid', 'text'],
+  'code redemption was removed'
+);
 select is(
   has_function_privilege(
     'authenticated',
-    'public.create_ai_access_code(text,integer,integer,integer,timestamp with time zone,text)',
+    'public.reserve_ai_report_usage(uuid,uuid,uuid,text,integer)',
     'EXECUTE'
   ),
   false,
-  'authenticated users cannot create AI access codes'
+  'authenticated users cannot reserve AI usage directly'
 );
 select is(
   has_function_privilege(
     'service_role',
-    'public.create_ai_access_code(text,integer,integer,integer,timestamp with time zone,text)',
+    'public.reserve_ai_report_usage(uuid,uuid,uuid,text,integer)',
     'EXECUTE'
   ),
   true,
-  'service role can create AI access codes'
+  'service role can reserve AI usage through route handlers'
 );
-select is(
-  has_function_privilege(
-    'authenticated',
-    'public.redeem_ai_access_code(uuid,text)',
-    'EXECUTE'
-  ),
-  false,
-  'authenticated users cannot call AI code redemption RPC directly'
-);
-select is(
-  has_function_privilege(
-    'service_role',
-    'public.redeem_ai_access_code(uuid,text)',
-    'EXECUTE'
-  ),
-  true,
-  'service role can redeem AI access codes through route handlers'
+select has_column(
+  'public',
+  'ai_usage_management',
+  'current_month_ai_reports',
+  'AI management view exposes monthly usage'
 );
 
 select has_column(

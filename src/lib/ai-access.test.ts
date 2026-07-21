@@ -9,7 +9,6 @@ describe("AI report access", () => {
   it("gives every signed-in user a default monthly allowance", () => {
     expect(buildStandardAiAccessStatus(1, 3)).toMatchObject({
       enabled: true,
-      accessMode: "standard",
       reason: "active",
       monthlyReportLimit: defaultAiMonthlyReportLimit,
       remainingThisMonth: defaultAiMonthlyReportLimit - 1,

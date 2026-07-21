@@ -23,7 +23,7 @@ const metadata = {
 - 사진과 동영상 첨부
 - 예방접종 기록과 다음 접종일 메모
 - 병원에 보여줄 요약과 경과 기록
-- 로그인 사용자용 AI 병원 요약과 사용자 피드백
+- 모든 로그인 사용자에게 동일한 월간 제공량이 적용되는 AI 병원 요약과 사용자 피드백
 - 계정 화면의 계정 삭제 요청
 
 PetFlow는 진단이나 처방을 제공하지 않습니다. AI 리포트는 로그인 사용자의 기록을 정리한 수의사 검토용 초안이며, 수의사의 확인을 대신하지 않습니다.`,
@@ -39,6 +39,20 @@ const appInfoMetadata = {
   subtitle: "반려동물 건강 기록과 병원 공유",
   privacyPolicyUrl: "https://pf-two-eta.vercel.app/privacy",
 };
+
+const reviewNotes = `PetFlow is a free app and does not sell or unlock digital content or services.
+
+The participation-code and additional-use-code system has been completely removed from the app, API, and database. The AI Hospital Summary is included for every signed-in user under the same server-side monthly fair-use allowance. There is no purchase, subscription, external payment, redeemable code, or account tier. When the monthly allowance is used, it becomes available again automatically in the next calendar month.
+
+Review steps:
+1. Sign in using the review account already provided in App Review Information.
+2. Complete the required account information if requested.
+3. Add or select a pet and create a health record.
+4. Open Health Flow, select the record group, and tap AI Hospital Summary.
+
+The AI output is labeled as an unreviewed draft. It organizes the user's own observations for veterinary review and does not provide diagnosis, prescriptions, medication names, dosage, or treatment plans.
+
+The screenshots were replaced with captures of the current app showing Home and Check Score, health record entry, Health Flow, pet/account management, and the hospital-sharing AI summary.`;
 
 const args = parseArgs();
 
@@ -143,6 +157,26 @@ async function updateAppInfoLocalization(localizationId) {
   return response.data;
 }
 
+async function updateReviewNotes(versionId) {
+  const detail = await request(
+    `/v1/appStoreVersions/${versionId}/appStoreReviewDetail`,
+  );
+  if (!detail?.data?.id) {
+    throw new Error("No App Store review detail found for this version.");
+  }
+  const response = await request(`/v1/appStoreReviewDetails/${detail.data.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      data: {
+        type: "appStoreReviewDetails",
+        id: detail.data.id,
+        attributes: { notes: reviewNotes },
+      },
+    }),
+  });
+  return response.data;
+}
+
 const app = await request(`/v1/apps/${appId}`);
 const version = await findAppStoreVersion();
 const build = await findLatestValidBuild();
@@ -151,6 +185,7 @@ const localization = await findLocalization(version.id);
 const updatedLocalization = await updateLocalization(localization.id);
 const appInfoLocalization = await findAppInfoLocalization();
 const updatedAppInfoLocalization = await updateAppInfoLocalization(appInfoLocalization.id);
+const updatedReviewDetail = await updateReviewNotes(version.id);
 const connectedBuild = await request(`/v1/appStoreVersions/${version.id}/build`);
 
 console.log(
@@ -184,6 +219,10 @@ console.log(
         locale: updatedAppInfoLocalization.attributes.locale,
         subtitle: updatedAppInfoLocalization.attributes.subtitle,
         privacyPolicyUrl: updatedAppInfoLocalization.attributes.privacyPolicyUrl,
+      },
+      reviewDetail: {
+        id: updatedReviewDetail.id,
+        notesLength: updatedReviewDetail.attributes.notes.length,
       },
     },
     null,

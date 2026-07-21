@@ -52,26 +52,16 @@ Supabase Authentication에서 Auth 사용자를 삭제한다. Auth 사용자 삭
 테스터 정보, 반려동물, 사건, 기록, 계획, 경과, AI 요약 사용량과 피드백은 cascade로 함께
 삭제된다.
 
-## AI 병원 요약과 추가 사용 코드
+## AI 병원 요약
 
-수의사 검토용 AI 요약은 모든 로그인 사용자에게 월 기본 사용량을 제공한다.
+수의사 검토용 AI 요약은 모든 로그인 사용자에게 동일한 무료 월간 사용량을 제공한다.
 `AI_REPORT_MONTHLY_LIMIT`이 없으면 월 5회이며, 생성 권한과 기록 소유권은 서버에서
-확인한다. 관리자는 `create_ai_access_code(...)`로 추가 사용 코드를 발급할 수 있고,
-사용자가 계정 화면에서 적용하면 `ai_access_grants`에 추가 사용권을 저장한다. 코드
-원문은 생성 직후 한 번만 공유하고 DB에는 해시와 앞 6자리 prefix만 남긴다.
-
-키마다 다음 값을 다르게 줄 수 있다.
-
-- `target_label`: 파일럿 그룹, 병원, 내부 리뷰어 등 운영용 이름
-- `target_max_redemptions`: 몇 명까지 같은 키를 사용할 수 있는지
-- `target_monthly_report_limit`: 코드로 추가되는 월간 AI 요약 횟수
-- `target_total_report_limit`: 사용자별 전체 생성 횟수
-- `target_expires_at`: 만료일
-- `disabled_at`: 회수 또는 일시 중지
+확인한다. 코드, 구독, 결제, 사용자 등급으로 추가 기능을 열지 않는다. 월간 제공량을
+모두 사용하면 다음 달에 자동으로 다시 이용할 수 있다.
 
 로그인 사용자는 자신이 소유한 사건의 AI 요약 API만 호출할 수 있다. 생성 시
 `ai_report_usage`에 성공·실패, 모델, 토큰 사용량과 선택적 비용 추정값을 남긴다.
 리포트 원문은 저장하지 않으며 OpenAI Responses 요청에는 `store: false`를 사용한다.
-생성 후 사용자가 남기는 유용성 점수, 지불의향,
-희망 가격, 짧은 의견은 웹과 모바일 모두 `/api/ai-report-feedback`를 통해
+생성 후 사용자가 남기는 유용성 점수와 짧은 의견은 웹과 모바일 모두
+`/api/ai-report-feedback`를 통해
 `ai_report_feedback`에 저장해 파일럿 판단에 사용한다.

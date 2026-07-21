@@ -47,38 +47,9 @@ select
 from public.episode_progress_logs progress
 order by progress.recorded_at desc;
 
--- Create an additional AI summary allowance code. The raw code is shown once;
--- share it only with the intended user because only its hash is stored.
-select *
-from public.create_ai_access_code(
-  target_label => 'pilot-vet-report-001',
-  target_max_redemptions => 20,
-  target_monthly_report_limit => 10,
-  target_total_report_limit => 30,
-  target_expires_at => now() + interval '30 days',
-  target_created_by => 'admin'
-);
-
--- Small one-off additional allowance for a single reviewer.
-select *
-from public.create_ai_access_code(
-  target_label => 'single-reviewer-001',
-  target_max_redemptions => 1,
-  target_monthly_report_limit => 3,
-  target_total_report_limit => 5,
-  target_expires_at => now() + interval '14 days',
-  target_created_by => 'admin'
-);
-
--- Revoke an additional allowance group. The raw code cannot be recovered later.
-update public.ai_access_codes
-set disabled_at = now()
-where label = 'pilot-vet-report-001'
-  and disabled_at is null;
-
 select *
 from public.ai_usage_management
-order by last_ai_report_at desc nulls last, granted_at desc;
+order by last_ai_report_at desc nulls last;
 
 select
   usage.user_id,
@@ -98,8 +69,6 @@ select
   feedback.user_id,
   feedback.episode_id,
   feedback.usefulness_score,
-  feedback.would_pay,
-  feedback.willingness_to_pay_krw,
   feedback.comment,
   feedback.created_at
 from public.ai_report_feedback feedback

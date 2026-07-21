@@ -207,30 +207,17 @@ export interface EpisodeReport {
 
 export interface AiAccessStatus {
   enabled: boolean;
-  accessMode: "standard" | "code";
-  reason:
-    | "active"
-    | "no_code"
-    | "revoked"
-    | "monthly_limit"
-    | "total_limit"
-    | "unavailable";
-  grantId?: string;
-  codeLabel?: string;
+  reason: "active" | "monthly_limit" | "unavailable";
   monthlyReportLimit: number;
-  totalReportLimit: number | null;
   usedThisMonth: number;
   usedTotal: number;
   remainingThisMonth: number;
-  grantedAt?: string;
 }
 
 export interface AiReportFeedbackInput {
   usageId: string;
   episodeId?: string;
   usefulnessScore: 1 | 2 | 3 | 4 | 5;
-  wouldPay: "no" | "maybe" | "yes";
-  willingnessToPayKrw?: number | null;
   comment?: string;
 }
 

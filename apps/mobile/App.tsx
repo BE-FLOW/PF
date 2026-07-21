@@ -192,8 +192,6 @@ interface ProgressDraft {
 
 interface AiFeedbackDraft {
   usefulnessScore: AiReportFeedbackInput["usefulnessScore"];
-  wouldPay: AiReportFeedbackInput["wouldPay"];
-  price: string;
   comment: string;
 }
 
@@ -227,8 +225,6 @@ const emptyPetDraft: PetDraft = {
 
 const defaultAiFeedbackDraft: AiFeedbackDraft = {
   usefulnessScore: 5,
-  wouldPay: "maybe",
-  price: "",
   comment: "",
 };
 
@@ -308,15 +304,6 @@ const aiFeedbackScoreOptions: Array<{
   { id: 3, label: "3점" },
   { id: 2, label: "2점" },
   { id: 1, label: "1점" },
-];
-
-const aiWouldPayOptions: Array<{
-  id: AiReportFeedbackInput["wouldPay"];
-  label: string;
-}> = [
-  { id: "maybe", label: "상황에 따라" },
-  { id: "yes", label: "낼 의향 있음" },
-  { id: "no", label: "아직 없음" },
 ];
 
 const apiBaseUrl =
@@ -527,9 +514,6 @@ export default function App() {
     tone: "success",
   });
   const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
-  const [aiCodeDraft, setAiCodeDraft] = useState("");
-  const [aiCodeLoading, setAiCodeLoading] = useState(false);
-  const [aiCodeMessage, setAiCodeMessage] = useState("");
   const [accountDeletionLoading, setAccountDeletionLoading] = useState(false);
   const [accountDeletionMessage, setAccountDeletionMessage] = useState("");
   const [accountDeletionRequested, setAccountDeletionRequested] = useState(false);
@@ -726,9 +710,6 @@ export default function App() {
       setProgressSavingKey(null);
       setProgressNotice({ episodeId: null, text: "", tone: "success" });
       setAiAccess(null);
-      setAiCodeDraft("");
-      setAiCodeLoading(false);
-      setAiCodeMessage("");
       setAccountDeletionLoading(false);
       setAccountDeletionMessage("");
       setAccountDeletionRequested(false);
@@ -2330,53 +2311,6 @@ export default function App() {
     }
   }
 
-  async function redeemAiCode() {
-    const code = aiCodeDraft.trim();
-    if (!code) {
-      setAiCodeMessage("추가 사용 코드를 입력해 주세요.");
-      return;
-    }
-
-    setAiCodeLoading(true);
-    setAiCodeMessage("");
-    try {
-      const supabase = getSupabaseClient();
-      const { data } = supabase
-        ? await supabase.auth.getSession()
-        : { data: { session: null } };
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("missing session");
-
-      const response = await fetch(`${apiBaseUrl}/api/ai-access`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ code }),
-      });
-      const payload = (await response.json()) as {
-        access?: AiAccessStatus;
-        error?: string;
-      };
-      if (!response.ok || !payload.access) {
-        throw new Error(payload.error ?? "invalid code");
-      }
-
-      setAiAccess(payload.access);
-      setAiCodeDraft("");
-      setAiCodeMessage("추가 사용 코드가 적용됐어요.");
-    } catch (error) {
-      setAiCodeMessage(
-        error instanceof Error
-          ? error.message
-          : "추가 사용 코드를 적용하지 못했어요.",
-      );
-    } finally {
-      setAiCodeLoading(false);
-    }
-  }
-
   async function createVetDraft(episodeId: string) {
     if (!aiAccess?.enabled) {
       setVetDraftNotice({
@@ -2476,9 +2410,6 @@ export default function App() {
     if (!usageId) return;
 
     const feedback = aiFeedbackDrafts[usageId] ?? defaultAiFeedbackDraft;
-    const price = feedback.price.trim()
-      ? Number(feedback.price.replace(/[^0-9]/g, ""))
-      : null;
 
     setAiFeedbackSavingUsageId(usageId);
     setAiFeedbackNotice({ episodeId, text: "", tone: "success" });
@@ -2500,9 +2431,6 @@ export default function App() {
           usageId,
           episodeId,
           usefulnessScore: feedback.usefulnessScore,
-          wouldPay: feedback.wouldPay,
-          willingnessToPayKrw:
-            price !== null && Number.isFinite(price) ? price : null,
           comment: feedback.comment.trim() || undefined,
         } satisfies AiReportFeedbackInput),
       });
@@ -2535,9 +2463,6 @@ export default function App() {
   const accountCard = user ? (
     <AccountCard
       aiAccess={aiAccess}
-      aiCodeDraft={aiCodeDraft}
-      aiCodeLoading={aiCodeLoading}
-      aiCodeMessage={aiCodeMessage}
       accountDeletionLoading={accountDeletionLoading}
       accountDeletionMessage={accountDeletionMessage}
       accountDeletionRequested={accountDeletionRequested}
@@ -2547,9 +2472,7 @@ export default function App() {
       linkOauthMessage={linkOauthMessage}
       enabledOAuthProviders={enabledOAuthProviders}
       onSignOut={signOut}
-      onChangeAiCode={setAiCodeDraft}
       onLinkOAuth={linkOAuthIdentity}
-      onRedeemAiCode={redeemAiCode}
       onRequestAccountDeletion={requestAccountDeletion}
       disabled={loading}
     />
@@ -2684,7 +2607,6 @@ export default function App() {
                           onRemoveMedia={removePendingMedia}
                           setInput={setHealthInput}
                           onSubmit={submitHealthCheck}
-                          onGoAccount={() => setMainSection("account")}
                           onCreateVetDraft={createVetDraft}
                           onShareVetDraft={shareVetDraft}
                         />
@@ -3329,9 +3251,6 @@ function TesterFields({
 
 function AccountCard({
   aiAccess,
-  aiCodeDraft,
-  aiCodeLoading,
-  aiCodeMessage,
   accountDeletionLoading,
   accountDeletionMessage,
   accountDeletionRequested,
@@ -3341,16 +3260,11 @@ function AccountCard({
   linkOauthMessage,
   enabledOAuthProviders,
   disabled,
-  onChangeAiCode,
   onLinkOAuth,
-  onRedeemAiCode,
   onRequestAccountDeletion,
   onSignOut,
 }: {
   aiAccess: AiAccessStatus | null;
-  aiCodeDraft: string;
-  aiCodeLoading: boolean;
-  aiCodeMessage: string;
   accountDeletionLoading: boolean;
   accountDeletionMessage: string;
   accountDeletionRequested: boolean;
@@ -3360,13 +3274,10 @@ function AccountCard({
   linkOauthMessage: string;
   enabledOAuthProviders: Record<OAuthProvider, boolean>;
   disabled: boolean;
-  onChangeAiCode: (value: string) => void;
   onLinkOAuth: (provider: OAuthProvider) => Promise<void>;
-  onRedeemAiCode: () => Promise<void>;
   onRequestAccountDeletion: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }) {
-  const [showAiCode, setShowAiCode] = useState(false);
   const googleLinked = hasLinkedProvider(user, "google");
   const appleLinked = hasLinkedProvider(user, "apple");
   const appleEnabled = enabledOAuthProviders.apple || appleLinked;
@@ -3508,53 +3419,10 @@ function AccountCard({
             </View>
             <View style={styles.aiUsageItem}>
               <Text style={styles.aiUsageLabel}>이용 방식</Text>
-              <Text style={styles.aiUsageValue}>
-                {aiAccess.accessMode === "code"
-                  ? aiAccess.codeLabel ?? "추가 사용권"
-                  : "기본 제공"}
-              </Text>
+              <Text style={styles.aiUsageValue}>모든 회원 무료</Text>
             </View>
           </View>
         ) : null}
-
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() => setShowAiCode((current) => !current)}
-          style={styles.aiCodeDisclosure}
-        >
-          <Text style={styles.aiCodeDisclosureText}>추가 사용 코드</Text>
-          <Text style={styles.aiCodeDisclosureText}>
-            {showAiCode ? "접기" : "열기"}
-          </Text>
-        </TouchableOpacity>
-
-        {showAiCode ? (
-          <View style={styles.aiCodeForm}>
-            <TextInput
-              autoCapitalize="characters"
-              autoCorrect={false}
-              onChangeText={(value) => onChangeAiCode(value.toUpperCase())}
-              placeholder="PF-ABCD-1234-EFGH"
-              placeholderTextColor={colors.placeholder}
-              style={[styles.input, styles.aiCodeInput]}
-              value={aiCodeDraft}
-            />
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={aiCodeLoading}
-              onPress={() => void onRedeemAiCode()}
-              style={[styles.aiCodeButton, aiCodeLoading && styles.buttonDisabled]}
-            >
-              <Text style={styles.aiCodeButtonText}>
-                {aiCodeLoading ? "확인 중" : "코드 적용"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-        <Message
-          text={aiCodeMessage}
-          tone={aiCodeMessage === "추가 사용 코드가 적용됐어요." ? "success" : "error"}
-        />
       </View>
 
       <View style={styles.accountDeletionBox}>
@@ -4027,7 +3895,6 @@ function HealthRecorder({
   onRemoveMedia,
   setInput,
   onSubmit,
-  onGoAccount,
   onCreateVetDraft,
   onShareVetDraft,
 }: {
@@ -4048,7 +3915,6 @@ function HealthRecorder({
   onRemoveMedia: (id: string) => void;
   setInput: (input: HealthCheckInput) => void;
   onSubmit: (overrideInput?: HealthCheckInput) => Promise<void>;
-  onGoAccount: () => void;
   onCreateVetDraft: (episodeId: string) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
@@ -4193,7 +4059,6 @@ function HealthRecorder({
           vetDraftLoading={vetDraftLoading}
           vetDraftNotice={vetDraftNotice}
           onCreateVetDraft={onCreateVetDraft}
-          onGoAccount={onGoAccount}
           onShareVetDraft={onShareVetDraft}
         />
       ) : null}
@@ -4318,7 +4183,6 @@ function HealthResultCard({
   vetDraftLoading,
   vetDraftNotice,
   onCreateVetDraft,
-  onGoAccount,
   onShareVetDraft,
 }: {
   aiAccess: AiAccessStatus | null;
@@ -4328,7 +4192,6 @@ function HealthResultCard({
   vetDraftLoading: boolean;
   vetDraftNotice: EpisodeNotice | null;
   onCreateVetDraft: (episodeId: string) => Promise<void>;
-  onGoAccount: () => void;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   const checkScore = displayCheckScore(result.riskScore);
@@ -4362,7 +4225,6 @@ function HealthResultCard({
         vetDraftLoading={vetDraftLoading}
         vetDraftNotice={vetDraftNotice}
         onCreateVetDraft={onCreateVetDraft}
-        onGoAccount={onGoAccount}
         onShareVetDraft={onShareVetDraft}
       />
       <Text style={styles.disclaimer}>{result.disclaimer}</Text>
@@ -4377,7 +4239,6 @@ function ResultVetDraftBox({
   vetDraftLoading,
   vetDraftNotice,
   onCreateVetDraft,
-  onGoAccount,
   onShareVetDraft,
 }: {
   aiAccess: AiAccessStatus | null;
@@ -4386,7 +4247,6 @@ function ResultVetDraftBox({
   vetDraftLoading: boolean;
   vetDraftNotice: EpisodeNotice | null;
   onCreateVetDraft: (episodeId: string) => Promise<void>;
-  onGoAccount: () => void;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   const canUseAiDraft = Boolean(aiAccess?.enabled);
@@ -4419,16 +4279,7 @@ function ResultVetDraftBox({
           서버에 저장되고 같은 건강 흐름에 연결된 기록에서 만들 수 있어요.
         </Text>
       ) : !canUseAiDraft ? (
-        <>
-          <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={onGoAccount}
-            style={styles.vetDraftSecondaryButton}
-          >
-            <Text style={styles.vetDraftSecondaryButtonText}>추가 사용 코드</Text>
-          </TouchableOpacity>
-        </>
+        <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
       ) : (
         <>
           <View style={styles.vetDraftActions}>
@@ -5274,48 +5125,7 @@ function EpisodeReportItem({
                         })}
                       </View>
 
-                      <Text style={styles.aiFeedbackLabel}>비용을 낼 의향</Text>
-                      <View style={styles.aiFeedbackPayRow}>
-                        {aiWouldPayOptions.map((option) => {
-                          const selected = aiFeedbackDraft.wouldPay === option.id;
-                          return (
-                            <TouchableOpacity
-                              activeOpacity={0.85}
-                              key={option.id}
-                              onPress={() =>
-                                onChangeAiFeedbackDraft(feedbackUsageId, {
-                                  wouldPay: option.id,
-                                })
-                              }
-                              style={[
-                                styles.aiFeedbackPayButton,
-                                selected && styles.aiFeedbackPayButtonSelected,
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.aiFeedbackPayText,
-                                  selected && styles.aiFeedbackPayTextSelected,
-                                ]}
-                              >
-                                {option.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-
                       <View style={styles.aiFeedbackInputRow}>
-                        <TextInput
-                          keyboardType="number-pad"
-                          onChangeText={(price) =>
-                            onChangeAiFeedbackDraft(feedbackUsageId, { price })
-                          }
-                          placeholder="적정 가격 (선택)"
-                          placeholderTextColor={colors.placeholder}
-                          style={[styles.input, styles.aiFeedbackInput]}
-                          value={aiFeedbackDraft.price}
-                        />
                         <TextInput
                           maxLength={200}
                           onChangeText={(comment) =>
@@ -5566,13 +5376,7 @@ function aiAccessCopy(access: AiAccessStatus | null) {
     return "사용량을 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
   if (access.reason === "monthly_limit") {
-    return "이번 달 AI 요약 사용량을 모두 사용했어요.";
-  }
-  if (access.reason === "total_limit") {
-    return "추가 사용 코드의 전체 사용량을 모두 사용했어요.";
-  }
-  if (access.reason === "revoked") {
-    return "추가 사용 코드가 만료됐어요.";
+    return "이번 달 제공량을 모두 사용했어요. 다음 달 자동으로 다시 이용할 수 있어요.";
   }
   return "기록을 수의사가 보기 좋은 병원용 요약으로 정리해요.";
 }
@@ -6449,37 +6253,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     color: colors.ink,
     fontSize: 12,
-    fontWeight: "900",
-  },
-  aiCodeDisclosure: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(23, 76, 65, 0.1)",
-    paddingTop: 11,
-  },
-  aiCodeDisclosureText: {
-    color: colors.green,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  aiCodeForm: {
-    gap: 9,
-    marginTop: 12,
-  },
-  aiCodeInput: {
-    fontSize: 14,
-  },
-  aiCodeButton: {
-    alignItems: "center",
-    borderRadius: 16,
-    backgroundColor: colors.green,
-    paddingVertical: 13,
-  },
-  aiCodeButtonText: {
-    color: "#ffffff",
-    fontSize: 13,
     fontWeight: "900",
   },
   accountDeletionBox: {
@@ -7716,29 +7489,6 @@ const styles = StyleSheet.create({
   },
   aiFeedbackScoreTextSelected: {
     color: "#ffffff",
-  },
-  aiFeedbackPayRow: {
-    gap: 7,
-  },
-  aiFeedbackPayButton: {
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 14,
-    backgroundColor: "#fbfefd",
-    paddingHorizontal: 11,
-    paddingVertical: 10,
-  },
-  aiFeedbackPayButtonSelected: {
-    borderColor: colors.green,
-    backgroundColor: colors.greenSoft,
-  },
-  aiFeedbackPayText: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  aiFeedbackPayTextSelected: {
-    color: colors.green,
   },
   aiFeedbackInputRow: {
     gap: 8,

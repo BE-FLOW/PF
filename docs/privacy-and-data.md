@@ -29,7 +29,6 @@
 - 구조화된 건강 통계: `health_reports`
 - 병원에서 받은 계획: `episode_plans`, `plan_tasks`
 - 3일·7일·14일과 30일·60일·90일 보호자 경과: `episode_progress_logs`
-- AI 요약 추가 사용 코드와 권한: `ai_access_codes`, `ai_access_grants`
 - AI 요약 사용량과 피드백: `ai_report_usage`, `ai_report_feedback`
 - 계정 삭제 요청: `account_deletion_requests`
 - 피드백: `health_report_feedback`
@@ -48,7 +47,7 @@
 별도 테이블에 저장하지 않으며, 화면 표시와 사용자가 직접 누르는 복사 기능으로만
 제공한다. OpenAI 요청은 `store: false`로 전송한다. 대신 운영 판단을 위해 생성
 성공·실패, 사용 모델, 토큰 사용량,
-선택적으로 설정된 비용 추정값, 유용성 점수, 지불의향과 짧은 의견은 저장한다.
+선택적으로 설정된 비용 추정값, 유용성 점수와 짧은 의견은 저장한다.
 
 전화번호는 서비스 안내와 테스트 관련 연락, 요청·장애 대응에만 사용한다.
 광고·마케팅과 SMS 로그인에는 사용하지 않는다.
@@ -58,10 +57,9 @@
 `pets`와 `tester_profiles`는 RLS가 활성화되어 있으며 로그인 사용자는 자신의
 행만 조회·수정·삭제할 수 있다. 관리자 집계 뷰 `tester_management`는
 `service_role`만 조회할 수 있다. `health_reports`, `episode_plans`, `plan_tasks`,
-`episode_progress_logs`, `ai_access_codes`, `ai_access_grants`, `ai_report_usage`,
-`ai_report_feedback`, `account_deletion_requests`는 브라우저에서 직접 접근할 수
-없고 소유권을 확인하는 Route Handler를 통해서만 조회·저장한다. 추가 사용 코드 원문은
-저장하지 않고 해시만 저장한다.
+`episode_progress_logs`, `ai_report_usage`, `ai_report_feedback`,
+`account_deletion_requests`는 브라우저에서 직접 접근할 수 없고 소유권을 확인하는
+Route Handler를 통해서만 조회·저장한다.
 
 ## 관리 화면
 
@@ -71,7 +69,6 @@
 - 리포트 통계: Table Editor > `health_reports`
 - 사건별 병원 계획: Table Editor > `episode_plans`, `plan_tasks`
 - 사건별 경과: Table Editor > `episode_progress_logs`
-- AI 요약 추가 사용 코드: SQL Editor에서 `create_ai_access_code(...)` 실행
 - AI 요약 사용량: Table Editor > `ai_usage_management`, `ai_report_usage`
 - AI 요약 피드백: Table Editor > `ai_report_feedback`
 - 계정 삭제 요청: Table Editor > `account_deletion_management`
@@ -82,5 +79,5 @@
 Auth 사용자를 삭제한다. Auth 사용자를 삭제하면 테스터 프로필과 반려동물은
 cascade로 삭제된다. 계정에 연결된 사건, 건강 기록, 병원 계획과 체크 항목도 함께
 삭제된다. 경과 기록도 함께 삭제되며, 계정과 연결되지 않은 익명 테스트 통계는
-영향을 받지 않는다. AI 요약 권한, 사용량, 피드백과 계정 삭제 요청 행도 Auth
+영향을 받지 않는다. AI 요약 사용량, 피드백과 계정 삭제 요청 행도 Auth
 사용자 삭제 시 함께 삭제된다.

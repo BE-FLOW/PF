@@ -250,7 +250,6 @@ export async function POST(
   if (!apiKey) {
     await recordAiReportUsage({
       userId: access.userId,
-      grantId: access.status.grantId,
       petId: bundle.pet.id,
       episodeId: bundle.episode.id,
       status: "failed",
@@ -274,12 +273,10 @@ export async function POST(
   );
   const reservation = await reserveAiReportUsage({
     userId: access.userId,
-    grantId: access.status.grantId,
     petId: bundle.episode.petId,
     episodeId: bundle.episode.id,
     model,
     monthlyReportLimit: access.status.monthlyReportLimit,
-    totalReportLimit: access.status.totalReportLimit,
   });
   if (!reservation.usageId) {
     return NextResponse.json(

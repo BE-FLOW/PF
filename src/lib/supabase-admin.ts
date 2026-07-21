@@ -66,7 +66,6 @@ export interface AiReportAccess {
 
 export interface AiReportUsageInput {
   userId: string;
-  grantId?: string;
   petId?: string | null;
   episodeId?: string | null;
   status: "succeeded" | "failed";
@@ -79,12 +78,10 @@ export interface AiReportUsageInput {
 
 export interface AiReportReservationInput {
   userId: string;
-  grantId?: string;
   petId: string;
   episodeId: string;
   model: string;
   monthlyReportLimit: number;
-  totalReportLimit?: number | null;
 }
 
 export interface AiReportCompletionInput {
@@ -458,10 +455,8 @@ function monthStartIso(now = new Date()) {
 function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
   return {
     enabled: false,
-    accessMode: "standard",
     reason,
     monthlyReportLimit: 0,
-    totalReportLimit: null,
     usedThisMonth: 0,
     usedTotal: 0,
     remainingThisMonth: 0,
@@ -471,20 +466,13 @@ function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
 async function countSucceededAiReports(
   userId: string,
   sinceIso?: string,
-  grantId?: string | null,
 ): Promise<number | null> {
   try {
     const sinceFilter = sinceIso
       ? `&generated_at=gte.${encodeURIComponent(sinceIso)}`
       : "";
-    const grantFilter =
-      grantId === null
-        ? "&grant_id=is.null"
-        : grantId
-          ? `&grant_id=eq.${grantId}`
-          : "";
     const response = await supabaseRequest(
-      `ai_report_usage?user_id=eq.${userId}&status=eq.succeeded${sinceFilter}${grantFilter}&select=id`,
+      `ai_report_usage?user_id=eq.${userId}&status=eq.succeeded${sinceFilter}&select=id`,
       { method: "GET" },
     );
     if (!response?.ok) return null;
@@ -499,8 +487,8 @@ async function buildStandardAccessStatus(
   userId: string,
 ): Promise<AiAccessStatus> {
   const [usedThisMonth, usedTotal] = await Promise.all([
-    countSucceededAiReports(userId, monthStartIso(), null),
-    countSucceededAiReports(userId, undefined, null),
+    countSucceededAiReports(userId, monthStartIso()),
+    countSucceededAiReports(userId),
   ]);
   if (usedThisMonth === null || usedTotal === null) {
     return emptyAiAccessStatus("unavailable");
@@ -512,85 +500,12 @@ async function buildStandardAccessStatus(
   );
 }
 
-async function buildAiAccessStatus(userId: string): Promise<AiAccessStatus> {
-  try {
-    const grantResponse = await supabaseRequest(
-      `ai_access_grants?user_id=eq.${userId}&select=id,code_id,status,monthly_report_limit,total_report_limit,granted_at&limit=1`,
-      { method: "GET" },
-    );
-    if (!grantResponse?.ok) return emptyAiAccessStatus("unavailable");
-    const grants = (await grantResponse.json()) as Array<{
-      id: string;
-      code_id: string;
-      status: "active" | "revoked";
-      monthly_report_limit: number;
-      total_report_limit: number | null;
-      granted_at: string;
-    }>;
-    const grant = grants[0];
-    if (!grant) return buildStandardAccessStatus(userId);
-
-    const [codeResponse, usedThisMonth, usedTotal] = await Promise.all([
-      supabaseRequest(
-        `ai_access_codes?id=eq.${grant.code_id}&select=label,disabled_at,expires_at&limit=1`,
-        { method: "GET" },
-      ),
-      countSucceededAiReports(userId, monthStartIso(), grant.id),
-      countSucceededAiReports(userId, undefined, grant.id),
-    ]);
-    if (!codeResponse?.ok || usedThisMonth === null || usedTotal === null) {
-      return emptyAiAccessStatus("unavailable");
-    }
-    const codes = (await codeResponse.json()) as Array<{
-      label: string;
-      disabled_at: string | null;
-      expires_at: string | null;
-    }>;
-    const code = codes[0];
-    if (!code) return buildStandardAccessStatus(userId);
-
-    const disabledOrExpired =
-      Boolean(code.disabled_at) ||
-      Boolean(code.expires_at && new Date(code.expires_at) <= new Date());
-    const remainingThisMonth = Math.max(
-      grant.monthly_report_limit - usedThisMonth,
-      0,
-    );
-    const totalLimitHit =
-      grant.total_report_limit !== null && usedTotal >= grant.total_report_limit;
-    if (
-      grant.status === "revoked" ||
-      disabledOrExpired ||
-      totalLimitHit ||
-      remainingThisMonth <= 0
-    ) {
-      return buildStandardAccessStatus(userId);
-    }
-
-    return {
-      enabled: true,
-      accessMode: "code",
-      reason: "active",
-      grantId: grant.id,
-      codeLabel: code.label,
-      monthlyReportLimit: grant.monthly_report_limit,
-      totalReportLimit: grant.total_report_limit,
-      usedThisMonth,
-      usedTotal,
-      remainingThisMonth,
-      grantedAt: grant.granted_at,
-    };
-  } catch {
-    return emptyAiAccessStatus("unavailable");
-  }
-}
-
 export async function getAiAccessStatus(
   accessToken: string | null,
 ): Promise<AiAccessStatus | null> {
   const userId = await getAuthenticatedUserId(accessToken);
   if (!userId) return null;
-  return buildAiAccessStatus(userId);
+  return buildStandardAccessStatus(userId);
 }
 
 export async function getAiReportAccess(
@@ -598,29 +513,7 @@ export async function getAiReportAccess(
 ): Promise<AiReportAccess | null> {
   const userId = await getAuthenticatedUserId(accessToken);
   if (!userId) return null;
-  return { userId, status: await buildAiAccessStatus(userId) };
-}
-
-export async function redeemAiAccessCode(
-  accessToken: string | null,
-  code: string,
-): Promise<AiAccessStatus | null> {
-  const userId = await getAuthenticatedUserId(accessToken);
-  const cleanedCode = code.trim();
-  if (!userId || cleanedCode.length < 6 || cleanedCode.length > 40) return null;
-  try {
-    const response = await supabaseRequest("rpc/redeem_ai_access_code", {
-      method: "POST",
-      body: JSON.stringify({
-        target_user_id: userId,
-        raw_code: cleanedCode,
-      }),
-    });
-    if (!response?.ok) return null;
-    return buildAiAccessStatus(userId);
-  } catch {
-    return null;
-  }
+  return { userId, status: await buildStandardAccessStatus(userId) };
 }
 
 function estimatedOpenAiCostUsd(
@@ -650,7 +543,6 @@ export async function recordAiReportUsage(
   try {
     const payload = {
       user_id: input.userId,
-      grant_id: isUuid(input.grantId) ? input.grantId : null,
       pet_id: isUuid(input.petId) ? input.petId : null,
       episode_id: isUuid(input.episodeId) ? input.episodeId : null,
       status: input.status,
@@ -695,12 +587,10 @@ export async function reserveAiReportUsage(
       method: "POST",
       body: JSON.stringify({
         target_user_id: input.userId,
-        target_grant_id: isUuid(input.grantId) ? input.grantId : null,
         target_pet_id: input.petId,
         target_episode_id: input.episodeId,
         target_model: input.model,
         target_monthly_report_limit: input.monthlyReportLimit,
-        target_total_report_limit: input.totalReportLimit ?? null,
       }),
     });
     if (!response?.ok) return { usageId: null, unavailable: true };
@@ -756,12 +646,6 @@ export async function saveAiReportFeedback(
     !userId ||
     !isUuid(input.usageId) ||
     ![1, 2, 3, 4, 5].includes(input.usefulnessScore) ||
-    !["no", "maybe", "yes"].includes(input.wouldPay) ||
-    (input.willingnessToPayKrw !== undefined &&
-      input.willingnessToPayKrw !== null &&
-      (!Number.isInteger(input.willingnessToPayKrw) ||
-        input.willingnessToPayKrw < 0 ||
-        input.willingnessToPayKrw > 1_000_000)) ||
     (input.comment !== undefined && input.comment.length > 500)
   ) {
     return false;
@@ -789,8 +673,6 @@ export async function saveAiReportFeedback(
           user_id: userId,
           episode_id: usage.episode_id ?? input.episodeId ?? null,
           usefulness_score: input.usefulnessScore,
-          would_pay: input.wouldPay,
-          willingness_to_pay_krw: input.willingnessToPayKrw ?? null,
           comment: input.comment?.trim() || null,
           updated_at: new Date().toISOString(),
         }),
