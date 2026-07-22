@@ -102,7 +102,7 @@ function TesterFields({
           placeholder="010-1234-5678"
         />
         <small className="field-help">
-          인증번호는 보내지 않고 서비스 안내와 테스트 관련 연락에만 사용합니다.
+          인증번호는 보내지 않고 서비스 안내와 요청·장애 대응에만 사용합니다.
         </small>
       </div>
     </div>

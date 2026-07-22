@@ -2799,7 +2799,7 @@ function ConfigurationCard() {
       <Text style={styles.cardTitle}>환경변수가 필요해요</Text>
       <Text style={styles.cardText}>
         `apps/mobile/.env`에 `EXPO_PUBLIC_SUPABASE_URL`과
-        `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 넣으면 모바일 로그인 테스트를
+        `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 넣으면 모바일 로그인을
         시작할 수 있어요.
       </Text>
     </View>
