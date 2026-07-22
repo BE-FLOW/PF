@@ -14,6 +14,7 @@ import {
 import type { User } from "@supabase/supabase-js";
 import { AccountView } from "./account-view";
 import { Icon, type IconName } from "./icon";
+import { QuickGuideDialog } from "./quick-guide";
 import {
   analyzeLocally,
   dailyObservationOptions,
@@ -67,10 +68,8 @@ import type {
   AiAccessStatus,
   AiReportFeedbackInput,
   AnalysisResult,
-  ConditionChange,
   EpisodePlan,
   EpisodeProgress,
-  FollowUpDay,
   HealthCheckInput,
   HealthFlowSummary,
   HistoryRecord,
@@ -139,6 +138,20 @@ const views: View[] = [
   "account",
 ];
 
+const quickGuideStoragePrefix = "petflow-quick-guide-v1";
+
+function quickGuideStorageKey(userId: string) {
+  return `${quickGuideStoragePrefix}:${userId}`;
+}
+
+function hasSeenQuickGuide(userId: string) {
+  try {
+    return localStorage.getItem(quickGuideStorageKey(userId)) === "seen";
+  } catch {
+    return false;
+  }
+}
+
 function isView(value: unknown): value is View {
   return typeof value === "string" && views.includes(value as View);
 }
@@ -203,41 +216,6 @@ const riskLabel = {
   urgent: "즉시 상담",
 } as const;
 
-const conditionChangeOptions: Array<{
-  id: ConditionChange;
-  label: string;
-  description: string;
-}> = [
-  { id: "better", label: "좋아졌어요", description: "전보다 편안해 보여요" },
-  { id: "same", label: "비슷해요", description: "큰 변화가 없어요" },
-  { id: "worse", label: "나빠졌어요", description: "불편함이 더 보여요" },
-];
-
-const followUpGroups: Array<{
-  title: string;
-  description: string;
-  days: FollowUpDay[];
-}> = [
-  {
-    title: "초기 경과",
-    description: "진료 직후 다시 설명해야 하는 변화를 3·7·14일에 정리해요.",
-    days: [3, 7, 14],
-  },
-  {
-    title: "장기 경과",
-    description: "다른 병원 방문이나 재진 때 필요한 큰 흐름을 30·60·90일에 남겨요.",
-    days: [30, 60, 90],
-  },
-];
-
-function conditionChangeLabel(value: ConditionChange) {
-  return conditionChangeOptions.find((option) => option.id === value)?.label ?? "비슷해요";
-}
-
-function levelLabel(value: Level) {
-  return levels.find((option) => option.id === value)?.label ?? "평소와 같음";
-}
-
 function displayCheckScore(riskScore: number) {
   if (!Number.isFinite(riskScore)) return 0;
   return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
@@ -285,9 +263,9 @@ function HeroPetPhoto({ pet }: { pet: PetProfile }) {
   return <span>{pet.name ? avatarLabel(pet.name) : <Icon name="paw" size={24} />}</span>;
 }
 
-function followUpDate(startedAt: string, day: FollowUpDay) {
-  const date = new Date(startedAt);
-  date.setDate(date.getDate() + day);
+function formatFollowUpDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "날짜 확인 전";
   return new Intl.DateTimeFormat("ko-KR", {
     month: "long",
     day: "numeric",
@@ -874,7 +852,6 @@ function HomeView({
   flow,
   flowLoading,
   activeEpisode,
-  activeEpisodeProgressCount,
   vaccinations,
   onAccount,
   onLogin,
@@ -891,7 +868,6 @@ function HomeView({
   flow: HealthFlowSummary;
   flowLoading: boolean;
   activeEpisode?: PetEpisode;
-  activeEpisodeProgressCount: number;
   vaccinations: VaccinationRecord[];
   onAccount: () => void;
   onLogin: () => void;
@@ -982,8 +958,7 @@ function HomeView({
               <button className="hero-inline-status" type="button" onClick={onHistory}>
                 <span>진행 중</span>
                 <strong>
-                  기록 {Math.max(activeEpisodeRecordCount, 1)}회 · 경과{" "}
-                  {Math.min(activeEpisodeProgressCount, 3)}/3
+                  기록 {Math.max(activeEpisodeRecordCount, 1)}회 · 흐름 자동 연결
                 </strong>
               </button>
             )}
@@ -2532,9 +2507,9 @@ function EpisodeReportView({
   progress,
   onBack,
   onSelectRecord,
+  onContinueRecord,
   onSavePlan,
   onTogglePlanTask,
-  onSaveProgress,
   onCreateVetDraft,
   canUseAiReport,
   aiAccess,
@@ -2546,18 +2521,12 @@ function EpisodeReportView({
   progress: EpisodeProgress[];
   onBack: () => void;
   onSelectRecord: (record: HistoryRecord) => void;
+  onContinueRecord: () => void;
   onSavePlan: (episodeId: string, tasks: string[]) => Promise<string>;
   onTogglePlanTask: (
     episodeId: string,
     taskId: string,
     completed: boolean,
-  ) => Promise<string>;
-  onSaveProgress: (
-    episodeId: string,
-    input: Pick<
-      EpisodeProgress,
-      "followUpDay" | "conditionChange" | "appetite" | "energy"
-    >,
   ) => Promise<string>;
   onCreateVetDraft: (
     episodeId: string,
@@ -2568,17 +2537,28 @@ function EpisodeReportView({
   onSaveAiFeedback: (input: AiReportFeedbackInput) => Promise<string>;
 }) {
   const report = useMemo(
-    () => buildEpisodeReport(selection.records, petName, plan, progress),
-    [petName, plan, progress, selection.records],
+    () =>
+      buildEpisodeReport(
+        selection.records,
+        petName,
+        plan,
+        progress,
+        selection.episode?.startedAt,
+      ),
+    [petName, plan, progress, selection.episode?.startedAt, selection.records],
   );
   const completedPlanTaskCount = plan?.tasks.filter((task) => task.completedAt).length ?? 0;
   const totalPlanTaskCount = plan?.tasks.length ?? 0;
-  const initialProgressCount = progress.filter((item) =>
-    [3, 7, 14].includes(item.followUpDay),
-  ).length;
-  const longTermProgressCount = progress.filter((item) =>
-    [30, 60, 90].includes(item.followUpDay),
-  ).length;
+  const completedFollowUps = report.followUpCheckpoints.filter(
+    (checkpoint) => checkpoint.recordedAt,
+  );
+  const lastCompletedFollowUpIndex = report.followUpCheckpoints.reduce(
+    (lastIndex, checkpoint, index) => checkpoint.recordedAt ? index : lastIndex,
+    -1,
+  );
+  const nextFollowUp = selection.episode?.status === "open"
+    ? report.followUpCheckpoints[lastCompletedFollowUpIndex + 1]
+    : undefined;
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
   >("idle");
@@ -2588,14 +2568,6 @@ function EpisodeReportView({
   const [editingPlan, setEditingPlan] = useState(!plan);
   const [planBusy, setPlanBusy] = useState(false);
   const [planError, setPlanError] = useState("");
-  const [progressDraft, setProgressDraft] = useState<{
-    followUpDay: FollowUpDay;
-    conditionChange: ConditionChange;
-    appetite: Level;
-    energy: Level;
-  } | null>(null);
-  const [progressBusy, setProgressBusy] = useState(false);
-  const [progressError, setProgressError] = useState("");
   const [vetDraft, setVetDraft] = useState<VetReviewDraft | null>(null);
   const [vetDraftState, setVetDraftState] = useState<
     "idle" | "loading" | "ready" | "copied" | "failed"
@@ -2661,30 +2633,6 @@ function EpisodeReportView({
     );
     setPlanBusy(false);
     if (message) setPlanError(message);
-  }
-
-  function openProgressEditor(day: FollowUpDay) {
-    const existing = progress.find((item) => item.followUpDay === day);
-    setProgressDraft({
-      followUpDay: day,
-      conditionChange: existing?.conditionChange ?? "same",
-      appetite: existing?.appetite ?? "normal",
-      energy: existing?.energy ?? "normal",
-    });
-    setProgressError("");
-  }
-
-  async function saveProgress() {
-    if (!selection.episode || !progressDraft) return;
-    setProgressBusy(true);
-    setProgressError("");
-    const message = await onSaveProgress(selection.episode.id, progressDraft);
-    setProgressBusy(false);
-    if (message) {
-      setProgressError(message);
-      return;
-    }
-    setProgressDraft(null);
   }
 
   async function createVetDraft() {
@@ -2815,8 +2763,7 @@ function EpisodeReportView({
           <span>자동 포함</span>
           <strong>관찰 {report.recordCount}회</strong>
           <strong>계획 {completedPlanTaskCount}/{totalPlanTaskCount}개</strong>
-          <strong>초기 경과 {initialProgressCount}/3</strong>
-          <strong>장기 경과 {longTermProgressCount}/3</strong>
+          <strong>자동 경과 {completedFollowUps.length}회</strong>
           <strong>첨부 {report.mediaCount}개</strong>
           <strong>다른 병원 첫 설명</strong>
         </div>
@@ -3148,169 +3095,57 @@ function EpisodeReportView({
       <section className="result-card episode-progress-card" id="episode-progress">
         <div className="episode-plan-head">
           <div>
-            <span className="episode-plan-step">SOAP-LOOP · FOLLOW UP</span>
+            <span className="episode-plan-step">FOLLOW UP</span>
             <h3>
-              <Icon name="activity" size={18} /> 경과 기록
+              <Icon name="activity" size={18} /> 경과 흐름
             </h3>
-            <p>초기 3·7·14일과 장기 30·60·90일 흐름을 같은 사건에 이어 남겨요.</p>
+            <p>건강 기록을 남기면 같은 흐름에 자동으로 이어져요.</p>
           </div>
-          <span className="progress-source-badge">보호자 경과 · 확인 전</span>
+          <span className="progress-source-badge">자동 연결</span>
         </div>
 
         {!selection.episode ? (
           <p className="plan-empty">
-            계정에 연결된 건강 기록부터 남기면 경과를 이어서 관리할 수 있어요.
+            계정에 연결된 기록부터 경과 흐름을 만들 수 있어요.
           </p>
         ) : (
-          <div className="progress-checkpoints">
-            {followUpGroups.map((group) => (
-              <div className="progress-group" key={group.title}>
-                <div className="progress-group-head">
-                  <strong>{group.title}</strong>
-                  <span>{group.description}</span>
-                </div>
-                {group.days.map((day) => {
-                  const saved = progress.find((item) => item.followUpDay === day);
-                  const isEditing = progressDraft?.followUpDay === day;
-                  return (
-                    <section
-                      className={`progress-checkpoint ${saved ? "saved" : ""}`}
-                      key={day}
-                    >
-                      <div className="progress-checkpoint-head">
-                        <span className="progress-day">{day}일</span>
-                        <div>
-                          <strong>
-                            {selection.episode
-                              ? `${followUpDate(plan?.reportedAt ?? selection.episode.startedAt, day)} 확인`
-                              : `${day}일 경과`}
-                          </strong>
-                          <small>
-                            {saved
-                              ? `${conditionChangeLabel(saved.conditionChange)} · 식욕 ${levelLabel(saved.appetite)} · 활력 ${levelLabel(saved.energy)}`
-                              : "아직 경과를 기록하지 않았어요"}
-                          </small>
-                        </div>
-                        {!isEditing && (
-                          <button
-                            type="button"
-                            className="secondary-button compact"
-                            onClick={() => openProgressEditor(day)}
-                          >
-                            {saved ? "수정" : "경과 기록"}
-                          </button>
-                        )}
-                      </div>
-
-                      {isEditing && progressDraft && (
-                        <div className="progress-editor">
-                          <fieldset>
-                            <legend>전반적인 변화</legend>
-                            <div className="progress-choice-grid">
-                              {conditionChangeOptions.map((option) => (
-                                <button
-                                  type="button"
-                                  className={
-                                    progressDraft.conditionChange === option.id
-                                      ? "selected"
-                                      : ""
-                                  }
-                                  key={option.id}
-                                  onClick={() =>
-                                    setProgressDraft((current) =>
-                                      current
-                                        ? { ...current, conditionChange: option.id }
-                                        : current,
-                                    )
-                                  }
-                                >
-                                  <strong>{option.label}</strong>
-                                  <small>{option.description}</small>
-                                </button>
-                              ))}
-                            </div>
-                          </fieldset>
-
-                          <div className="progress-level-grid">
-                            <label>
-                              식욕
-                              <select
-                                value={progressDraft.appetite}
-                                onChange={(event) =>
-                                  setProgressDraft((current) =>
-                                    current
-                                      ? {
-                                          ...current,
-                                          appetite: event.target.value as Level,
-                                        }
-                                      : current,
-                                  )
-                                }
-                              >
-                                {levels.map((level) => (
-                                  <option value={level.id} key={level.id}>
-                                    {level.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              활력
-                              <select
-                                value={progressDraft.energy}
-                                onChange={(event) =>
-                                  setProgressDraft((current) =>
-                                    current
-                                      ? {
-                                          ...current,
-                                          energy: event.target.value as Level,
-                                        }
-                                      : current,
-                                  )
-                                }
-                              >
-                                {levels.map((level) => (
-                                  <option value={level.id} key={level.id}>
-                                    {level.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
-
-                          <div className="progress-editor-actions">
-                            <button
-                              type="button"
-                              className="secondary-button compact"
-                              onClick={() => setProgressDraft(null)}
-                              disabled={progressBusy}
-                            >
-                              취소
-                            </button>
-                            <button
-                              type="button"
-                              className="primary-button compact"
-                              onClick={saveProgress}
-                              disabled={progressBusy}
-                            >
-                              <Icon name="check" size={14} />
-                              {progressBusy ? "저장 중..." : `${day}일 경과 저장`}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </section>
-                  );
-                })}
+          <div className="follow-up-summary">
+            <div className="follow-up-status-row">
+              <strong>연결된 기록 {selection.records.length}회</strong>
+              <span>자동 정리 {completedFollowUps.length}회</span>
+            </div>
+            {completedFollowUps.length ? (
+              <div className="follow-up-chip-row" aria-label="자동 연결된 경과 시점">
+                {completedFollowUps.map((checkpoint) => (
+                  <span key={checkpoint.followUpDay}>
+                    <Icon name="check" size={13} /> {checkpoint.followUpDay}일 전후
+                  </span>
+                ))}
               </div>
-            ))}
+            ) : (
+              <p className="follow-up-empty">첫 기록을 기준으로 다음 기록부터 자동 연결돼요.</p>
+            )}
+            {nextFollowUp && (
+              <div className="follow-up-next">
+                <span>다음 확인</span>
+                <strong>
+                  {nextFollowUp.followUpDay}일 전후 · {formatFollowUpDate(nextFollowUp.targetAt)}
+                </strong>
+              </div>
+            )}
+            {selection.episode.status === "open" && (
+              <button
+                type="button"
+                className="primary-button compact follow-up-action"
+                onClick={onContinueRecord}
+              >
+                <Icon name="plus" size={14} /> 기록 이어가기
+              </button>
+            )}
           </div>
         )}
-        {progressError && (
-          <p className="share-error" role="alert">{progressError}</p>
-        )}
         <p className="plan-safety-note">
-          이 내용은 보호자가 관찰해 기록한 경과이며, 수의사의 확인이나 진단을 대신하지 않습니다.
+          연결된 내용은 보호자의 건강 기록이며 수의사의 확인이나 진단을 대신하지 않습니다.
         </p>
       </section>
 
@@ -3333,6 +3168,7 @@ export function PetFlowApp() {
   const [testerProfile, setTesterProfile] = useState<TesterProfile | null>(null);
   const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [authEntryMode, setAuthEntryMode] = useState<"login" | "signup">("login");
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
   const [recordDateKey, setRecordDateKey] = useState(() =>
@@ -3437,6 +3273,25 @@ export function PetFlowApp() {
   }, [appNotice]);
 
   useEffect(() => {
+    if (!authReady || !user || !testerProfile) return;
+    let active = true;
+    const shouldOpen = !hasSeenQuickGuide(user.id);
+    window.queueMicrotask(() => {
+      if (active) setQuickGuideOpen(shouldOpen);
+    });
+    return () => {
+      active = false;
+    };
+  }, [authReady, testerProfile, user]);
+
+  function closeQuickGuide() {
+    if (user) {
+      setLocalStorageItem(quickGuideStorageKey(user.id), "seen");
+    }
+    setQuickGuideOpen(false);
+  }
+
+  useEffect(() => {
     currentViewRef.current = "home";
     if (window.history.state?.petflowView !== "home") {
       window.history.replaceState({ petflowView: "home" }, "", window.location.href);
@@ -3486,17 +3341,6 @@ export function PetFlowApp() {
       (episode) => episode.petId === selectedPetId && episode.status === "open",
     ),
     [episodes, selectedPetId],
-  );
-  const activeEpisodeProgressCount = useMemo(
-    () =>
-      activeEpisode
-        ? progress.filter(
-            (item) =>
-              item.episodeId === activeEpisode.id &&
-              [3, 7, 14].includes(item.followUpDay),
-          ).length
-        : 0,
-    [activeEpisode, progress],
   );
   const selectedReportIsWholeEpisode = useMemo(() => {
     const episodeId = selectedEpisodeReport?.episode?.id;
@@ -4125,6 +3969,7 @@ export function PetFlowApp() {
     setVaccinations([]);
     setTesterProfile(null);
     setAiAccess(null);
+    setQuickGuideOpen(false);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
     setRecordDateKey(toRecordDateKey(new Date()));
@@ -4526,55 +4371,6 @@ export function PetFlowApp() {
       return "계획 체크 상태를 저장하지 못했어요.";
     }
   }
-  async function saveProgress(
-    episodeId: string,
-    input: Pick<
-      EpisodeProgress,
-      "followUpDay" | "conditionChange" | "appetite" | "energy"
-    >,
-  ) {
-    const supabase = getSupabaseBrowserClient();
-    try {
-      const { data } = supabase
-        ? await supabase.auth.getSession()
-        : { data: { session: null } };
-      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
-      const response = await fetch(`/api/episodes/${episodeId}/progress`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${data.session.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input),
-      });
-      if (!response.ok) return "경과 기록을 저장하지 못했어요.";
-      const payload = (await response.json()) as {
-        progress: EpisodeProgress;
-      };
-      setProgress((current) => {
-        const exists = current.some(
-          (item) => item.id === payload.progress.id,
-        );
-        return exists
-          ? current.map((item) =>
-              item.id === payload.progress.id ? payload.progress : item,
-            )
-          : [...current, payload.progress].sort(
-              (a, b) => a.followUpDay - b.followUpDay,
-            );
-      });
-      setEpisodes((current) =>
-        current.map((episode) =>
-          episode.id === episodeId
-            ? { ...episode, lastActivityAt: payload.progress.recordedAt }
-            : episode,
-        ),
-      );
-      return "";
-    } catch {
-      return "경과 기록을 저장하지 못했어요.";
-    }
-  }
   async function createVetDraft(episodeId: string, reportIds?: string[]) {
     const supabase = getSupabaseBrowserClient();
     try {
@@ -4735,7 +4531,6 @@ export function PetFlowApp() {
             flow={healthFlow}
             flowLoading={flowLoading}
             activeEpisode={activeEpisode}
-            activeEpisodeProgressCount={activeEpisodeProgressCount}
             vaccinations={selectedPetVaccinations}
           />
         )}{" "}
@@ -4764,6 +4559,7 @@ export function PetFlowApp() {
             onLinkOAuth={handleLinkOAuth}
             onSaveTesterProfile={saveTesterProfile}
             onRequestAccountDeletion={requestAccountDeletion}
+            onOpenGuide={() => setQuickGuideOpen(true)}
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
             onEditPet={(pet) => openProfile("account", pet)}
@@ -4862,9 +4658,9 @@ export function PetFlowApp() {
                 : []
             }
             onBack={() => setView("history", { history: "replace" })}
+            onContinueRecord={startNew}
             onSavePlan={savePlan}
             onTogglePlanTask={togglePlanTask}
-            onSaveProgress={saveProgress}
             onCreateVetDraft={createVetDraft}
             canUseAiReport={Boolean(aiAccess?.enabled)}
             aiAccess={aiAccess}
@@ -4880,6 +4676,7 @@ export function PetFlowApp() {
       {user && testerProfile && (
         <MobileNav view={currentView} setView={setView} onStart={startNew} />
       )}
+      <QuickGuideDialog open={quickGuideOpen} onClose={closeQuickGuide} />
     </div>
   );
 }

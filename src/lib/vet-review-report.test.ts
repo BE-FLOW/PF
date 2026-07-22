@@ -47,6 +47,27 @@ describe("buildVetReviewDraft", () => {
     expect(draft.timeline[0]).toContain("CHECK SCORE");
     expect(draft.keyObservations).toContain("반복 관찰: 구토 2회");
     expect(draft.reviewStatus).toBe("unreviewed");
+    expect(draft.planAndProgress.join("\n")).toContain(
+      "일반 건강 기록에서 자동 연결",
+    );
+  });
+
+  it("uses the episode start date for automatic follow-up checkpoints", () => {
+    const draft = buildVetReviewDraft(
+      [record("2026-06-17T00:00:00.000Z")],
+      "보리",
+      undefined,
+      [],
+      {
+        generatedAt: "2026-06-17T00:00:00.000Z",
+        episodeStartedAt: "2026-06-10T00:00:00.000Z",
+      },
+    );
+
+    expect(draft.planAndProgress.join("\n")).toContain("7일 전후");
+    expect(draft.planAndProgress.join("\n")).toContain(
+      "일반 건강 기록에서 자동 연결",
+    );
   });
 
   it("keeps owner-reported plan and follow-up progress separate from confirmed vet content", () => {

@@ -1915,6 +1915,106 @@ p {
   align-items: center;
   gap: 8px;
 }
+.quick-guide-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.quick-guide-entry strong,
+.quick-guide-entry small {
+  display: block;
+}
+.quick-guide-entry strong {
+  font-size: 13px;
+}
+.quick-guide-entry small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.quick-guide-entry > span:last-child {
+  color: var(--mint-dark);
+  font-size: 24px;
+  line-height: 1;
+}
+.quick-guide-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(13, 47, 42, 0.42);
+  backdrop-filter: blur(5px);
+}
+.quick-guide-dialog {
+  width: min(100%, 430px);
+  padding: 26px;
+  border: 1px solid rgba(203, 229, 217, 0.92);
+  border-radius: 28px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(17, 58, 50, 0.2);
+}
+.quick-guide-heading span {
+  color: var(--mint-dark);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+.quick-guide-heading h2 {
+  margin: 7px 0 0;
+  color: var(--ink);
+  font-size: 23px;
+  line-height: 1.3;
+}
+.quick-guide-list {
+  display: grid;
+  gap: 10px;
+  margin: 20px 0;
+  padding: 0;
+  list-style: none;
+}
+.quick-guide-list li {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 17px;
+  background: #f5faf7;
+}
+.quick-guide-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  color: var(--mint-dark);
+  background: var(--mint-soft);
+}
+.quick-guide-list strong,
+.quick-guide-list small {
+  display: block;
+}
+.quick-guide-list strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+.quick-guide-list small {
+  margin-top: 3px;
+  color: #6f807a;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.quick-guide-close {
+  width: 100%;
+}
 .deployment-footnote {
   margin: 14px 0 0;
   color: #8fa09a;
@@ -2989,148 +3089,70 @@ p {
   flex-shrink: 0;
   padding: 7px 10px;
   border-radius: 999px;
-  background: #eef2fb;
-  color: #64749a;
+  background: var(--mint-soft);
+  color: var(--mint-dark);
   font-size: 9px;
   font-weight: 900;
 }
-.progress-checkpoints {
+.follow-up-summary {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
-.progress-group {
-  display: grid;
-  gap: 9px;
-}
-.progress-group-head {
-  display: grid;
-  gap: 3px;
-}
-.progress-group-head strong {
-  color: #536488;
-  font-size: 12px;
-}
-.progress-group-head span {
-  color: #71817b;
-  font-size: 10px;
-  line-height: 1.5;
-}
-.progress-checkpoint {
-  padding: 14px;
+.follow-up-status-row,
+.follow-up-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 14px;
   background: #fbfcfb;
 }
-.progress-checkpoint.saved {
-  border-color: #c7dfd4;
-  background: #f7fbf9;
-}
-.progress-checkpoint-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-}
-.progress-day {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: 13px;
-  color: #65769c;
-  background: #eef2fb;
+.follow-up-status-row strong,
+.follow-up-next strong {
+  color: var(--ink);
   font-size: 11px;
   font-weight: 900;
 }
-.progress-checkpoint.saved .progress-day {
-  color: var(--mint-dark);
-  background: var(--mint-soft);
-}
-.progress-checkpoint-head > div {
-  display: grid;
-  gap: 4px;
-}
-.progress-checkpoint-head strong {
-  color: var(--ink);
-  font-size: 12px;
-}
-.progress-checkpoint-head small {
+.follow-up-status-row span,
+.follow-up-next span {
   color: #75857f;
   font-size: 10px;
-  line-height: 1.5;
 }
-.progress-editor {
-  display: grid;
-  gap: 14px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.progress-editor fieldset {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.progress-editor legend,
-.progress-level-grid label {
-  color: #60716b;
-  font-size: 10px;
-  font-weight: 900;
-}
-.progress-choice-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+.follow-up-chip-row {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
 }
-.progress-choice-grid button {
-  display: grid;
+.follow-up-chip-row span {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
-  min-height: 58px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  background: #fff;
-  color: #687872;
-  text-align: left;
-  cursor: pointer;
-}
-.progress-choice-grid button.selected {
-  border-color: var(--mint);
+  padding: 7px 9px;
+  border-radius: 999px;
   color: var(--mint-dark);
   background: var(--mint-soft);
+  font-size: 10px;
+  font-weight: 800;
 }
-.progress-choice-grid strong {
+.follow-up-empty {
+  margin: 0;
+  color: #71817b;
   font-size: 11px;
 }
-.progress-choice-grid small {
-  font-size: 9px;
-  line-height: 1.4;
+.follow-up-next {
+  justify-content: flex-start;
+  border-color: #d7eadf;
+  background: #f5faf7;
 }
-.progress-level-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.follow-up-next span {
+  min-width: 58px;
+  color: var(--mint-dark);
+  font-weight: 900;
 }
-.progress-level-grid label {
-  display: grid;
-  gap: 7px;
-}
-.progress-level-grid select {
-  width: 100%;
-  height: 42px;
-  padding: 0 11px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
-  color: var(--ink);
-  font: inherit;
-  font-size: 11px;
-}
-.progress-editor-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+.follow-up-action {
+  justify-self: start;
 }
 .history-card {
   width: 100%;
@@ -3417,8 +3439,7 @@ p {
   }
   .episode-plan-head,
   .plan-editor-actions,
-  .vet-draft-actions,
-  .progress-editor-actions {
+  .vet-draft-actions {
     flex-direction: column;
     align-items: stretch;
   }
@@ -3428,24 +3449,14 @@ p {
     align-self: flex-start;
   }
   .plan-editor-actions button,
-  .vet-draft-actions button,
-  .progress-editor-actions button {
+  .vet-draft-actions button {
     width: 100%;
   }
-  .progress-checkpoint-head {
-    grid-template-columns: auto 1fr;
-  }
-  .progress-checkpoint-head > button {
-    grid-column: 1 / -1;
-    width: 100%;
-  }
-  .progress-choice-grid,
   .ai-usage-row,
   .ai-feedback-grid,
   .media-preview-grid,
   .result-media-grid,
-  .history-media-grid,
-  .progress-level-grid {
+  .history-media-grid {
     grid-template-columns: 1fr;
   }
   .history-media,

@@ -151,6 +151,7 @@ export function AccountView({
   onLinkOAuth,
   onSaveTesterProfile,
   onRequestAccountDeletion,
+  onOpenGuide,
   onLogout,
   onAddPet,
   onEditPet,
@@ -175,6 +176,7 @@ export function AccountView({
   onLinkOAuth: (provider: OAuthProvider) => Promise<string>;
   onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
   onRequestAccountDeletion: () => Promise<string>;
+  onOpenGuide: () => void;
   onLogout: () => Promise<void>;
   onAddPet: () => void;
   onEditPet: (pet: PetProfile) => void;
@@ -442,6 +444,14 @@ export function AccountView({
               </div>
             )}
           </section>
+
+          <button className="panel quick-guide-entry" type="button" onClick={onOpenGuide}>
+            <span>
+              <strong>사용법 보기</strong>
+              <small>기록부터 병원 요약까지 한눈에 확인해요.</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
 
           <section className="panel account-deletion-panel">
             <div>

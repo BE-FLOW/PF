@@ -296,6 +296,7 @@ export async function POST(
     bundle.pet.name,
     isPartialSelection ? undefined : bundle.plan,
     isPartialSelection ? [] : bundle.progress,
+    { episodeStartedAt: bundle.episode.startedAt },
   );
   const reservation = await reserveAiReportUsage({
     userId: access.userId,

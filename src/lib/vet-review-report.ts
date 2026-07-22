@@ -95,10 +95,17 @@ export function buildVetReviewDraft(
   options: {
     generatedAt?: string;
     source?: VetReviewDraft["source"];
+    episodeStartedAt?: string;
   } = {},
 ): VetReviewDraft {
   const ordered = sortRecords(records);
-  const report = buildEpisodeReport(ordered, petName, plan, progress);
+  const report = buildEpisodeReport(
+    ordered,
+    petName,
+    plan,
+    progress,
+    options.episodeStartedAt,
+  );
   const latest = ordered.at(-1);
   const repeatedLine = report.repeatedSymptoms.length
     ? `반복 관찰: ${report.repeatedSymptoms.join(", ")}`
@@ -141,19 +148,24 @@ export function buildVetReviewDraft(
           `보호자 기록 병원 계획: ${task.completedAt ? "완료" : "진행 중"} · ${task.text}`,
       )
     : ["보호자가 입력한 병원 계획은 아직 없습니다."];
-  const progressLines = progress.length
-    ? [...progress]
-        .sort((a, b) => a.followUpDay - b.followUpDay)
-        .map(
-          (item) =>
-            `${item.followUpDay}일 경과: ${conditionChangeLabels[item.conditionChange]} · 식욕 ${levelLabels[item.appetite]} · 활력 ${levelLabels[item.energy]} · 보호자 기록/확인 전`,
-        )
-    : ["아직 입력한 경과 기록은 없습니다."];
+  const completedFollowUps = report.followUpCheckpoints.filter(
+    (checkpoint) => checkpoint.recordedAt,
+  );
+  const progressLines = completedFollowUps.length
+    ? completedFollowUps.map((checkpoint) => {
+        if (checkpoint.conditionChange) {
+          return `${checkpoint.followUpDay}일 경과: ${conditionChangeLabels[checkpoint.conditionChange]} · 식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
+        }
+        const source = checkpoint.source === "health-record"
+          ? `${dateTimeFormatter.format(new Date(checkpoint.recordedAt!))} 일반 건강 기록에서 자동 연결 · `
+          : "";
+        return `${checkpoint.followUpDay}일 전후 경과: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
+      })
+    : ["자동 연결된 경과 기록은 아직 없습니다."];
   const generatedAt = options.generatedAt ?? new Date().toISOString();
-  const completedProgressDays = progress.length
-    ? [...progress]
-        .sort((a, b) => a.followUpDay - b.followUpDay)
-        .map((item) => `${item.followUpDay}일`)
+  const completedProgressDays = completedFollowUps.length
+    ? completedFollowUps
+        .map((checkpoint) => `${checkpoint.followUpDay}일 전후`)
         .join(", ")
     : "없음";
   const draftWithoutCopy: Omit<VetReviewDraft, "copyText"> = {

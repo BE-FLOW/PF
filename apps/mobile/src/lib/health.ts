@@ -187,6 +187,17 @@ export interface EpisodeReportTimelineItem {
   mediaCount: number;
 }
 
+export interface EpisodeFollowUpCheckpoint {
+  followUpDay: FollowUpDay;
+  targetAt: string;
+  recordedAt?: string;
+  recordId?: string;
+  source?: "health-record" | "manual";
+  conditionChange?: EpisodeProgress["conditionChange"];
+  appetite?: Level;
+  energy?: Level;
+}
+
 export interface EpisodeReport {
   title: string;
   petProfile: string;
@@ -201,6 +212,7 @@ export interface EpisodeReport {
   timeline: EpisodeReportTimelineItem[];
   planTasks: PlanTask[];
   progress: EpisodeProgress[];
+  followUpCheckpoints: EpisodeFollowUpCheckpoint[];
   shareText: string;
   disclaimer: string;
 }
@@ -469,6 +481,11 @@ const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
   hour: "2-digit",
   minute: "2-digit",
 });
+
+const followUpDays: FollowUpDay[] = [3, 7, 14, 30, 60, 90];
+const followUpUpperBounds = [5, 11, 22, 45, 75, Number.POSITIVE_INFINITY];
+const millisecondsPerDay = 24 * 60 * 60 * 1000;
+const koreaOffsetMilliseconds = 9 * 60 * 60 * 1000;
 
 const disclaimer =
   "이 결과는 보호자의 기록 정리를 돕는 참고 정보이며 수의사의 진단을 대신하지 않습니다. 상태가 빠르게 악화되거나 호흡 곤란, 의식 저하, 경련, 지속 출혈이 있으면 즉시 가까운 동물병원에 연락하세요.";
@@ -777,11 +794,90 @@ export function summarizeHealthFlow(
   };
 }
 
+function koreaCalendarDay(value: string) {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp)
+    ? Math.floor((timestamp + koreaOffsetMilliseconds) / millisecondsPerDay)
+    : null;
+}
+
+function followUpDayForElapsedDays(elapsedDays: number): FollowUpDay | null {
+  if (elapsedDays < 1) return null;
+  const index = followUpUpperBounds.findIndex((upperBound) => elapsedDays < upperBound);
+  return followUpDays[index] ?? null;
+}
+
+export function buildEpisodeFollowUpCheckpoints(
+  records: HistoryRecord[],
+  startedAt?: string,
+  progress: EpisodeProgress[] = [],
+): EpisodeFollowUpCheckpoint[] {
+  const orderedRecords = [...records].sort(
+    (a, b) =>
+      new Date(a.result.createdAt).getTime() -
+      new Date(b.result.createdAt).getTime(),
+  );
+  const referenceAt = startedAt ?? orderedRecords[0]?.result.createdAt;
+  const referenceDay = referenceAt ? koreaCalendarDay(referenceAt) : null;
+  const referenceTimestamp = referenceAt ? new Date(referenceAt).getTime() : Number.NaN;
+  const recordsByCheckpoint = new Map<FollowUpDay, HistoryRecord>();
+
+  if (referenceDay !== null) {
+    for (const record of orderedRecords) {
+      const recordDay = koreaCalendarDay(record.result.createdAt);
+      if (recordDay === null) continue;
+      const elapsedDays = recordDay - referenceDay;
+      const checkpointDay = followUpDayForElapsedDays(elapsedDays);
+      if (!checkpointDay) continue;
+
+      const current = recordsByCheckpoint.get(checkpointDay);
+      if (!current) {
+        recordsByCheckpoint.set(checkpointDay, record);
+        continue;
+      }
+      const currentDay = koreaCalendarDay(current.result.createdAt);
+      if (currentDay === null) continue;
+      const currentDistance = Math.abs(currentDay - referenceDay - checkpointDay);
+      const nextDistance = Math.abs(elapsedDays - checkpointDay);
+      if (
+        nextDistance < currentDistance ||
+        (nextDistance === currentDistance &&
+          new Date(record.result.createdAt).getTime() >
+            new Date(current.result.createdAt).getTime())
+      ) {
+        recordsByCheckpoint.set(checkpointDay, record);
+      }
+    }
+  }
+
+  const progressByCheckpoint = new Map(
+    progress.map((item) => [item.followUpDay, item] as const),
+  );
+
+  return followUpDays.map((followUpDay) => {
+    const record = recordsByCheckpoint.get(followUpDay);
+    const manual = progressByCheckpoint.get(followUpDay);
+    return {
+      followUpDay,
+      targetAt: Number.isFinite(referenceTimestamp)
+        ? new Date(referenceTimestamp + followUpDay * millisecondsPerDay).toISOString()
+        : "",
+      recordedAt: manual?.recordedAt ?? record?.result.createdAt,
+      recordId: manual ? undefined : record?.result.id,
+      source: manual ? "manual" : record ? "health-record" : undefined,
+      conditionChange: manual?.conditionChange,
+      appetite: manual?.appetite ?? record?.input.appetite,
+      energy: manual?.energy ?? record?.input.energy,
+    };
+  });
+}
+
 export function buildEpisodeReport(
   records: HistoryRecord[],
   fallbackPetName = "반려동물",
   plan?: EpisodePlan,
   progress: EpisodeProgress[] = [],
+  episodeStartedAt?: string,
 ): EpisodeReport {
   const ordered = [...records].sort(
     (a, b) =>
@@ -884,14 +980,27 @@ export function buildEpisodeReport(
   const orderedProgress = [...progress].sort(
     (a, b) => a.followUpDay - b.followUpDay,
   );
-  const progressText = orderedProgress.length
-    ? orderedProgress
-        .map(
-          (item) =>
-            `${item.followUpDay}일: ${conditionChangeLabels[item.conditionChange]} / 식욕 ${levelLabels[item.appetite]} / 활력 ${levelLabels[item.energy]}`,
-        )
+  const followUpCheckpoints = buildEpisodeFollowUpCheckpoints(
+    ordered,
+    episodeStartedAt,
+    orderedProgress,
+  );
+  const completedFollowUps = followUpCheckpoints.filter(
+    (checkpoint) => checkpoint.recordedAt,
+  );
+  const progressText = completedFollowUps.length
+    ? completedFollowUps
+        .map((checkpoint) => {
+          if (checkpoint.conditionChange) {
+            return `${checkpoint.followUpDay}일: ${conditionChangeLabels[checkpoint.conditionChange]} / 식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
+          }
+          const source = checkpoint.source === "health-record"
+            ? `${dayFormatter.format(new Date(checkpoint.recordedAt!))} 건강 기록 자동 연결 / `
+            : "";
+          return `${checkpoint.followUpDay}일 전후: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
+        })
         .join("\n")
-    : "아직 입력한 경과 기록이 없습니다.";
+    : "자동 연결된 경과 기록이 아직 없습니다.";
   const mediaText = mediaSummary.length
     ? [
         ...mediaSummary,
@@ -939,6 +1048,7 @@ export function buildEpisodeReport(
     timeline,
     planTasks: plan?.tasks ?? [],
     progress: orderedProgress,
+    followUpCheckpoints,
     shareText,
     disclaimer,
   };

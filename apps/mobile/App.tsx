@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Application from "expo-application";
 import * as AuthSession from "expo-auth-session";
 import { useFonts } from "expo-font";
@@ -14,6 +15,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -78,16 +80,13 @@ import {
   type AiAccessStatus,
   type AiReportFeedbackInput,
   type AnalysisResult,
-  type ConditionChange,
   type DisplayHealthReport,
   type EpisodePlan,
   type EpisodeProgress,
   type EpisodeReport,
-  type FollowUpDay,
   type HealthFlowSummary,
   type HealthCheckInput,
   type HistoryRecord,
-  type Level,
   type PetEpisode,
   type PetProfile,
   type PetSex,
@@ -132,6 +131,12 @@ const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
   { id: "reports", label: "보고서" },
   { id: "account", label: "계정" },
 ];
+
+const quickGuideStoragePrefix = "petflow-quick-guide-v1";
+
+function quickGuideStorageKey(userId: string) {
+  return `${quickGuideStoragePrefix}:${userId}`;
+}
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPolicy = [
@@ -190,14 +195,6 @@ interface EpisodeNotice {
   episodeId: string | null;
   text: string;
   tone: NoticeTone;
-}
-
-interface ProgressDraft {
-  episodeId: string;
-  followUpDay: FollowUpDay;
-  conditionChange: ConditionChange;
-  appetite: Level;
-  energy: Level;
 }
 
 interface AiFeedbackDraft {
@@ -273,36 +270,6 @@ const sexOptions: Array<{ id: PetSex; label: string }> = [
   { id: "female", label: "여아" },
   { id: "neutered-male", label: "중성화 남아" },
   { id: "spayed-female", label: "중성화 여아" },
-];
-
-const conditionChangeOptions: Array<{
-  id: ConditionChange;
-  label: string;
-  description: string;
-}> = [
-  { id: "better", label: "좋아졌어요", description: "전보다 편안해 보여요" },
-  { id: "same", label: "비슷해요", description: "큰 변화가 없어요" },
-  { id: "worse", label: "나빠졌어요", description: "불편함이 더 보여요" },
-];
-
-const initialFollowUpDays: FollowUpDay[] = [3, 7, 14];
-const longTermFollowUpDays: FollowUpDay[] = [30, 60, 90];
-
-const followUpGroups: Array<{
-  title: string;
-  description: string;
-  days: FollowUpDay[];
-}> = [
-  {
-    title: "초기 경과",
-    description: "진료 직후 다시 설명해야 하는 변화를 3·7·14일에 남겨요.",
-    days: initialFollowUpDays,
-  },
-  {
-    title: "장기 경과",
-    description: "다른 병원이나 재진 때 필요한 큰 흐름을 30·60·90일에 남겨요.",
-    days: longTermFollowUpDays,
-  },
 ];
 
 const aiFeedbackScoreOptions: Array<{
@@ -468,6 +435,7 @@ export default function App() {
   const processedOAuthUrlsRef = useRef<Set<string>>(new Set());
 
   const [authReady, setAuthReady] = useState(false);
+  const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [mainSection, setMainSection] = useState<MainSection>("home");
   const [enabledOAuthProviders, setEnabledOAuthProviders] = useState(
@@ -515,13 +483,6 @@ export default function App() {
   const [planSavingEpisodeId, setPlanSavingEpisodeId] = useState<string | null>(null);
   const [planTogglingTaskId, setPlanTogglingTaskId] = useState<string | null>(null);
   const [planNotice, setPlanNotice] = useState<EpisodeNotice>({
-    episodeId: null,
-    text: "",
-    tone: "success",
-  });
-  const [progressDraft, setProgressDraft] = useState<ProgressDraft | null>(null);
-  const [progressSavingKey, setProgressSavingKey] = useState<string | null>(null);
-  const [progressNotice, setProgressNotice] = useState<EpisodeNotice>({
     episodeId: null,
     text: "",
     tone: "success",
@@ -650,6 +611,7 @@ export default function App() {
           selectedPet?.name,
           plan,
           episodeProgress,
+          group.episode?.startedAt,
         );
         return {
           key,
@@ -682,6 +644,34 @@ export default function App() {
         !normalizeKoreanMobile(testerProfile.phone)),
   );
 
+  useEffect(() => {
+    let active = true;
+    if (!authReady || !user || needsTesterProfile) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void AsyncStorage.getItem(quickGuideStorageKey(user.id))
+      .then((value) => {
+        if (active) setQuickGuideOpen(value !== "seen");
+      })
+      .catch(() => {
+        if (active) setQuickGuideOpen(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [authReady, needsTesterProfile, user]);
+
+  function closeQuickGuide() {
+    setQuickGuideOpen(false);
+    if (user) {
+      void AsyncStorage.setItem(quickGuideStorageKey(user.id), "seen");
+    }
+  }
+
   const headline = useMemo(() => {
     if (!configured) return "앱 환경을 먼저 연결해요";
     if (!authReady) return "계정 확인 중";
@@ -695,6 +685,7 @@ export default function App() {
     setPetMessage("");
     if (!nextUser) {
       setMainSection("home");
+      setQuickGuideOpen(false);
       setTesterProfile(null);
       setDraft(emptyDraft);
       setPets([]);
@@ -719,9 +710,6 @@ export default function App() {
       setPlanSavingEpisodeId(null);
       setPlanTogglingTaskId(null);
       setPlanNotice({ episodeId: null, text: "", tone: "success" });
-      setProgressDraft(null);
-      setProgressSavingKey(null);
-      setProgressNotice({ episodeId: null, text: "", tone: "success" });
       setAiAccess(null);
       setAccountDeletionLoading(false);
       setAccountDeletionMessage("");
@@ -846,9 +834,6 @@ export default function App() {
       setPlanSavingEpisodeId(null);
       setPlanTogglingTaskId(null);
       setPlanNotice({ episodeId: null, text: "", tone: "success" });
-      setProgressDraft(null);
-      setProgressSavingKey(null);
-      setProgressNotice({ episodeId: null, text: "", tone: "success" });
       setVetDrafts({});
       setVetDraftLoadingEpisodeId(null);
       setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
@@ -1213,9 +1198,6 @@ export default function App() {
     setPlanSavingEpisodeId(null);
     setPlanTogglingTaskId(null);
     setPlanNotice({ episodeId: null, text: "", tone: "success" });
-    setProgressDraft(null);
-    setProgressSavingKey(null);
-    setProgressNotice({ episodeId: null, text: "", tone: "success" });
     setVetDrafts({});
     setVetDraftLoadingEpisodeId(null);
     setVetDraftNotice({ episodeId: null, text: "", tone: "success" });
@@ -2301,87 +2283,6 @@ export default function App() {
     }
   }
 
-  function startProgressEdit(group: EpisodeReportGroup, day: FollowUpDay) {
-    if (!group.episode) return;
-    const saved = group.progress.find((item) => item.followUpDay === day);
-    setProgressDraft({
-      episodeId: group.episode.id,
-      followUpDay: day,
-      conditionChange: saved?.conditionChange ?? "same",
-      appetite: saved?.appetite ?? "normal",
-      energy: saved?.energy ?? "normal",
-    });
-    setProgressNotice({ episodeId: group.episode.id, text: "", tone: "success" });
-  }
-
-  function cancelProgressEdit() {
-    setProgressDraft(null);
-  }
-
-  async function saveEpisodeProgress() {
-    if (!progressDraft) return;
-    const { episodeId, ...input } = progressDraft;
-    const savingKey = `${episodeId}:${input.followUpDay}`;
-
-    setProgressSavingKey(savingKey);
-    setProgressNotice({ episodeId, text: "", tone: "success" });
-    try {
-      const supabase = getSupabaseClient();
-      const { data } = supabase
-        ? await supabase.auth.getSession()
-        : { data: { session: null } };
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("missing session");
-
-      const response = await fetch(`${apiBaseUrl}/api/episodes/${episodeId}/progress`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input),
-      });
-      if (!response.ok) throw new Error("save progress failed");
-      const payload = (await response.json()) as { progress: EpisodeProgress };
-
-      setProgress((current) => {
-        const next = [
-          ...current.filter(
-            (item) =>
-              item.id !== payload.progress.id &&
-              !(
-                item.episodeId === payload.progress.episodeId &&
-                item.followUpDay === payload.progress.followUpDay
-              ),
-          ),
-          payload.progress,
-        ];
-        return next.sort((a, b) => a.followUpDay - b.followUpDay);
-      });
-      setEpisodes((current) =>
-        current.map((episode) =>
-          episode.id === episodeId
-            ? { ...episode, lastActivityAt: payload.progress.recordedAt }
-            : episode,
-        ),
-      );
-      setProgressDraft(null);
-      setProgressNotice({
-        episodeId,
-        text: `${input.followUpDay}일 경과를 저장했어요.`,
-        tone: "success",
-      });
-    } catch {
-      setProgressNotice({
-        episodeId,
-        text: "경과 기록을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
-        tone: "error",
-      });
-    } finally {
-      setProgressSavingKey(null);
-    }
-  }
-
   async function createVetDraft(episodeId: string, reportIds?: string[]) {
     if (!aiAccess?.enabled) {
       setVetDraftNotice({
@@ -2551,6 +2452,7 @@ export default function App() {
       onSignOut={signOut}
       onLinkOAuth={linkOAuthIdentity}
       onRequestAccountDeletion={requestAccountDeletion}
+      onOpenGuide={() => setQuickGuideOpen(true)}
       disabled={loading}
     />
   ) : null;
@@ -2716,9 +2618,6 @@ export default function App() {
                         planSavingEpisodeId={planSavingEpisodeId}
                         planTogglingTaskId={planTogglingTaskId}
                         planNotice={planNotice}
-                        progressDraft={progressDraft}
-                        progressNotice={progressNotice}
-                        progressSavingKey={progressSavingKey}
                         vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
                         vetDraftNotice={vetDraftNotice}
                         vetDrafts={vetDrafts}
@@ -2736,11 +2635,7 @@ export default function App() {
                         onChangePlanDraft={setPlanDraft}
                         onSavePlan={saveEpisodePlan}
                         onTogglePlanTask={toggleEpisodePlanTask}
-                        onStartProgressEdit={startProgressEdit}
-                        onCancelProgressEdit={cancelProgressEdit}
-                        onChangeProgressDraft={setProgressDraft}
                         onChangeAiFeedbackDraft={updateAiFeedbackDraft}
-                        onSaveProgress={saveEpisodeProgress}
                         shareMessage={shareMessage}
                       />
                     ) : (
@@ -2775,6 +2670,7 @@ export default function App() {
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
+      <QuickGuideModal open={quickGuideOpen} onClose={closeQuickGuide} />
     </SafeAreaView>
   );
 }
@@ -2859,11 +2755,6 @@ function HomeDashboard({
     ? [speciesLabel(selectedPet.species), selectedPet.breed].filter(Boolean).join(" · ")
     : "함께 볼 아이를 골라주세요";
   const vaccination = vaccinationReminder(vaccinations);
-  const initialProgressCount =
-    activeEpisodeGroup?.progress.filter((item) =>
-      initialFollowUpDays.includes(item.followUpDay),
-    ).length ?? 0;
-
   if (!pets.length) {
     return (
       <View style={styles.card}>
@@ -2912,8 +2803,7 @@ function HomeDashboard({
                 style={styles.homeInlineStatus}
               >
                 <Text style={styles.homeInlineStatusText} numberOfLines={1}>
-                  진행 중 · 기록 {activeEpisodeGroup.records.length}회 · 경과{" "}
-                  {Math.min(initialProgressCount, 3)}/3
+                  진행 중 · 기록 {activeEpisodeGroup.records.length}회 · 흐름 자동 연결
                 </Text>
               </TouchableOpacity>
             ) : null}
@@ -3348,6 +3238,7 @@ function AccountCard({
   disabled,
   onLinkOAuth,
   onRequestAccountDeletion,
+  onOpenGuide,
   onSignOut,
 }: {
   aiAccess: AiAccessStatus | null;
@@ -3362,6 +3253,7 @@ function AccountCard({
   disabled: boolean;
   onLinkOAuth: (provider: OAuthProvider) => Promise<void>;
   onRequestAccountDeletion: () => Promise<void>;
+  onOpenGuide: () => void;
   onSignOut: () => Promise<void>;
 }) {
   const googleLinked = hasLinkedProvider(user, "google");
@@ -3511,6 +3403,20 @@ function AccountCard({
         ) : null}
       </View>
 
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={onOpenGuide}
+        style={styles.quickGuideEntry}
+      >
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.quickGuideEntryTitle}>사용법 보기</Text>
+          <Text style={styles.quickGuideEntryText}>
+            기록부터 병원 요약까지 한눈에 확인해요.
+          </Text>
+        </View>
+        <Text style={styles.quickGuideEntryArrow}>›</Text>
+      </TouchableOpacity>
+
       <View style={styles.accountDeletionBox}>
         <Text style={styles.accountDeletionTitle}>계정 탈퇴</Text>
         <Text style={styles.accountDeletionText}>
@@ -3551,6 +3457,64 @@ function AccountCard({
       </TouchableOpacity>
       <AppBuildInfo />
     </View>
+  );
+}
+
+function QuickGuideModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const items = [
+    ["1", "짧게 기록", "달라진 점만 남기고 사진·영상은 필요할 때 더해요."],
+    ["2", "흐름은 자동 연결", "같은 아이의 기록을 날짜별 경과로 자동 정리해요."],
+    ["3", "병원 갈 때 요약", "필요한 기간을 골라 병원에 보여줄 자료를 만들어요."],
+  ] as const;
+
+  return (
+    <Modal
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      transparent
+      visible={open}
+    >
+      <View style={styles.quickGuideBackdrop}>
+        <View
+          accessibilityLabel="펫플로우 처음 사용법"
+          accessibilityViewIsModal
+          style={styles.quickGuideDialog}
+        >
+          <Text style={styles.quickGuideEyebrow}>처음 사용법</Text>
+          <Text style={styles.quickGuideTitle}>세 가지만 기억하면 돼요</Text>
+
+          <View style={styles.quickGuideList}>
+            {items.map(([number, title, description]) => (
+              <View key={number} style={styles.quickGuideItem}>
+                <View style={styles.quickGuideNumber}>
+                  <Text style={styles.quickGuideNumberText}>{number}</Text>
+                </View>
+                <View style={styles.cardHeaderText}>
+                  <Text style={styles.quickGuideItemTitle}>{title}</Text>
+                  <Text style={styles.quickGuideItemText}>{description}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            activeOpacity={0.86}
+            accessibilityRole="button"
+            onPress={onClose}
+            style={styles.quickGuideClose}
+          >
+            <Text style={styles.quickGuideCloseText}>시작하기</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -4501,30 +4465,23 @@ function HealthHistoryCard({
   planNotice,
   planSavingEpisodeId,
   planTogglingTaskId,
-  progressDraft,
-  progressNotice,
-  progressSavingKey,
   vetDraftLoadingEpisodeId,
   vetDraftNotice,
   vetDrafts,
   savedAiFeedbackUsageIds,
   onCancelPlanEdit,
-  onCancelProgressEdit,
   onChangeAiFeedbackDraft,
   onChangePlanDraft,
-  onChangeProgressDraft,
   onCreateVetDraft,
   onGoRecord,
   onRefresh,
   onSavePlan,
-  onSaveProgress,
   onSaveAiFeedback,
   onEditRecord,
   onDeleteRecord,
   onShareReport,
   onShareVetDraft,
   onStartPlanEdit,
-  onStartProgressEdit,
   onTogglePlanTask,
   shareMessage,
 }: {
@@ -4543,33 +4500,26 @@ function HealthHistoryCard({
   planNotice: EpisodeNotice;
   planSavingEpisodeId: string | null;
   planTogglingTaskId: string | null;
-  progressDraft: ProgressDraft | null;
-  progressNotice: EpisodeNotice;
-  progressSavingKey: string | null;
   vetDraftLoadingEpisodeId: string | null;
   vetDraftNotice: EpisodeNotice;
   vetDrafts: VetDraftMap;
   savedAiFeedbackUsageIds: string[];
   onCancelPlanEdit: () => void;
-  onCancelProgressEdit: () => void;
   onChangeAiFeedbackDraft: (
     usageId: string,
     patch: Partial<AiFeedbackDraft>,
   ) => void;
   onChangePlanDraft: (value: string) => void;
-  onChangeProgressDraft: (draft: ProgressDraft | null) => void;
   onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
   onGoRecord: (dateKey?: string) => void;
   onRefresh: () => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
-  onSaveProgress: () => Promise<void>;
   onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onEditRecord: (record: HistoryRecord) => void;
   onDeleteRecord: (record: HistoryRecord) => void;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
-  onStartProgressEdit: (group: EpisodeReportGroup, day: FollowUpDay) => void;
   onTogglePlanTask: (
     episodeId: string,
     taskId: string,
@@ -4640,7 +4590,13 @@ function HealthHistoryCard({
       records: selectedRecords,
       plan,
       progress: selectedProgress,
-      report: buildEpisodeReport(selectedRecords, petName, plan, selectedProgress),
+      report: buildEpisodeReport(
+        selectedRecords,
+        petName,
+        plan,
+        selectedProgress,
+        relatedEpisodeGroup?.episode?.startedAt,
+      ),
       latestAt: selectedRecords[0]?.result.createdAt ?? "",
     };
   }, [
@@ -4721,26 +4677,20 @@ function HealthHistoryCard({
           planNotice={planNotice}
           planSavingEpisodeId={planSavingEpisodeId}
           planTogglingTaskId={planTogglingTaskId}
-          progressDraft={progressDraft}
-          progressNotice={progressNotice}
-          progressSavingKey={progressSavingKey}
           vetDraft={selectedVetDraft}
           vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
           vetDraftNotice={vetDraftNotice}
           savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
           onCancelPlanEdit={onCancelPlanEdit}
-          onCancelProgressEdit={onCancelProgressEdit}
           onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
           onChangePlanDraft={onChangePlanDraft}
-          onChangeProgressDraft={onChangeProgressDraft}
           onCreateVetDraft={createSelectedVetDraft}
+          onGoRecord={() => onGoRecord()}
           onSaveAiFeedback={onSaveAiFeedback}
           onSavePlan={onSavePlan}
-          onSaveProgress={onSaveProgress}
           onShareReport={onShareReport}
           onShareVetDraft={onShareVetDraft}
           onStartPlanEdit={onStartPlanEdit}
-          onStartProgressEdit={onStartProgressEdit}
           onTogglePlanTask={onTogglePlanTask}
         />
         <Message text={shareMessage} tone="success" />
@@ -4930,26 +4880,20 @@ function EpisodeReportItem({
   planNotice,
   planSavingEpisodeId,
   planTogglingTaskId,
-  progressDraft,
-  progressNotice,
-  progressSavingKey,
   vetDraft,
   vetDraftLoadingEpisodeId,
   vetDraftNotice,
   savedAiFeedbackUsageIds,
   onCancelPlanEdit,
-  onCancelProgressEdit,
   onChangeAiFeedbackDraft,
   onChangePlanDraft,
-  onChangeProgressDraft,
   onCreateVetDraft,
+  onGoRecord,
   onSaveAiFeedback,
   onSavePlan,
-  onSaveProgress,
   onShareReport,
   onShareVetDraft,
   onStartPlanEdit,
-  onStartProgressEdit,
   onTogglePlanTask,
 }: {
   aiAccess: AiAccessStatus | null;
@@ -4962,29 +4906,23 @@ function EpisodeReportItem({
   planNotice: EpisodeNotice;
   planSavingEpisodeId: string | null;
   planTogglingTaskId: string | null;
-  progressDraft: ProgressDraft | null;
-  progressNotice: EpisodeNotice;
-  progressSavingKey: string | null;
   vetDraft?: VetReviewDraft;
   vetDraftLoadingEpisodeId: string | null;
   vetDraftNotice: EpisodeNotice;
   savedAiFeedbackUsageIds: string[];
   onCancelPlanEdit: () => void;
-  onCancelProgressEdit: () => void;
   onChangeAiFeedbackDraft: (
     usageId: string,
     patch: Partial<AiFeedbackDraft>,
   ) => void;
   onChangePlanDraft: (value: string) => void;
-  onChangeProgressDraft: (draft: ProgressDraft | null) => void;
   onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
+  onGoRecord: () => void;
   onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
-  onSaveProgress: () => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
-  onStartProgressEdit: (group: EpisodeReportGroup, day: FollowUpDay) => void;
   onTogglePlanTask: (
     episodeId: string,
     taskId: string,
@@ -5008,14 +4946,16 @@ function EpisodeReportItem({
   const isSavingPlan = Boolean(episodeId && planSavingEpisodeId === episodeId);
   const itemPlanNotice =
     episodeId && planNotice.episodeId === episodeId ? planNotice : null;
-  const initialProgressCount = group.progress.filter((item) =>
-    initialFollowUpDays.includes(item.followUpDay),
-  ).length;
-  const longTermProgressCount = group.progress.filter((item) =>
-    longTermFollowUpDays.includes(item.followUpDay),
-  ).length;
-  const itemProgressNotice =
-    episodeId && progressNotice.episodeId === episodeId ? progressNotice : null;
+  const completedFollowUps = group.report.followUpCheckpoints.filter(
+    (checkpoint) => checkpoint.recordedAt,
+  );
+  const lastCompletedFollowUpIndex = group.report.followUpCheckpoints.reduce(
+    (lastIndex, checkpoint, index) => checkpoint.recordedAt ? index : lastIndex,
+    -1,
+  );
+  const nextFollowUp = isOpen
+    ? group.report.followUpCheckpoints[lastCompletedFollowUpIndex + 1]
+    : undefined;
   const canUseAiDraft = Boolean(aiAccess?.enabled);
   const isCreatingVetDraft = Boolean(
     episodeId && vetDraftLoadingEpisodeId === episodeId,
@@ -5052,7 +4992,7 @@ function EpisodeReportItem({
       <>
           <View style={styles.episodeExpandedActions}>
             <Text style={styles.episodeExpandedMeta} numberOfLines={1}>
-              {planSummary} · 경과 {initialProgressCount + longTermProgressCount}회 · {mediaSummary}
+              {planSummary} · 자동 경과 {completedFollowUps.length}회 · {mediaSummary}
             </Text>
             <TouchableOpacity
               activeOpacity={0.85}
@@ -5174,177 +5114,56 @@ function EpisodeReportItem({
         <View style={styles.progressBox}>
           <View style={styles.planHeader}>
             <View style={styles.cardHeaderText}>
-              <Text style={styles.planTitle}>경과 기록</Text>
+              <Text style={styles.planTitle}>경과 흐름</Text>
               <Text style={styles.planSubtitle}>
-                초기 3·7·14일과 장기 30·60·90일 흐름을 같은 사건에 이어
-                남겨요.
+                건강 기록을 남기면 같은 흐름에 자동으로 이어져요.
               </Text>
             </View>
-            <Text style={styles.progressBadge}>보호자 경과</Text>
+            <Text style={styles.progressBadge}>자동 연결</Text>
           </View>
 
-          <View style={styles.progressDayList}>
-            {followUpGroups.map((followUpGroup) => (
-              <View key={followUpGroup.title} style={styles.progressGroup}>
-                <View style={styles.progressGroupHead}>
-                  <Text style={styles.progressGroupTitle}>{followUpGroup.title}</Text>
-                  <Text style={styles.progressGroupDescription}>
-                    {followUpGroup.description}
-                  </Text>
-                </View>
-                {followUpGroup.days.map((day) => {
-                  const saved = group.progress.find(
-                    (item) => item.followUpDay === day,
-                  );
-                  const isEditing =
-                    progressDraft?.episodeId === episodeId &&
-                    progressDraft.followUpDay === day;
-                  const saving = progressSavingKey === `${episodeId}:${day}`;
-                  return (
-                    <View
-                      key={day}
-                      style={[
-                        styles.progressDayCard,
-                        saved && styles.progressDayCardSaved,
-                      ]}
-                    >
-                      <View style={styles.progressDayHead}>
-                        <View style={styles.progressDayPill}>
-                          <Text style={styles.progressDayPillText}>{day}일</Text>
-                        </View>
-                        <View style={styles.cardHeaderText}>
-                          <Text style={styles.progressDayTitle}>
-                            {followUpDate(
-                              group.plan?.reportedAt ?? group.episode?.startedAt,
-                              day,
-                            )}{" "}
-                            확인
-                          </Text>
-                          <Text style={styles.progressDaySummary}>
-                            {saved
-                              ? progressSummary(saved)
-                              : "아직 경과를 기록하지 않았어요."}
-                          </Text>
-                        </View>
-                        {!isEditing ? (
-                          <TouchableOpacity
-                            activeOpacity={0.85}
-                            disabled={saving}
-                            onPress={() => onStartProgressEdit(group, day)}
-                            style={[
-                              styles.progressEditButton,
-                              saving && styles.buttonDisabled,
-                            ]}
-                          >
-                            <Text style={styles.progressEditButtonText}>
-                              {saved ? "수정" : "기록"}
-                            </Text>
-                          </TouchableOpacity>
-                        ) : null}
-                      </View>
-
-                      {isEditing && progressDraft ? (
-                        <View style={styles.progressEditor}>
-                          <Text style={styles.progressEditorLabel}>
-                            전반적인 변화
-                          </Text>
-                          <View style={styles.progressChoiceGrid}>
-                            {conditionChangeOptions.map((option) => {
-                              const selected =
-                                progressDraft.conditionChange === option.id;
-                              return (
-                                <TouchableOpacity
-                                  activeOpacity={0.85}
-                                  key={option.id}
-                                  onPress={() =>
-                                    onChangeProgressDraft({
-                                      ...progressDraft,
-                                      conditionChange: option.id,
-                                    })
-                                  }
-                                  style={[
-                                    styles.progressChoice,
-                                    selected && styles.progressChoiceSelected,
-                                  ]}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.progressChoiceTitle,
-                                      selected &&
-                                        styles.progressChoiceTitleSelected,
-                                    ]}
-                                  >
-                                    {option.label}
-                                  </Text>
-                                  <Text
-                                    style={[
-                                      styles.progressChoiceText,
-                                      selected &&
-                                        styles.progressChoiceTextSelected,
-                                    ]}
-                                  >
-                                    {option.description}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-
-                          <Text style={styles.progressEditorLabel}>식욕</Text>
-                          <ChipGroup
-                            options={levelOptions}
-                            selected={progressDraft.appetite}
-                            onSelect={(appetite) =>
-                              onChangeProgressDraft({ ...progressDraft, appetite })
-                            }
-                          />
-
-                          <Text style={styles.progressEditorLabel}>활력</Text>
-                          <ChipGroup
-                            options={levelOptions}
-                            selected={progressDraft.energy}
-                            onSelect={(energy) =>
-                              onChangeProgressDraft({ ...progressDraft, energy })
-                            }
-                          />
-
-                          <View style={styles.progressEditorActions}>
-                            <TouchableOpacity
-                              activeOpacity={0.85}
-                              disabled={saving}
-                              onPress={onCancelProgressEdit}
-                              style={[
-                                styles.progressCancelButton,
-                                saving && styles.buttonDisabled,
-                              ]}
-                            >
-                              <Text style={styles.progressCancelButtonText}>취소</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              activeOpacity={0.85}
-                              disabled={saving}
-                              onPress={() => void onSaveProgress()}
-                              style={[
-                                styles.progressSaveButton,
-                                saving && styles.buttonDisabled,
-                              ]}
-                            >
-                              <Text style={styles.progressSaveButtonText}>
-                                {saving ? "저장 중" : `${day}일 경과 저장`}
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      ) : null}
-                    </View>
-                  );
-                })}
+          <View style={styles.followUpSummary}>
+            <View style={styles.followUpStatusRow}>
+              <Text style={styles.followUpStatusTitle}>
+                연결된 기록 {group.records.length}회
+              </Text>
+              <Text style={styles.followUpStatusMeta}>
+                자동 정리 {completedFollowUps.length}회
+              </Text>
+            </View>
+            {completedFollowUps.length ? (
+              <View style={styles.followUpChipRow}>
+                {completedFollowUps.map((checkpoint) => (
+                  <View key={checkpoint.followUpDay} style={styles.followUpChip}>
+                    <Text style={styles.followUpChipText}>
+                      ✓ {checkpoint.followUpDay}일 전후
+                    </Text>
+                  </View>
+                ))}
               </View>
-            ))}
+            ) : (
+              <Text style={styles.followUpEmpty}>
+                첫 기록을 기준으로 다음 기록부터 자동 연결돼요.
+              </Text>
+            )}
+            {nextFollowUp ? (
+              <View style={styles.followUpNext}>
+                <Text style={styles.followUpNextLabel}>다음 확인</Text>
+                <Text style={styles.followUpNextValue}>
+                  {nextFollowUp.followUpDay}일 전후 · {formatFollowUpTarget(nextFollowUp.targetAt)}
+                </Text>
+              </View>
+            ) : null}
+            {isOpen ? (
+              <TouchableOpacity
+                activeOpacity={0.86}
+                onPress={onGoRecord}
+                style={styles.progressContinueButton}
+              >
+                <Text style={styles.progressContinueButtonText}>+ 기록 이어가기</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
-          {itemProgressNotice ? (
-            <Message text={itemProgressNotice.text} tone={itemProgressNotice.tone} />
-          ) : null}
         </View>
       ) : null}
 
@@ -5376,8 +5195,7 @@ function EpisodeReportItem({
           <View style={styles.vetDraftIncludes}>
             <Text style={styles.vetDraftInclude}>관찰 {group.report.recordCount}회</Text>
             <Text style={styles.vetDraftInclude}>계획 {completedTasks}/{planTasks.length}</Text>
-            <Text style={styles.vetDraftInclude}>초기 경과 {initialProgressCount}/3</Text>
-            <Text style={styles.vetDraftInclude}>장기 경과 {longTermProgressCount}/3</Text>
+            <Text style={styles.vetDraftInclude}>자동 경과 {completedFollowUps.length}회</Text>
             <Text style={styles.vetDraftInclude}>첨부 {group.report.mediaCount}개</Text>
           </View>
 
@@ -5665,25 +5483,9 @@ function optionLabel<T extends string>(options: Array<{ id: T; label: string }>,
   return options.find((option) => option.id === id)?.label ?? id;
 }
 
-function conditionChangeLabel(value: ConditionChange) {
-  return (
-    conditionChangeOptions.find((option) => option.id === value)?.label ??
-    "비슷해요"
-  );
-}
-
-function progressSummary(item: EpisodeProgress) {
-  return `${conditionChangeLabel(item.conditionChange)} · 식욕 ${optionLabel(
-    levelOptions,
-    item.appetite,
-  )} · 활력 ${optionLabel(levelOptions, item.energy)}`;
-}
-
-function followUpDate(startedAt: string | undefined, day: FollowUpDay) {
-  if (!startedAt) return `${day}일 경과`;
-  const date = new Date(startedAt);
-  if (Number.isNaN(date.getTime())) return `${day}일 경과`;
-  date.setDate(date.getDate() + day);
+function formatFollowUpTarget(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "날짜 확인 전";
   return new Intl.DateTimeFormat("ko-KR", {
     month: "long",
     day: "numeric",
@@ -6599,6 +6401,114 @@ const styles = StyleSheet.create({
     marginTop: 4,
     color: colors.ink,
     fontSize: 12,
+    fontWeight: "900",
+  },
+  quickGuideEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
+    padding: 14,
+  },
+  quickGuideEntryTitle: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  quickGuideEntryText: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  quickGuideEntryArrow: {
+    color: colors.green,
+    fontSize: 26,
+    fontWeight: "700",
+    lineHeight: 28,
+  },
+  quickGuideBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(13, 47, 42, 0.48)",
+    padding: 20,
+  },
+  quickGuideDialog: {
+    width: "100%",
+    maxWidth: 430,
+    borderWidth: 1,
+    borderColor: "#cbe5d9",
+    borderRadius: 28,
+    backgroundColor: "#ffffff",
+    padding: 24,
+  },
+  quickGuideEyebrow: {
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  quickGuideTitle: {
+    marginTop: 7,
+    color: colors.ink,
+    fontSize: 23,
+    fontWeight: "900",
+    lineHeight: 30,
+  },
+  quickGuideList: {
+    gap: 10,
+    marginVertical: 20,
+  },
+  quickGuideItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 17,
+    backgroundColor: "#f5faf7",
+    padding: 12,
+  },
+  quickGuideNumber: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    backgroundColor: colors.greenSoft,
+  },
+  quickGuideNumberText: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  quickGuideItemTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  quickGuideItemText: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  quickGuideClose: {
+    alignItems: "center",
+    borderRadius: 18,
+    backgroundColor: colors.green,
+    paddingHorizontal: 18,
+    paddingVertical: 15,
+  },
+  quickGuideCloseText: {
+    color: "#ffffff",
+    fontSize: 14,
     fontWeight: "900",
   },
   accountDeletionBox: {
@@ -7677,155 +7587,88 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
-  progressDayList: {
-    gap: 9,
+  followUpSummary: {
+    gap: 10,
     marginTop: 11,
   },
-  progressGroup: {
-    gap: 9,
-  },
-  progressGroupHead: {
+  followUpStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
     borderRadius: 14,
     backgroundColor: "#ffffff",
-    paddingHorizontal: 11,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
-  progressGroupTitle: {
+  followUpStatusTitle: {
     color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  progressGroupDescription: {
-    marginTop: 3,
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-    lineHeight: 16,
-  },
-  progressDayCard: {
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 16,
-    backgroundColor: "#ffffff",
-    padding: 11,
-  },
-  progressDayCardSaved: {
-    borderColor: "#b8decf",
-    backgroundColor: "#eefaf4",
-  },
-  progressDayHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-  },
-  progressDayPill: {
-    width: 38,
-    height: 38,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 19,
-    backgroundColor: colors.green,
-  },
-  progressDayPillText: {
-    color: "#ffffff",
     fontSize: 12,
     fontWeight: "900",
   },
-  progressDayTitle: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  progressDaySummary: {
-    marginTop: 3,
+  followUpStatusMeta: {
     color: colors.muted,
     fontSize: 11,
-    fontWeight: "700",
-    lineHeight: 16,
+    fontWeight: "800",
   },
-  progressEditButton: {
+  followUpChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 7,
+  },
+  followUpChip: {
     borderRadius: 999,
     backgroundColor: colors.greenSoft,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
   },
-  progressEditButtonText: {
+  followUpChipText: {
     color: colors.green,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "900",
   },
-  progressEditor: {
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    paddingTop: 12,
-  },
-  progressEditorLabel: {
-    marginBottom: 8,
-    marginTop: 8,
-    color: colors.ink,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  progressChoiceGrid: {
-    gap: 8,
-  },
-  progressChoice: {
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 15,
-    backgroundColor: "#fbfefd",
-    padding: 11,
-  },
-  progressChoiceSelected: {
-    borderColor: colors.green,
-    backgroundColor: colors.green,
-  },
-  progressChoiceTitle: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  progressChoiceTitleSelected: {
-    color: "#ffffff",
-  },
-  progressChoiceText: {
-    marginTop: 3,
+  followUpEmpty: {
     color: colors.muted,
     fontSize: 11,
     fontWeight: "700",
     lineHeight: 16,
   },
-  progressChoiceTextSelected: {
-    color: "#eafff5",
-  },
-  progressEditorActions: {
+  followUpNext: {
     flexDirection: "row",
-    gap: 9,
-    marginTop: 14,
-  },
-  progressCancelButton: {
-    flex: 1,
     alignItems: "center",
-    borderRadius: 16,
-    backgroundColor: colors.greenSoft,
-    paddingVertical: 12,
+    gap: 9,
+    borderWidth: 1,
+    borderColor: "#c8e1d6",
+    borderRadius: 14,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
-  progressCancelButtonText: {
+  followUpNextLabel: {
     color: colors.green,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: "900",
   },
-  progressSaveButton: {
-    flex: 1.4,
-    alignItems: "center",
-    borderRadius: 16,
-    backgroundColor: colors.green,
-    paddingVertical: 12,
+  followUpNextValue: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
   },
-  progressSaveButtonText: {
+  progressContinueButton: {
+    alignSelf: "flex-start",
+    alignItems: "center",
+    borderRadius: 14,
+    backgroundColor: colors.green,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  progressContinueButtonText: {
     color: "#ffffff",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "900",
   },
   vetDraftBox: {

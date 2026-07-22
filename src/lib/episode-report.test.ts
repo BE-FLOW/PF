@@ -132,6 +132,32 @@ describe("buildEpisodeReport", () => {
     expect(report.shareText).toContain("수의사가 확인한 경과가 아닙니다");
   });
 
+  it("maps ordinary health records to follow-up checkpoints automatically", () => {
+    const report = buildEpisodeReport(
+      [
+        record("2026-06-10T00:00:00.000Z"),
+        record("2026-06-14T00:00:00.000Z", { appetite: "normal" }),
+        record("2026-06-18T00:00:00.000Z", { energy: "slight" }),
+        record("2026-07-13T00:00:00.000Z", { appetite: "low" }),
+      ],
+      "보리",
+      undefined,
+      [],
+      "2026-06-10T00:00:00.000Z",
+    );
+
+    const completed = report.followUpCheckpoints.filter(
+      (checkpoint) => checkpoint.recordedAt,
+    );
+    expect(completed.map((checkpoint) => checkpoint.followUpDay)).toEqual([
+      3,
+      7,
+      30,
+    ]);
+    expect(completed.every((checkpoint) => checkpoint.source === "health-record")).toBe(true);
+    expect(report.shareText).toContain("건강 기록 자동 연결");
+  });
+
   it("summarizes owner-uploaded media without interpreting it", () => {
     const item = record("2026-06-10T00:00:00.000Z");
     item.media = [
