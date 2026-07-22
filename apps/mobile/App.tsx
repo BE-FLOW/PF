@@ -4978,9 +4978,6 @@ function EpisodeReportItem({
     <View style={styles.episodeItem}>
       <View style={styles.episodeItemHeader}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.episodeStatus}>
-            {isOpen ? "진행 중" : group.episode ? "마무리됨" : "개별 기록"}
-          </Text>
           <Text style={styles.episodeTitle}>{group.report.title}</Text>
           <Text style={styles.episodeDescription}>
             {group.report.periodLabel} · {group.report.recordCount}회 기록 · 최고 단계{" "}
@@ -7397,19 +7394,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
   },
-  episodeStatus: {
-    alignSelf: "flex-start",
-    overflow: "hidden",
-    borderRadius: 999,
-    backgroundColor: colors.greenSoft,
-    color: colors.green,
-    fontSize: 11,
-    fontWeight: "900",
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-  },
   episodeTitle: {
-    marginTop: 9,
     color: colors.ink,
     fontSize: 16,
     fontWeight: "900",

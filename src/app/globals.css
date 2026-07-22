@@ -2640,19 +2640,6 @@ p {
   cursor: not-allowed;
   opacity: 0.45;
 }
-.episode-status {
-  display: inline-flex;
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: #eef3f0;
-  color: #71817b;
-  font-size: 9px;
-  font-weight: 900;
-}
-.episode-status.open {
-  background: var(--mint-soft);
-  color: var(--mint-dark);
-}
 .secondary-button.compact {
   min-height: 36px;
   padding: 8px 12px;
@@ -3575,9 +3562,6 @@ p {
   }
   .record-calendar-actions button {
     width: 100%;
-  }
-  .record-calendar-actions button:last-child:nth-child(3) {
-    grid-column: 1 / -1;
   }
   .panel {
     padding: 20px;

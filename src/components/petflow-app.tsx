@@ -2239,10 +2239,7 @@ function HistoryView({
   onEdit,
   onDelete,
   onStart,
-  onCloseEpisode,
   onOpenReport,
-  closingEpisodeId,
-  episodeError,
 }: {
   history: HistoryRecord[];
   flow: HealthFlowSummary;
@@ -2252,10 +2249,7 @@ function HistoryView({
   onEdit: (record: HistoryRecord) => void;
   onDelete: (record: HistoryRecord) => void;
   onStart: (dateKey: string) => void;
-  onCloseEpisode: (episodeId: string) => void;
   onOpenReport: (records: HistoryRecord[], episode?: PetEpisode) => void;
-  closingEpisodeId?: string;
-  episodeError: string;
 }) {
   const latestDateKey = toRecordDateKey(history[0]?.result.createdAt ?? new Date());
   const [calendarMonth, setCalendarMonth] = useState(() =>
@@ -2482,18 +2476,7 @@ function HistoryView({
             <Icon name="spark" size={15} />
             {selectedEpisode ? "요약 · AI 요약" : "선택 요약"}
           </button>
-          {selectedEpisode?.status === "open" && (
-            <button
-              className="secondary-button"
-              onClick={() => onCloseEpisode(selectedEpisode.id)}
-              disabled={closingEpisodeId === selectedEpisode.id}
-            >
-              <Icon name="check" size={15} />
-              {closingEpisodeId === selectedEpisode.id ? "마무리 중..." : "흐름 마무리"}
-            </button>
-          )}
         </div>
-        {episodeError && <p className="share-error" role="alert">{episodeError}</p>}
       </section>
       </div>
     </div>
@@ -2707,13 +2690,6 @@ function EpisodeReportView({
 
       <section className="episode-report-hero">
         <div>
-          <span className={`episode-status ${selection.episode?.status === "open" ? "open" : "closed"}`}>
-            {selection.episode?.status === "open"
-              ? "진행 중인 기록"
-              : selection.episode
-                ? "마무리된 기록"
-                : "개별 기록"}
-          </span>
           <h2>{report.title}</h2>
           <p>
             {report.periodLabel} · 보호자 관찰 {report.recordCount}회
@@ -3193,8 +3169,6 @@ export function PetFlowApp() {
   );
   const [loading, setLoading] = useState(false);
   const [flowLoading, setFlowLoading] = useState(false);
-  const [closingEpisodeId, setClosingEpisodeId] = useState<string>();
-  const [episodeError, setEpisodeError] = useState("");
   const [error, setError] = useState("");
   const [appNotice, setAppNotice] = useState<{
     tone: "success" | "error";
@@ -4277,32 +4251,6 @@ export function PetFlowApp() {
       setLoading(false);
     }
   }
-  async function closeEpisode(episodeId: string) {
-    const supabase = getSupabaseBrowserClient();
-    setClosingEpisodeId(episodeId);
-    setEpisodeError("");
-    try {
-      const { data } = supabase
-        ? await supabase.auth.getSession()
-        : { data: { session: null } };
-      if (!data.session) throw new Error("no session");
-      const response = await fetch(`/api/episodes/${episodeId}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${data.session.access_token}` },
-      });
-      if (!response.ok) throw new Error("close failed");
-      const payload = (await response.json()) as { episode: PetEpisode };
-      setEpisodes((current) =>
-        current.map((episode) =>
-          episode.id === payload.episode.id ? payload.episode : episode,
-        ),
-      );
-    } catch {
-      setEpisodeError("이번 기록을 마무리하지 못했어요. 잠시 후 다시 시도해 주세요.");
-    } finally {
-      setClosingEpisodeId(undefined);
-    }
-  }
   async function savePlan(episodeId: string, tasks: string[]) {
     const supabase = getSupabaseBrowserClient();
     try {
@@ -4618,9 +4566,6 @@ export function PetFlowApp() {
             onStart={startNew}
             onEdit={startEditRecord}
             onDelete={(record) => void deleteRecord(record)}
-            onCloseEpisode={closeEpisode}
-            closingEpisodeId={closingEpisodeId}
-            episodeError={episodeError}
             onOpenReport={(records, episode) => {
               setSelectedEpisodeReport({ records, episode });
               setView("episode-report");

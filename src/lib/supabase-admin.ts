@@ -1295,58 +1295,6 @@ export async function setEpisodePlanTaskCompletion(
   }
 }
 
-export async function closePetEpisode(
-  accessToken: string | null,
-  episodeId: string | null,
-): Promise<PetEpisode | null> {
-  if (!isUuid(episodeId)) return null;
-  const userId = await getAuthenticatedUserId(accessToken);
-  if (!userId) return null;
-  try {
-    const existingResponse = await supabaseRequest(
-      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&limit=1`,
-      { method: "GET" },
-    );
-    if (!existingResponse?.ok) return null;
-    const existing = (await existingResponse.json()) as Array<{
-      id: string;
-      pet_id: string;
-      status: PetEpisode["status"];
-      started_at: string;
-      last_activity_at: string;
-      closed_at: string | null;
-    }>;
-    if (!existing[0]) return null;
-    if (existing[0].status === "closed") return toPetEpisode(existing[0]);
-
-    const closedAt = new Date().toISOString();
-    const response = await supabaseRequest(
-      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&status=eq.open`,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({
-          status: "closed",
-          closed_at: closedAt,
-          updated_at: closedAt,
-        }),
-      },
-    );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Array<{
-      id: string;
-      pet_id: string;
-      status: PetEpisode["status"];
-      started_at: string;
-      last_activity_at: string;
-      closed_at: string | null;
-    }>;
-    return rows[0] ? toPetEpisode(rows[0]) : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function saveReportFeedback(
   reportId: string,
   clientId: string,
