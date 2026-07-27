@@ -124,6 +124,18 @@ import {
   type VaccinationDraft,
   type VaccinationRow,
 } from "./src/lib/vaccinations";
+import {
+  storePreviewAiAccess,
+  storePreviewEnabled,
+  storePreviewEpisodes,
+  storePreviewHistory,
+  storePreviewInput,
+  storePreviewPet,
+  storePreviewPlans,
+  storePreviewUser,
+  storePreviewVaccinations,
+  storePreviewVetDrafts,
+} from "./src/lib/store-preview";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -480,7 +492,7 @@ export default function App() {
   petFlowFontsReady = fontsLoaded && !fontLoadError;
   const processedOAuthUrlsRef = useRef<Set<string>>(new Set());
 
-  const [authReady, setAuthReady] = useState(false);
+  const [authReady, setAuthReady] = useState(storePreviewEnabled);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [mainSection, setMainSection] = useState<MainSection>("home");
@@ -494,10 +506,26 @@ export default function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [draft, setDraft] = useState<AccountDraft>(emptyDraft);
-  const [user, setUser] = useState<User | null>(null);
-  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
-  const [pets, setPets] = useState<PetProfile[]>([]);
-  const [selectedPetId, setSelectedPetId] = useState<string>();
+  const [user, setUser] = useState<User | null>(
+    storePreviewEnabled ? storePreviewUser : null,
+  );
+  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(
+    storePreviewEnabled
+      ? {
+          nickname: "보리 보호자",
+          phone: "01000000000",
+          consentVersion: profileConsentVersion,
+          consentedAt: "2026-07-01T00:00:00.000Z",
+          phoneConsentedAt: "2026-07-01T00:00:00.000Z",
+        }
+      : null,
+  );
+  const [pets, setPets] = useState<PetProfile[]>(
+    storePreviewEnabled ? [storePreviewPet] : [],
+  );
+  const [selectedPetId, setSelectedPetId] = useState<string | undefined>(
+    storePreviewEnabled ? storePreviewPet.id : undefined,
+  );
   const [petDraft, setPetDraft] = useState<PetDraft>(emptyPetDraft);
   const [petFormExpanded, setPetFormExpanded] = useState(false);
   const [editingPetId, setEditingPetId] = useState<string | null>(null);
@@ -505,7 +533,9 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [petLoading, setPetLoading] = useState(false);
   const [petMessage, setPetMessage] = useState("");
-  const [healthInput, setHealthInput] = useState<HealthCheckInput | null>(null);
+  const [healthInput, setHealthInput] = useState<HealthCheckInput | null>(
+    storePreviewEnabled ? storePreviewInput : null,
+  );
   const [recordDateKey, setRecordDateKey] = useState(() =>
     toRecordDateKey(new Date()),
   );
@@ -515,11 +545,19 @@ export default function App() {
   const [latestEpisodeId, setLatestEpisodeId] = useState<string | null>(null);
   const [editingHealthRecord, setEditingHealthRecord] =
     useState<HistoryRecord | null>(null);
-  const [history, setHistory] = useState<HistoryRecord[]>([]);
-  const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
-  const [plans, setPlans] = useState<EpisodePlan[]>([]);
+  const [history, setHistory] = useState<HistoryRecord[]>(
+    storePreviewEnabled ? storePreviewHistory : [],
+  );
+  const [episodes, setEpisodes] = useState<PetEpisode[]>(
+    storePreviewEnabled ? storePreviewEpisodes : [],
+  );
+  const [plans, setPlans] = useState<EpisodePlan[]>(
+    storePreviewEnabled ? storePreviewPlans : [],
+  );
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
-  const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
+  const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>(
+    storePreviewEnabled ? storePreviewVaccinations : [],
+  );
   const vaccinationTableAvailableRef = useRef(true);
   const accountLoadSequenceRef = useRef(0);
   const historyLoadSequenceRef = useRef(0);
@@ -539,7 +577,9 @@ export default function App() {
     text: "",
     tone: "success",
   });
-  const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
+  const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(
+    storePreviewEnabled ? storePreviewAiAccess : null,
+  );
   const [billingProduct, setBillingProduct] =
     useState<MobileBillingProduct | null>(null);
   const [billingProductLoading, setBillingProductLoading] = useState(false);
@@ -558,7 +598,9 @@ export default function App() {
   const [accountDeletionLoading, setAccountDeletionLoading] = useState(false);
   const [accountDeletionMessage, setAccountDeletionMessage] = useState("");
   const [accountDeletionRequested, setAccountDeletionRequested] = useState(false);
-  const [vetDrafts, setVetDrafts] = useState<VetDraftMap>({});
+  const [vetDrafts, setVetDrafts] = useState<VetDraftMap>(
+    storePreviewEnabled ? storePreviewVetDrafts : {},
+  );
   const [vetDraftLoadingEpisodeId, setVetDraftLoadingEpisodeId] =
     useState<string | null>(null);
   const [vetDraftNotice, setVetDraftNotice] = useState<EpisodeNotice>({
@@ -579,6 +621,11 @@ export default function App() {
   useEffect(() => {
     let active = true;
     let removeBillingListener: (() => void) | null = null;
+    if (storePreviewEnabled) {
+      return () => {
+        active = false;
+      };
+    }
     if (!user?.id) {
       void resetMobileBillingCache();
       setBillingProduct(null);
@@ -832,6 +879,11 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+    if (storePreviewEnabled) {
+      return () => {
+        active = false;
+      };
+    }
     if (!authReady || !user || needsAccountProfile) {
       return () => {
         active = false;
@@ -1395,6 +1447,7 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (storePreviewEnabled) return;
     const supabase = getSupabaseClient();
     if (!supabase) {
       setAuthReady(true);
@@ -1409,6 +1462,7 @@ export default function App() {
   }, [loadAccount]);
 
   useEffect(() => {
+    if (storePreviewEnabled) return;
     let active = true;
     void fetchOAuthProviderStatus(
       process.env.EXPO_PUBLIC_SUPABASE_URL,
@@ -1423,6 +1477,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (storePreviewEnabled) return undefined;
     const supabase = getSupabaseClient();
     if (!supabase) return undefined;
 
@@ -1439,6 +1494,7 @@ export default function App() {
   }, [finishOAuthRedirect]);
 
   useEffect(() => {
+    if (storePreviewEnabled) return;
     if (!selectedPet) return;
     setHealthInput(profileToHealthInput(selectedPet));
     setHealthMessage("");

@@ -30,7 +30,10 @@
     "status:android:iap": "node scripts/android-iap-status.mjs",
     "configure:android:iap": "node scripts/configure-android-iap.mjs",
     "prepare:ios:app-store": "node scripts/prepare-ios-app-store.mjs",
+    "validate:ios:screenshots": "node scripts/upload-ios-screenshots.mjs --dry-run",
     "upload:ios:screenshots": "node scripts/upload-ios-screenshots.mjs",
+    "validate:ios:review-resubmission": "node scripts/resubmit-ios-review.mjs",
+    "submit:ios:review-resubmission": "node scripts/resubmit-ios-review.mjs --execute",
     "release:android:closed": "npm run verify && npm run release:preflight:android && npm run build:android:production && npm run submit:android:closed",
     "release:android:production": "npm run verify && npm run release:preflight:android && npm run build:android:production && npm run submit:android:production",
     "release:ios:testflight": "npm run verify && npm run release:preflight:ios && npm run build:ios:production && npm run submit:ios:latest && npm run submit:ios:testflight-external",
@@ -49,9 +52,11 @@
     "expo-secure-store": "~56.0.4",
     "expo-web-browser": "~56.0.6",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.85.3",
     "react-native-purchases": "^10.4.4",
-    "react-native-url-polyfill": "^3.0.0"
+    "react-native-url-polyfill": "^3.0.0",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
