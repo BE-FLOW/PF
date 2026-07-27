@@ -219,16 +219,18 @@ export interface EpisodeReport {
 
 export interface AiAccessStatus {
   enabled: boolean;
-  reason: "active" | "monthly_limit" | "unavailable";
-  monthlyReportLimit: number;
-  usedThisMonth: number;
+  reason: "active" | "no_credits" | "unavailable";
+  availableCredits: number;
+  complimentaryCredits: number;
+  purchasedCredits: number;
   usedTotal: number;
-  remainingThisMonth: number;
+  billingConfigured: boolean;
+  purchaseAvailable: boolean;
+  productId: string;
 }
 
 export interface AiReportFeedbackInput {
   usageId: string;
-  episodeId?: string;
   usefulnessScore: 1 | 2 | 3 | 4 | 5;
   comment?: string;
 }
@@ -1000,7 +1002,7 @@ export function buildEpisodeReport(
           return `${checkpoint.followUpDay}일 전후: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
         })
         .join("\n")
-    : "자동 연결된 경과 기록이 아직 없습니다.";
+    : "같은 흐름에 자동 연결된 기록이 아직 없습니다.";
   const mediaText = mediaSummary.length
     ? [
         ...mediaSummary,

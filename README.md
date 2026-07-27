@@ -1,38 +1,53 @@
 # PetFlow
 
-보호자의 관찰을 병원 전달용으로 정리하고, 병원에서 받은 계획과 경과를 다음
-상담까지 연결하는 모바일 우선 테스트 MVP입니다.
+보호자가 반려동물의 변화를 빠르게 기록하고, 병원에 전달하기 좋은 사실 중심의
+시간 흐름으로 정리하는 모바일 우선 서비스입니다. 진단이나 처방을 만들지 않습니다.
 
-제품 방향과 우선순위는 `docs/product-direction.md`를 기준으로 합니다.
-모바일 등록 준비는 `docs/mobile-store-registration.md`를 참고합니다.
+제품 판단은 [`docs/product-direction.md`](docs/product-direction.md), 데이터 취급은
+[`docs/privacy-and-data.md`](docs/privacy-and-data.md)를 기준으로 합니다.
+인프라 신뢰 경계는 [`docs/infrastructure.md`](docs/infrastructure.md), 반복 운영은
+[`docs/operations.md`](docs/operations.md), 결제 원장과 출시 조건은
+[`docs/billing.md`](docs/billing.md)를 따릅니다.
 
-## Test environment
+현재 사업 목표는 앱에서 기록부터 병원 전달 요약까지 끝내고, 1회성 AI 요약의
+첫 스토어 결제와 재구매 가능성을 빠르게 검증하는 것입니다. 문서는 고정된 정답이
+아니며 사용자 행동과 매출 근거에 따라 제품 계약부터 갱신합니다.
 
-- App: https://pf-two-eta.vercel.app
-- GitHub: https://github.com/BE-FLOW/PF
-- Database: Supabase project `wxdbbwrevacnpshafdsp`
-- Deployment: GitHub `main` push -> Vercel Production
+## 구성
 
-현재 Production 주소는 실제 상용 서비스가 아니라 테스터에게 전달하는 고정 테스트 주소입니다.
+- Android/iOS: Expo React Native (`apps/mobile`)
+- 보조 웹과 서버 API: Next.js App Router (`src`)
+- 인증·데이터·비공개 파일: Supabase Auth, PostgreSQL RLS, Storage
+- AI 병원 전달 초안: 인증된 Route Handler에서만 OpenAI 호출
 
-## Local development
+브라우저와 앱은 데이터 소유권, 결제 상태, 파일 경로를 결정하지 않습니다. 서버와
+RLS가 매 요청마다 계정 소유권을 확인합니다.
+
+## 로컬 실행
 
 ```bash
 npm install
 npm run dev
 ```
 
-환경변수는 `.env.example`을 참고합니다. `SUPABASE_SERVICE_ROLE_KEY`와
-`OPENAI_API_KEY`는 서버에서만 사용하며 Git에 저장하지 않습니다.
-
-## Verification
+모바일 앱은 별도 터미널에서 실행합니다.
 
 ```bash
-npm run lint
-npm test
-npm run build
+cd apps/mobile
+npm install
+npm run start
+```
+
+환경변수는 `.env.example`과 `apps/mobile/.env.example`을 참고합니다.
+`SUPABASE_SERVICE_ROLE_KEY`와 `OPENAI_API_KEY`는 서버에만 두며 Git이나 앱 빌드에
+포함하지 않습니다.
+
+## 검증
+
+```bash
+npm run verify:all
 npm run verify:deployment -- https://pf-two-eta.vercel.app
 ```
 
-운영 절차는 `docs/test-operations.md`, 개인정보 범위는
-`docs/privacy-and-data.md`를 참고합니다.
+DB 변경은 마이그레이션과 `supabase/tests/database.test.sql`을 함께 수정합니다.
+배포 순서는 DB 마이그레이션, 웹, Android/iOS 빌드 순입니다.

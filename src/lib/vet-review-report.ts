@@ -73,7 +73,7 @@ export function formatVetReviewDraft(
     "[첨부 자료]",
     ...draft.mediaSummary.map((item) => `- ${item}`),
     "",
-    "[병원 계획과 경과 기록]",
+    "[병원 계획과 이어진 기록]",
     ...draft.planAndProgress.map((item) => `- ${item}`),
     "",
     "[수의사에게 확인할 질문]",
@@ -154,14 +154,14 @@ export function buildVetReviewDraft(
   const progressLines = completedFollowUps.length
     ? completedFollowUps.map((checkpoint) => {
         if (checkpoint.conditionChange) {
-          return `${checkpoint.followUpDay}일 경과: ${conditionChangeLabels[checkpoint.conditionChange]} · 식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
+          return `${checkpoint.followUpDay}일 전후 관찰: ${conditionChangeLabels[checkpoint.conditionChange]} · 식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
         }
         const source = checkpoint.source === "health-record"
           ? `${dateTimeFormatter.format(new Date(checkpoint.recordedAt!))} 일반 건강 기록에서 자동 연결 · `
           : "";
-        return `${checkpoint.followUpDay}일 전후 경과: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
+        return `${checkpoint.followUpDay}일 전후 관찰: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
       })
-    : ["자동 연결된 경과 기록은 아직 없습니다."];
+    : ["같은 흐름에 자동 연결된 기록은 아직 없습니다."];
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const completedProgressDays = completedFollowUps.length
     ? completedFollowUps
@@ -178,7 +178,7 @@ export function buildVetReviewDraft(
       `가장 높은 앱 안내는 ${report.highestRiskLabel}이며, 이 문서는 수의사 검토 전 초안입니다.`,
     handoffNote:
       `다른 병원에 처음 전달할 때는 ${report.periodLabel}의 관찰 ${report.recordCount}회, ` +
-      `가장 높은 앱 안내 ${report.highestRiskLabel}, 경과 기록 ${completedProgressDays}, ` +
+      `가장 높은 앱 안내 ${report.highestRiskLabel}, 이어진 기록 시점 ${completedProgressDays}, ` +
       "보호자가 입력한 병원 계획이 수의사 확인 전 정보임을 함께 설명해 주세요.",
     keyObservations: [
       repeatedLine,
@@ -189,7 +189,7 @@ export function buildVetReviewDraft(
       latest
         ? `가장 최근 CHECK SCORE는 ${displayCheckScore(latest.result.riskScore)}점입니다.`
         : "아직 CHECK SCORE 기록이 없습니다.",
-      `기록된 경과 시점: ${completedProgressDays}`,
+      `이어진 기록 시점: ${completedProgressDays}`,
       report.mediaCount
         ? `첨부 자료 ${report.mediaCount}개가 있으며 사진·영상 내용은 판독 전입니다.`
         : "첨부 사진·영상은 없습니다.",
@@ -200,10 +200,10 @@ export function buildVetReviewDraft(
     questionsForVet: [
       "이 변화가 재진 또는 추가 확인이 필요한 흐름인지 확인해 주세요.",
       "다음 상담 전 보호자가 계속 기록해야 할 항목이 무엇인지 알려주세요.",
-      "초기 경과와 장기 경과 중 특히 주의해서 볼 변화가 있는지 확인해 주세요.",
+      "초기와 장기 변화 중 특히 주의해서 볼 내용이 있는지 확인해 주세요.",
     ],
     submissionNote:
-      "보호자가 입력한 관찰과 병원 계획, 초기·장기 경과 기록을 제출용으로 정리한 초안입니다. 다른 병원 전달 시 병원에서 확인한 내용은 별도로 구분해 주세요.",
+      "보호자가 입력한 관찰과 병원 계획, 같은 흐름에 이어진 기록을 제출용으로 정리한 초안입니다. 다른 병원 전달 시 병원에서 확인한 내용은 별도로 구분해 주세요.",
     disclaimer:
       "이 초안은 진단, 처방, 약물명, 용량, 치료 계획을 생성하지 않으며 수의사의 확인된 진료기록을 대신하지 않습니다.",
   };

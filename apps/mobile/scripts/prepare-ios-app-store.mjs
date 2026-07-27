@@ -13,25 +13,25 @@ const defaults = {
 };
 
 const metadata = {
-  description: `PetFlow는 보호자가 반려동물의 식욕, 활력, 증상, 병원에서 들은 계획과 경과를 짧게 기록하고 다음 상담에 보여주기 좋게 정리하는 앱입니다.
+  description: `PetFlow는 보호자가 반려동물의 식욕, 활력, 증상과 병원에서 들은 안내를 짧게 기록하고 다음 상담에 보여주기 좋게 정리하는 앱입니다.
 
-처음부터 완벽한 기록을 요구하지 않습니다. 오늘 확인한 내용만 남기고, 같은 사건에 이어 3일·7일·14일 경과와 장기 30일·60일·90일 변화를 쌓아 병원에 다시 설명하는 시간을 줄이는 것을 목표로 합니다.
+처음부터 완벽한 기록을 요구하지 않습니다. 짧은 글과 사진·영상으로 관찰을 남기면 기록이 날짜순 흐름에 자동으로 연결됩니다. 필요한 기간을 골라 병원에 전달할 사실 요약을 만들 수 있습니다.
 
 주요 기능
 - 계정 기반 반려동물 관리
-- 오늘 건강 기록 입력
+- 날짜별 건강 기록 입력
 - 사진과 동영상 첨부
 - 예방접종 기록과 다음 접종일 메모
-- 병원에 보여줄 요약과 경과 기록
-- 모든 로그인 사용자에게 동일한 월간 제공량이 적용되는 AI 병원 요약과 사용자 피드백
-- 계정 화면의 계정 삭제 요청
+- 병원에 보여줄 건강 흐름과 사실 요약
+- 첫 1회 무료 후 인앱결제로 한 번씩 추가하는 AI 병원 요약과 사용자 피드백
+- 계정 화면의 즉시 계정 탈퇴
 
 PetFlow는 진단이나 처방을 제공하지 않습니다. AI 리포트는 로그인 사용자의 기록을 정리한 수의사 검토용 초안이며, 수의사의 확인을 대신하지 않습니다.`,
   keywords:
-    "반려동물,강아지,고양이,건강기록,병원공유,진료메모,펫케어,경과기록,예방접종,사진기록",
+    "반려동물,강아지,고양이,건강기록,병원공유,진료메모,펫케어,건강흐름,예방접종,사진기록",
   marketingUrl: "https://pf-two-eta.vercel.app",
   promotionalText:
-    "오늘 관찰한 변화를 짧게 남기고, 병원에 보여줄 건강 흐름과 경과 요약으로 정리해요.",
+    "관찰한 변화를 짧게 남기고, 병원에 보여줄 건강 흐름과 사실 요약으로 정리해요.",
   supportUrl: "https://pf-two-eta.vercel.app",
 };
 
@@ -40,19 +40,20 @@ const appInfoMetadata = {
   privacyPolicyUrl: "https://pf-two-eta.vercel.app/privacy",
 };
 
-const reviewNotes = `PetFlow is a free app and does not sell or unlock digital content or services.
+const reviewNotes = `PetFlow offers one complimentary AI Hospital Summary. Additional summaries are sold only as a consumable in-app purchase named "AI Hospital Summary - 1 Use". It is not a subscription and does not renew automatically.
 
-The participation-code and additional-use-code system has been completely removed from the app, API, and database. The AI Hospital Summary is included for every signed-in user under the same server-side monthly fair-use allowance. There is no purchase, subscription, external payment, redeemable code, or account tier. When the monthly allowance is used, it becomes available again automatically in the next calendar month.
+There is no participation code, redeemable code, account tier, or link to an external checkout in the iOS app. Purchases are attached to the signed-in PetFlow account and verified by the server before one summary credit is granted. The Account screen includes "Check Purchase History" for interrupted or delayed purchase verification.
 
 Review steps:
 1. Sign in using the review account already provided in App Review Information.
 2. Complete the required account information if requested.
 3. Add or select a pet and create a health record.
 4. Open Health Flow, select the record group, and tap AI Hospital Summary.
+5. After the complimentary use is consumed, the app shows the localized App Store price before opening the Apple purchase sheet.
 
 The AI output is labeled as an unreviewed draft. It organizes the user's own observations for veterinary review and does not provide diagnosis, prescriptions, medication names, dosage, or treatment plans.
 
-The screenshots were replaced with captures of the current app showing Home and Check Score, health record entry, Health Flow, pet/account management, and the hospital-sharing AI summary.`;
+The original records, editing, deletion, and basic sharing remain available without a purchase. The screenshots show the current Home, health record, Health Flow, account, and hospital-sharing summary screens.`;
 
 const args = parseArgs();
 

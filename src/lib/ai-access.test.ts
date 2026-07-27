@@ -1,33 +1,45 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildStandardAiAccessStatus,
-  defaultAiMonthlyReportLimit,
-  resolveAiMonthlyReportLimit,
+  buildAiCreditAccessStatus,
+  defaultAiSummaryProductId,
+  resolveAiSummaryProductId,
 } from "./ai-access";
 
-describe("AI report access", () => {
-  it("gives every signed-in user a default monthly allowance", () => {
-    expect(buildStandardAiAccessStatus(1, 3)).toMatchObject({
+describe("AI summary credits", () => {
+  it("enables AI summaries while at least one credit remains", () => {
+    expect(buildAiCreditAccessStatus(2, 1, 1, 3)).toEqual({
       enabled: true,
       reason: "active",
-      monthlyReportLimit: defaultAiMonthlyReportLimit,
-      remainingThisMonth: defaultAiMonthlyReportLimit - 1,
+      availableCredits: 2,
+      complimentaryCredits: 1,
+      purchasedCredits: 1,
+      usedTotal: 3,
+      billingConfigured: false,
+      purchaseAvailable: false,
+      productId: defaultAiSummaryProductId,
     });
   });
 
-  it("stops generation when the monthly allowance is exhausted", () => {
-    expect(buildStandardAiAccessStatus(5, 8, 5)).toMatchObject({
+  it("asks for a one-time purchase after all credits are used", () => {
+    expect(
+      buildAiCreditAccessStatus(0, 0, 0, 8, {
+        billingConfigured: true,
+        productId: "custom_product",
+      }),
+    ).toEqual({
       enabled: false,
-      reason: "monthly_limit",
-      remainingThisMonth: 0,
+      reason: "no_credits",
+      availableCredits: 0,
+      complimentaryCredits: 0,
+      purchasedCredits: 0,
+      usedTotal: 8,
+      billingConfigured: true,
+      purchaseAvailable: true,
+      productId: "custom_product",
     });
   });
 
-  it("uses a safe default and caps configuration mistakes", () => {
-    expect(resolveAiMonthlyReportLimit("0")).toBe(defaultAiMonthlyReportLimit);
-    expect(resolveAiMonthlyReportLimit("not-a-number")).toBe(
-      defaultAiMonthlyReportLimit,
-    );
-    expect(resolveAiMonthlyReportLimit("500")).toBe(100);
+  it("uses the shared product identifier when none is configured", () => {
+    expect(resolveAiSummaryProductId(" ")).toBe(defaultAiSummaryProductId);
   });
 });

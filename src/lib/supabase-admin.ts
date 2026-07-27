@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import type {
   AiAccessStatus,
   AiReportFeedbackInput,
@@ -13,6 +14,7 @@ import type {
 } from "./types";
 import {
   isUuid,
+  storedReportToHistoryRecord,
   toStoredHealthReport,
   type DisplayHealthReport,
 } from "./report-storage";
@@ -21,12 +23,20 @@ import {
   maxReportMediaFiles,
   maxReportMediaSizeBytes,
   reportMediaBucket,
+  reportMediaExtensionFromMimeType,
 } from "./report-media";
-import { petPhotoBucket } from "./pet-photo";
 import {
-  buildStandardAiAccessStatus,
-  resolveAiMonthlyReportLimit,
+  isAllowedPetPhotoMimeType,
+  maxPetPhotoSizeBytes,
+  petPhotoBucket,
+  petPhotoExtensionFromMimeType,
+} from "./pet-photo";
+import {
+  buildAiCreditAccessStatus,
+  resolveAiSummaryProductId,
 } from "./ai-access";
+import { analyzeLocally, deriveAgeGroup } from "./analysis";
+import type { MonetizationEventInput } from "./monetization";
 
 const requestTimeoutMs = 3500;
 
@@ -37,10 +47,18 @@ export type DatabaseStatus = "connected" | "unconfigured" | "error";
 export interface HealthReportSaveResult {
   saved: boolean;
   episodeId: string | null;
+  result: AnalysisResult | null;
 }
 
 export interface HealthReportEditResult {
   report: DisplayHealthReport;
+  result: AnalysisResult;
+}
+
+export interface ReportOwner {
+  userId: string;
+  petId: string;
+  pet: PetProfile;
 }
 
 export interface EpisodeVetReviewBundle {
@@ -51,12 +69,26 @@ export interface EpisodeVetReviewBundle {
   progress: EpisodeProgress[];
 }
 
-export interface ReportMediaRegistrationInput {
-  storagePath: string;
+export interface ReportMediaUploadInput {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
   kind: ReportMediaKind;
+}
+
+export interface ReportMediaRegistrationInput extends ReportMediaUploadInput {
+  storagePath: string;
+}
+
+export interface SignedStorageUpload {
+  storagePath: string;
+  token: string;
+}
+
+export interface PetPhotoUploadInput {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
 }
 
 export interface AiReportAccess {
@@ -81,7 +113,6 @@ export interface AiReportReservationInput {
   petId: string;
   episodeId: string;
   model: string;
-  monthlyReportLimit: number;
 }
 
 export interface AiReportCompletionInput {
@@ -92,6 +123,33 @@ export interface AiReportCompletionInput {
   promptTokens?: number | null;
   completionTokens?: number | null;
   totalTokens?: number | null;
+  errorCode?: string | null;
+}
+
+export interface BillingPurchaseInput {
+  userId: string;
+  transactionId: string;
+  originalTransactionId?: string | null;
+  productId: string;
+  store: "app_store" | "play_store" | "revenuecat" | "stripe" | "paddle";
+  environment: "sandbox" | "production";
+  purchasedAt: string;
+  credits?: number;
+  priceUsd?: number | null;
+  priceAmount?: number | null;
+  currency?: string | null;
+  countryCode?: string | null;
+  quantity?: number | null;
+  taxPercentage?: number | null;
+  commissionPercentage?: number | null;
+}
+
+export interface BillingEventInput {
+  eventId: string;
+  eventType: string;
+  userId?: string | null;
+  transactionId?: string | null;
+  status: "processed" | "ignored" | "failed";
   errorCode?: string | null;
 }
 
@@ -246,6 +304,27 @@ function toPetProfile(row: {
   };
 }
 
+function canonicalHealthInput(
+  input: HealthCheckInput,
+  pet: PetProfile,
+  observedAt?: string | null,
+): HealthCheckInput {
+  const observedDate = observedAt ? new Date(observedAt) : new Date();
+  return {
+    ...input,
+    petName: pet.name,
+    species: pet.species,
+    breed: pet.breed || undefined,
+    birthDate: pet.birthDate || undefined,
+    sex: pet.sex,
+    weight: pet.weight || undefined,
+    ageGroup: deriveAgeGroup(
+      pet.birthDate,
+      Number.isNaN(observedDate.getTime()) ? new Date() : observedDate,
+    ),
+  };
+}
+
 interface ReportMediaRow {
   id: string;
   report_id: string;
@@ -308,11 +387,11 @@ function groupMediaByReport(media: ReportMediaAttachment[]) {
   return grouped;
 }
 
-function isValidMediaInput(
-  input: ReportMediaRegistrationInput,
-): input is ReportMediaRegistrationInput {
+function isValidMediaUploadInput(
+  input: ReportMediaUploadInput,
+): input is ReportMediaUploadInput {
   return Boolean(
-      input &&
+    input &&
       ["image", "video"].includes(input.kind) &&
       isAllowedReportMediaMimeType(input.mimeType) &&
       Number.isInteger(input.sizeBytes) &&
@@ -320,7 +399,15 @@ function isValidMediaInput(
       input.sizeBytes <= maxReportMediaSizeBytes &&
       typeof input.fileName === "string" &&
       input.fileName.trim().length > 0 &&
-      input.fileName.trim().length <= 160 &&
+      input.fileName.trim().length <= 160,
+  );
+}
+
+function isValidMediaRegistrationInput(
+  input: ReportMediaRegistrationInput,
+): input is ReportMediaRegistrationInput {
+  return Boolean(
+    isValidMediaUploadInput(input) &&
       typeof input.storagePath === "string" &&
       input.storagePath.length <= 500,
   );
@@ -356,52 +443,22 @@ async function getAuthenticatedUserId(
   return (await getAuthenticatedUser(accessToken))?.id ?? null;
 }
 
-export async function requestAccountDeletion(
-  accessToken: string | null,
-): Promise<{ requestedAt: string } | null> {
-  const user = await getAuthenticatedUser(accessToken);
-  if (!user) return null;
-
-  try {
-    const requestedAt = new Date().toISOString();
-    const response = await supabaseRequest(
-      "account_deletion_requests?on_conflict=user_id",
-      {
-        method: "POST",
-        headers: {
-          Prefer: "resolution=merge-duplicates,return=representation",
-        },
-        body: JSON.stringify({
-          user_id: user.id,
-          email: user.email || "unknown",
-          status: "requested",
-          requested_at: requestedAt,
-          updated_at: requestedAt,
-        }),
-      },
-    );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Array<{ requested_at: string }>;
-    return { requestedAt: rows[0]?.requested_at ?? requestedAt };
-  } catch {
-    return null;
-  }
-}
-
 async function removeStorageFiles(
   bucket: string,
   paths: Array<string | null | undefined>,
-) {
+): Promise<boolean> {
   const uniquePaths = Array.from(
     new Set(paths.map((path) => path?.trim()).filter(Boolean) as string[]),
   );
   const client = getAdminClient();
-  if (!client || !uniquePaths.length) return;
+  if (!client) return false;
+  if (!uniquePaths.length) return true;
 
   try {
-    await client.storage.from(bucket).remove(uniquePaths);
+    const { error } = await client.storage.from(bucket).remove(uniquePaths);
+    return !error;
   } catch {
-    /* Account deletion must still remove the auth user; orphan cleanup can be retried from storage logs. */
+    return false;
   }
 }
 
@@ -429,7 +486,7 @@ export async function deleteAccount(
       ? ((await petResponse.json()) as Array<{ photo_path: string | null }>)
       : [];
 
-    await Promise.all([
+    const storageRemoved = await Promise.all([
       removeStorageFiles(
         reportMediaBucket,
         mediaRows.map((row) => row.storage_path),
@@ -439,6 +496,7 @@ export async function deleteAccount(
         petRows.map((row) => row.photo_path),
       ),
     ]);
+    if (storageRemoved.some((removed) => !removed)) return null;
 
     const { error } = await client.auth.admin.deleteUser(user.id);
     if (error) return null;
@@ -448,56 +506,50 @@ export async function deleteAccount(
   }
 }
 
-function monthStartIso(now = new Date()) {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-}
-
 function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
   return {
     enabled: false,
     reason,
-    monthlyReportLimit: 0,
-    usedThisMonth: 0,
+    availableCredits: 0,
+    complimentaryCredits: 0,
+    purchasedCredits: 0,
     usedTotal: 0,
-    remainingThisMonth: 0,
+    billingConfigured: false,
+    purchaseAvailable: false,
+    productId: resolveAiSummaryProductId(
+      process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
+    ),
   };
 }
 
-async function countSucceededAiReports(
-  userId: string,
-  sinceIso?: string,
-): Promise<number | null> {
+async function buildAiCreditStatus(userId: string): Promise<AiAccessStatus> {
   try {
-    const sinceFilter = sinceIso
-      ? `&generated_at=gte.${encodeURIComponent(sinceIso)}`
-      : "";
-    const response = await supabaseRequest(
-      `ai_report_usage?user_id=eq.${userId}&status=eq.succeeded${sinceFilter}&select=id`,
-      { method: "GET" },
+    const response = await supabaseRequest("rpc/get_ai_credit_status", {
+      method: "POST",
+      body: JSON.stringify({ target_user_id: userId }),
+    });
+    if (!response?.ok) return emptyAiAccessStatus("unavailable");
+    const rows = (await response.json()) as Array<{
+      available_credits: number;
+      complimentary_credits: number;
+      purchased_credits: number;
+      used_total: number;
+    }>;
+    const row = rows[0];
+    if (!row) return emptyAiAccessStatus("unavailable");
+    return buildAiCreditAccessStatus(
+      Number(row.available_credits),
+      Number(row.complimentary_credits),
+      Number(row.purchased_credits),
+      Number(row.used_total),
+      {
+        billingConfigured: Boolean(process.env.REVENUECAT_SECRET_API_KEY),
+        productId: process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
+      },
     );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Array<{ id: string }>;
-    return rows.length;
   } catch {
-    return null;
-  }
-}
-
-async function buildStandardAccessStatus(
-  userId: string,
-): Promise<AiAccessStatus> {
-  const [usedThisMonth, usedTotal] = await Promise.all([
-    countSucceededAiReports(userId, monthStartIso()),
-    countSucceededAiReports(userId),
-  ]);
-  if (usedThisMonth === null || usedTotal === null) {
     return emptyAiAccessStatus("unavailable");
   }
-  return buildStandardAiAccessStatus(
-    usedThisMonth,
-    usedTotal,
-    resolveAiMonthlyReportLimit(process.env.AI_REPORT_MONTHLY_LIMIT),
-  );
 }
 
 export async function getAiAccessStatus(
@@ -505,7 +557,12 @@ export async function getAiAccessStatus(
 ): Promise<AiAccessStatus | null> {
   const userId = await getAuthenticatedUserId(accessToken);
   if (!userId) return null;
-  return buildStandardAccessStatus(userId);
+  return buildAiCreditStatus(userId);
+}
+
+export async function getAiAccessStatusForUser(userId: string) {
+  if (!isUuid(userId)) return null;
+  return buildAiCreditStatus(userId);
 }
 
 export async function getAiReportAccess(
@@ -513,7 +570,7 @@ export async function getAiReportAccess(
 ): Promise<AiReportAccess | null> {
   const userId = await getAuthenticatedUserId(accessToken);
   if (!userId) return null;
-  return { userId, status: await buildStandardAccessStatus(userId) };
+  return { userId, status: await buildAiCreditStatus(userId) };
 }
 
 function estimatedOpenAiCostUsd(
@@ -575,9 +632,7 @@ export async function reserveAiReportUsage(
   if (
     !isUuid(input.userId) ||
     !isUuid(input.petId) ||
-    !isUuid(input.episodeId) ||
-    !Number.isInteger(input.monthlyReportLimit) ||
-    input.monthlyReportLimit < 1
+    !isUuid(input.episodeId)
   ) {
     return { usageId: null, unavailable: true };
   }
@@ -590,7 +645,6 @@ export async function reserveAiReportUsage(
         target_pet_id: input.petId,
         target_episode_id: input.episodeId,
         target_model: input.model,
-        target_monthly_report_limit: input.monthlyReportLimit,
       }),
     });
     if (!response?.ok) return { usageId: null, unavailable: true };
@@ -610,24 +664,173 @@ export async function completeAiReportUsage(
   if (!isUuid(input.usageId) || !isUuid(input.userId)) return false;
 
   try {
+    const response = await supabaseRequest("rpc/complete_ai_report_usage", {
+      method: "POST",
+      body: JSON.stringify({
+        target_usage_id: input.usageId,
+        target_user_id: input.userId,
+        target_status: input.status,
+        target_model: input.model,
+        target_prompt_tokens: input.promptTokens ?? null,
+        target_completion_tokens: input.completionTokens ?? null,
+        target_total_tokens: input.totalTokens ?? null,
+        target_estimated_cost_usd:
+          input.status === "succeeded"
+            ? estimatedOpenAiCostUsd(
+                input.promptTokens,
+                input.completionTokens,
+              )
+            : null,
+        target_error_code: input.errorCode ?? null,
+      }),
+    });
+    if (!response?.ok) return false;
+    return (await response.json()) === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function recordAiCreditPurchase(input: BillingPurchaseInput) {
+  if (
+    !isUuid(input.userId) ||
+    !input.transactionId.trim() ||
+    !input.productId.trim() ||
+    !Number.isFinite(Date.parse(input.purchasedAt))
+  ) {
+    return null;
+  }
+
+  try {
+    const response = await supabaseRequest("rpc/record_ai_credit_purchase", {
+      method: "POST",
+      body: JSON.stringify({
+        target_user_id: input.userId,
+        target_transaction_id: input.transactionId.trim(),
+        target_original_transaction_id:
+          input.originalTransactionId?.trim() || null,
+        target_product_id: input.productId.trim(),
+        target_store: input.store,
+        target_environment: input.environment,
+        target_purchased_at: input.purchasedAt,
+        target_credits: input.credits ?? 1,
+        target_price_usd: input.priceUsd ?? null,
+        target_price_amount: input.priceAmount ?? null,
+        target_currency: input.currency?.trim().toUpperCase() || null,
+        target_country_code: input.countryCode?.trim().toUpperCase() || null,
+        target_quantity: input.quantity ?? 1,
+        target_tax_percentage: input.taxPercentage ?? null,
+        target_commission_percentage: input.commissionPercentage ?? null,
+      }),
+    });
+    if (!response?.ok) return null;
+    const purchaseId = (await response.json()) as unknown;
+    return typeof purchaseId === "string" && isUuid(purchaseId)
+      ? purchaseId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function refundAiCreditPurchase(
+  transactionId: string,
+  eventId: string,
+  refundedAt?: string | null,
+) {
+  if (!transactionId.trim() || !eventId.trim()) return false;
+  try {
+    const response = await supabaseRequest("rpc/refund_ai_credit_purchase", {
+      method: "POST",
+      body: JSON.stringify({
+        target_transaction_id: transactionId.trim(),
+        target_event_id: eventId.trim(),
+        target_refunded_at:
+          refundedAt && Number.isFinite(Date.parse(refundedAt))
+            ? refundedAt
+            : new Date().toISOString(),
+      }),
+    });
+    if (!response?.ok) return false;
+    return (await response.json()) === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function reverseAiCreditRefund(
+  transactionId: string,
+  eventId: string,
+  reversedAt?: string | null,
+) {
+  if (!transactionId.trim() || !eventId.trim()) return false;
+  try {
+    const response = await supabaseRequest("rpc/reverse_ai_credit_refund", {
+      method: "POST",
+      body: JSON.stringify({
+        target_transaction_id: transactionId.trim(),
+        target_event_id: eventId.trim(),
+        target_reversed_at:
+          reversedAt && Number.isFinite(Date.parse(reversedAt))
+            ? reversedAt
+            : new Date().toISOString(),
+      }),
+    });
+    if (!response?.ok) return false;
+    return (await response.json()) === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function recordMonetizationEvent(
+  accessToken: string | null,
+  input: MonetizationEventInput,
+) {
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return "unauthorized" as const;
+
+  try {
     const response = await supabaseRequest(
-      `ai_report_usage?id=eq.${input.usageId}&user_id=eq.${input.userId}&status=eq.pending`,
+      "monetization_events?on_conflict=event_id",
       {
-        method: "PATCH",
+        method: "POST",
+        headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
         body: JSON.stringify({
+          event_id: input.eventId,
+          user_id: userId,
+          event_name: input.eventName,
+          context: input.context,
+          platform: input.platform,
+          product_id: resolveAiSummaryProductId(
+            process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
+          ),
+          app_version: input.appVersion ?? null,
+          app_build: input.appBuild ?? null,
+        }),
+      },
+    );
+    return response?.ok ? ("saved" as const) : ("failed" as const);
+  } catch {
+    return "failed" as const;
+  }
+}
+
+export async function recordBillingEvent(input: BillingEventInput) {
+  if (!input.eventId.trim() || !input.eventType.trim()) return false;
+  try {
+    const response = await supabaseRequest(
+      "billing_events?on_conflict=event_id",
+      {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          event_id: input.eventId.trim(),
+          event_type: input.eventType.trim(),
+          user_id: input.userId && isUuid(input.userId) ? input.userId : null,
+          transaction_id: input.transactionId?.trim() || null,
           status: input.status,
-          model: input.model,
-          prompt_tokens: input.promptTokens ?? null,
-          completion_tokens: input.completionTokens ?? null,
-          total_tokens: input.totalTokens ?? null,
-          estimated_cost_usd:
-            input.status === "succeeded"
-              ? estimatedOpenAiCostUsd(
-                  input.promptTokens,
-                  input.completionTokens,
-                )
-              : null,
-          error_code: input.errorCode ?? null,
+          error_code: input.errorCode?.trim() || null,
         }),
       },
     );
@@ -671,7 +874,7 @@ export async function saveAiReportFeedback(
         body: JSON.stringify({
           usage_id: input.usageId,
           user_id: userId,
-          episode_id: usage.episode_id ?? input.episodeId ?? null,
+          episode_id: usage.episode_id,
           usefulness_score: input.usefulnessScore,
           comment: input.comment?.trim() || null,
           updated_at: new Date().toISOString(),
@@ -706,47 +909,88 @@ async function ensureOpenEpisode(
   }
 }
 
+async function savedHealthReportForRequest(
+  account: ReportOwner,
+  requestId: string,
+): Promise<HealthReportSaveResult | null> {
+  const response = await supabaseRequest(
+    `health_reports?user_id=eq.${account.userId}&client_id=eq.${requestId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&limit=1`,
+    { method: "GET" },
+  );
+  if (!response?.ok) return null;
+
+  const rows = (await response.json()) as DisplayHealthReport[];
+  const stored = rows[0];
+  if (
+    !stored ||
+    stored.pet_id !== account.petId ||
+    !isUuid(stored.id) ||
+    !isUuid(stored.episode_id)
+  ) {
+    return null;
+  }
+
+  return {
+    saved: true,
+    episodeId: stored.episode_id,
+    result: storedReportToHistoryRecord(stored, account.pet).result,
+  };
+}
+
 export async function saveHealthReport(
   input: HealthCheckInput,
-  result: AnalysisResult,
-  clientId: string | null,
-  isTest = false,
-  account: { userId?: string | null; petId?: string | null } = {},
+  requestId: string | null,
+  account: ReportOwner,
+  observedAt: string | null,
 ): Promise<HealthReportSaveResult> {
-  if (!isUuid(clientId)) return { saved: false, episodeId: null };
+  if (
+    !isUuid(requestId) ||
+    !isUuid(account.userId) ||
+    !isUuid(account.petId)
+  ) {
+    return { saved: false, episodeId: null, result: null };
+  }
 
   try {
-    const episodeId =
-      isUuid(account.userId) && isUuid(account.petId)
-        ? await ensureOpenEpisode(
-            account.userId,
-            account.petId,
-            result.createdAt,
-          )
-        : null;
-    if (isUuid(account.userId) && isUuid(account.petId) && !episodeId) {
-      return { saved: false, episodeId: null };
-    }
-    const payload = toStoredHealthReport(input, result, clientId, {
+    const existing = await savedHealthReportForRequest(account, requestId);
+    if (existing) return existing;
+
+    const canonicalInput = canonicalHealthInput(input, account.pet, observedAt);
+    const analyzed = analyzeLocally(canonicalInput);
+    const result = observedAt ? { ...analyzed, createdAt: observedAt } : analyzed;
+    const episodeId = await ensureOpenEpisode(
+      account.userId,
+      account.petId,
+      result.createdAt,
+    );
+    if (!episodeId) return { saved: false, episodeId: null, result: null };
+    const payload = toStoredHealthReport(canonicalInput, result, requestId, {
       appVersion: appVersion(),
       environment: deploymentEnvironment(),
-      isTest,
       userId: account.userId,
       petId: account.petId,
       episodeId,
     });
     const response = await supabaseRequest(
-      "health_reports?on_conflict=id%2Cclient_id",
+      "health_reports?on_conflict=user_id%2Cclient_id",
       {
         method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
         body: JSON.stringify(payload),
       },
     );
-    const saved = response?.ok ?? false;
-    return { saved, episodeId: saved ? episodeId : null };
+    if (!response?.ok) {
+      return { saved: false, episodeId: null, result: null };
+    }
+    return (
+      (await savedHealthReportForRequest(account, requestId)) ?? {
+        saved: false,
+        episodeId: null,
+        result: null,
+      }
+    );
   } catch {
-    return { saved: false, episodeId: null };
+    return { saved: false, episodeId: null, result: null };
   }
 }
 
@@ -754,7 +998,6 @@ export async function updateHealthReport(
   accessToken: string | null,
   reportId: string | null,
   input: HealthCheckInput,
-  result: AnalysisResult,
 ): Promise<HealthReportEditResult | null> {
   if (!isUuid(reportId)) return null;
   const userId = await getAuthenticatedUserId(accessToken);
@@ -773,22 +1016,37 @@ export async function updateHealthReport(
       created_at: string;
     }>;
     const report = existing[0];
-    if (!report) return null;
+    if (!report || !isUuid(report.pet_id)) return null;
+
+    const petResponse = await supabaseRequest(
+      `pets?id=eq.${report.pet_id}&user_id=eq.${userId}&select=id,name,species,breed,birth_date,sex,weight&limit=1`,
+      { method: "GET" },
+    );
+    if (!petResponse?.ok) return null;
+    const petRows = (await petResponse.json()) as Parameters<typeof toPetProfile>[0][];
+    if (!petRows[0]) return null;
+    const canonicalInput = canonicalHealthInput(
+      input,
+      toPetProfile(petRows[0]),
+      report.created_at,
+    );
+    const result = analyzeLocally(canonicalInput);
 
     const response = await supabaseRequest(
-      `health_reports?id=eq.${report.id}&user_id=eq.${userId}&select=id,pet_id,episode_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at`,
+      `health_reports?id=eq.${report.id}&user_id=eq.${userId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at`,
       {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
-          species: input.species,
-          breed: input.breed?.trim().slice(0, 80) || null,
-          age_group: input.ageGroup,
-          symptoms: input.symptoms,
-          appetite: input.appetite,
-          energy: input.energy,
-          duration: input.duration,
-          red_flags: input.redFlags,
+          species: canonicalInput.species,
+          breed: canonicalInput.breed?.trim().slice(0, 80) || null,
+          owner_note: canonicalInput.note.trim().slice(0, 1000) || null,
+          age_group: canonicalInput.ageGroup,
+          symptoms: canonicalInput.symptoms,
+          appetite: canonicalInput.appetite,
+          energy: canonicalInput.energy,
+          duration: canonicalInput.duration,
+          red_flags: canonicalInput.redFlags,
           risk_level: result.riskLevel,
           risk_score: result.riskScore,
           analysis_source: result.source,
@@ -815,6 +1073,7 @@ export async function updateHealthReport(
         ...updated,
         media: await signReportMediaRows(mediaRows),
       },
+      result,
     };
   } catch {
     return null;
@@ -859,43 +1118,147 @@ export async function deleteHealthReport(
   }
 }
 
-export async function deleteAnonymousTestReport(
-  reportId: string | null,
-): Promise<boolean> {
-  if (!isUuid(reportId)) return false;
-
-  try {
-    const response = await supabaseRequest(
-      `health_reports?id=eq.${reportId}&user_id=is.null&is_test=eq.true&select=id`,
-      {
-        method: "DELETE",
-        headers: { Prefer: "return=representation" },
-      },
-    );
-    if (!response?.ok) return false;
-    const rows = (await response.json()) as Array<{ id: string }>;
-    return rows.some((row) => row.id === reportId);
-  } catch {
-    return false;
-  }
-}
-
 export async function getReportOwner(
   accessToken: string | null,
   petId: string | null,
-): Promise<{ userId: string; petId: string } | null> {
+): Promise<ReportOwner | null> {
   const config = getConfig();
   if (!config || !accessToken || !isUuid(petId)) return null;
   try {
     const userId = await getAuthenticatedUserId(accessToken);
     if (!userId) return null;
     const petResponse = await supabaseRequest(
-      `pets?id=eq.${petId}&user_id=eq.${userId}&select=id&limit=1`,
+      `pets?id=eq.${petId}&user_id=eq.${userId}&select=id,name,species,breed,birth_date,sex,weight&limit=1`,
       { method: "GET" },
     );
     if (!petResponse?.ok) return null;
-    const pets = (await petResponse.json()) as Array<{ id: string }>;
-    return pets[0]?.id === petId ? { userId, petId } : null;
+    const pets = (await petResponse.json()) as Parameters<typeof toPetProfile>[0][];
+    return pets[0]?.id === petId
+      ? { userId, petId, pet: toPetProfile(pets[0]) }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+interface OwnedMediaReport {
+  id: string;
+  clientId: string;
+  userId: string;
+  petId: string;
+  episodeId: string;
+}
+
+async function getOwnedMediaReport(
+  userId: string,
+  reportId: string,
+): Promise<OwnedMediaReport | null> {
+  const response = await supabaseRequest(
+    `health_reports?id=eq.${reportId}&user_id=eq.${userId}&select=id,client_id,user_id,pet_id,episode_id&limit=1`,
+    { method: "GET" },
+  );
+  if (!response?.ok) return null;
+  const rows = (await response.json()) as Array<{
+    id: string;
+    client_id: string;
+    user_id: string;
+    pet_id: string | null;
+    episode_id: string | null;
+  }>;
+  const report = rows[0];
+  if (
+    !report ||
+    !isUuid(report.client_id) ||
+    !isUuid(report.pet_id) ||
+    !isUuid(report.episode_id)
+  ) {
+    return null;
+  }
+  return {
+    id: report.id,
+    clientId: report.client_id,
+    userId,
+    petId: report.pet_id,
+    episodeId: report.episode_id,
+  };
+}
+
+export async function prepareHealthReportMediaUploads(
+  accessToken: string | null,
+  reportId: string | null,
+  files: ReportMediaUploadInput[],
+): Promise<SignedStorageUpload[] | null> {
+  if (
+    !isUuid(reportId) ||
+    !Array.isArray(files) ||
+    files.length < 1 ||
+    files.length > maxReportMediaFiles ||
+    files.some((file) => !isValidMediaUploadInput(file))
+  ) {
+    return null;
+  }
+  const userId = await getAuthenticatedUserId(accessToken);
+  const client = getAdminClient();
+  if (!userId || !client) return null;
+
+  try {
+    const report = await getOwnedMediaReport(userId, reportId);
+    if (!report) return null;
+    const existingResponse = await supabaseRequest(
+      `health_report_media?report_id=eq.${report.id}&user_id=eq.${userId}&select=id`,
+      { method: "GET" },
+    );
+    if (!existingResponse?.ok) return null;
+    const existing = (await existingResponse.json()) as Array<{ id: string }>;
+    if (existing.length + files.length > maxReportMediaFiles) return null;
+
+    const uploads: SignedStorageUpload[] = [];
+    for (const file of files) {
+      const extension = reportMediaExtensionFromMimeType(file.mimeType);
+      const storagePath = `${userId}/${report.petId}/${report.id}/${randomUUID()}.${extension}`;
+      const { data, error } = await client.storage
+        .from(reportMediaBucket)
+        .createSignedUploadUrl(storagePath, { upsert: false });
+      if (error || !data?.token) return null;
+      uploads.push({ storagePath, token: data.token });
+    }
+    return uploads;
+  } catch {
+    return null;
+  }
+}
+
+export async function preparePetPhotoUpload(
+  accessToken: string | null,
+  petId: string | null,
+  input: PetPhotoUploadInput,
+): Promise<SignedStorageUpload | null> {
+  if (
+    !isUuid(petId) ||
+    !input ||
+    typeof input.fileName !== "string" ||
+    input.fileName.trim().length < 1 ||
+    input.fileName.trim().length > 160 ||
+    !isAllowedPetPhotoMimeType(input.mimeType) ||
+    !Number.isInteger(input.sizeBytes) ||
+    input.sizeBytes < 1 ||
+    input.sizeBytes > maxPetPhotoSizeBytes
+  ) {
+    return null;
+  }
+  const owner = await getReportOwner(accessToken, petId);
+  const client = getAdminClient();
+  if (!owner || !client) return null;
+
+  const extension = petPhotoExtensionFromMimeType(input.mimeType);
+  const storagePath = `${owner.userId}/${owner.petId}/${randomUUID()}.${extension}`;
+  try {
+    const { data, error } = await client.storage
+      .from(petPhotoBucket)
+      .createSignedUploadUrl(storagePath, { upsert: false });
+    return error || !data?.token
+      ? null
+      : { storagePath, token: data.token };
   } catch {
     return null;
   }
@@ -904,12 +1267,10 @@ export async function getReportOwner(
 export async function registerHealthReportMedia(
   accessToken: string | null,
   reportId: string | null,
-  clientId: string | null,
   files: ReportMediaRegistrationInput[],
 ): Promise<ReportMediaAttachment[] | null> {
   if (
     !isUuid(reportId) ||
-    !isUuid(clientId) ||
     !Array.isArray(files) ||
     files.length < 1 ||
     files.length > maxReportMediaFiles
@@ -917,33 +1278,23 @@ export async function registerHealthReportMedia(
     return null;
   }
   const userId = await getAuthenticatedUserId(accessToken);
-  if (!userId || files.some((file) => !isValidMediaInput(file))) return null;
+  if (!userId || files.some((file) => !isValidMediaRegistrationInput(file))) {
+    return null;
+  }
 
   try {
-    const reportResponse = await supabaseRequest(
-      `health_reports?id=eq.${reportId}&user_id=eq.${userId}&select=id,client_id,user_id,pet_id,episode_id&limit=1`,
-      { method: "GET" },
-    );
-    if (!reportResponse?.ok) return null;
-    const reportRows = (await reportResponse.json()) as Array<{
-      id: string;
-      client_id: string;
-      user_id: string;
-      pet_id: string | null;
-      episode_id: string | null;
-    }>;
-    const report = reportRows[0];
-    if (!report?.pet_id || !report.episode_id) return null;
+    const report = await getOwnedMediaReport(userId, reportId);
+    if (!report) return null;
 
     const existingResponse = await supabaseRequest(
-      `health_report_media?report_id=eq.${report.id}&client_id=eq.${report.client_id}&select=id`,
+      `health_report_media?report_id=eq.${report.id}&user_id=eq.${userId}&select=id`,
       { method: "GET" },
     );
     if (!existingResponse?.ok) return null;
     const existing = (await existingResponse.json()) as Array<{ id: string }>;
     if (existing.length + files.length > maxReportMediaFiles) return null;
 
-    const pathPrefix = `${userId}/${report.pet_id}/${report.id}/`;
+    const pathPrefix = `${userId}/${report.petId}/${report.id}/`;
     const rows = files.map((file) => {
       const kindMatchesMime =
         file.kind === "image"
@@ -959,10 +1310,10 @@ export async function registerHealthReportMedia(
       }
       return {
         report_id: report.id,
-        client_id: report.client_id,
+        client_id: report.clientId,
         user_id: userId,
-        pet_id: report.pet_id,
-        episode_id: report.episode_id,
+        pet_id: report.petId,
+        episode_id: report.episodeId,
         kind: file.kind,
         file_name: file.fileName.trim().slice(0, 160),
         mime_type: file.mimeType,
@@ -995,7 +1346,7 @@ export async function listPetHealthReports(
   if (!owner) return null;
   try {
     const response = await supabaseRequest(
-      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,episode_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc&limit=60`,
+      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc&limit=60`,
       { method: "GET" },
     );
     if (!response?.ok) return null;
@@ -1119,7 +1470,7 @@ export async function getEpisodeVetReviewBundle(
           { method: "GET" },
         ),
         supabaseRequest(
-          `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc&limit=60`,
+          `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc&limit=60`,
           { method: "GET" },
         ),
         supabaseRequest(
@@ -1172,55 +1523,6 @@ export async function getEpisodeVetReviewBundle(
       plan: planRows[0] ? toEpisodePlan(planRows[0]) : undefined,
       progress: progressRows.map(toEpisodeProgress),
     };
-  } catch {
-    return null;
-  }
-}
-
-export async function saveEpisodeProgress(
-  accessToken: string | null,
-  episodeId: string | null,
-  input: Pick<
-    EpisodeProgress,
-    "followUpDay" | "conditionChange" | "appetite" | "energy"
-  >,
-): Promise<EpisodeProgress | null> {
-  if (!isUuid(episodeId)) return null;
-  const userId = await getAuthenticatedUserId(accessToken);
-  if (
-    !userId ||
-    ![3, 7, 14, 30, 60, 90].includes(input.followUpDay) ||
-    !["better", "same", "worse"].includes(input.conditionChange) ||
-    !["normal", "slight", "low", "none"].includes(input.appetite) ||
-    !["normal", "slight", "low", "none"].includes(input.energy)
-  ) return null;
-
-  try {
-    const savedResponse = await supabaseRequest(
-      "rpc/save_owner_episode_progress",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          target_user_id: userId,
-          target_episode_id: episodeId,
-          target_follow_up_day: input.followUpDay,
-          target_condition_change: input.conditionChange,
-          target_appetite: input.appetite,
-          target_energy: input.energy,
-        }),
-      },
-    );
-    if (!savedResponse?.ok) return null;
-    const progressId = (await savedResponse.json()) as string;
-    if (!isUuid(progressId)) return null;
-
-    const response = await supabaseRequest(
-      `episode_progress_logs?id=eq.${progressId}&user_id=eq.${userId}&select=id,episode_id,pet_id,follow_up_day,condition_change,appetite,energy,source_type,review_status,recorded_at&limit=1`,
-      { method: "GET" },
-    );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Parameters<typeof toEpisodeProgress>[0][];
-    return rows[0] ? toEpisodeProgress(rows[0]) : null;
   } catch {
     return null;
   }
@@ -1296,13 +1598,27 @@ export async function setEpisodePlanTaskCompletion(
 }
 
 export async function saveReportFeedback(
+  accessToken: string | null,
   reportId: string,
-  clientId: string,
   feedback: "helpful" | "not-helpful",
 ): Promise<boolean> {
-  if (!isUuid(reportId) || !isUuid(clientId)) return false;
+  if (!isUuid(reportId)) return false;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return false;
 
   try {
+    const reportResponse = await supabaseRequest(
+      `health_reports?id=eq.${reportId}&user_id=eq.${userId}&select=id,client_id&limit=1`,
+      { method: "GET" },
+    );
+    if (!reportResponse?.ok) return false;
+    const reports = (await reportResponse.json()) as Array<{
+      id: string;
+      client_id: string;
+    }>;
+    const report = reports[0];
+    if (!report || !isUuid(report.client_id)) return false;
+
     const response = await supabaseRequest(
       "health_report_feedback?on_conflict=report_id%2Cclient_id",
       {
@@ -1310,7 +1626,8 @@ export async function saveReportFeedback(
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
         body: JSON.stringify({
           report_id: reportId,
-          client_id: clientId,
+          client_id: report.client_id,
+          user_id: userId,
           feedback,
           updated_at: new Date().toISOString(),
         }),

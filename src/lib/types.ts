@@ -47,7 +47,7 @@ export interface VaccinationRecord {
   updatedAt: string;
 }
 
-export interface TesterProfile {
+export interface AccountProfile {
   nickname: string;
   phone: string;
   consentVersion: string;
@@ -57,16 +57,18 @@ export interface TesterProfile {
 
 export interface AiAccessStatus {
   enabled: boolean;
-  reason: "active" | "monthly_limit" | "unavailable";
-  monthlyReportLimit: number;
-  usedThisMonth: number;
+  reason: "active" | "no_credits" | "unavailable";
+  availableCredits: number;
+  complimentaryCredits: number;
+  purchasedCredits: number;
   usedTotal: number;
-  remainingThisMonth: number;
+  billingConfigured: boolean;
+  purchaseAvailable: boolean;
+  productId: string;
 }
 
 export interface AiReportFeedbackInput {
   usageId: string;
-  episodeId?: string;
   usefulnessScore: 1 | 2 | 3 | 4 | 5;
   comment?: string;
 }

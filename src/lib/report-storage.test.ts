@@ -29,7 +29,7 @@ describe("report storage", () => {
     expect(isUuid("device-1")).toBe(false);
   });
 
-  it("stores structured analytics without personal or free-text fields", () => {
+  it("stores the account-owned source note without generated report copy", () => {
     const result = analyzeLocally(input);
     const stored = toStoredHealthReport(
       input,
@@ -47,9 +47,9 @@ describe("report storage", () => {
     expect(stored.user_id).toBe("30000000-0000-4000-8000-000000000001");
     expect(stored.pet_id).toBe("40000000-0000-4000-8000-000000000001");
     expect(stored.episode_id).toBe("50000000-0000-4000-8000-000000000001");
+    expect(stored.owner_note).toBe("아침에 두 번 토했어요.");
     expect(serialized).not.toContain("보리");
     expect(serialized).not.toContain("2021-05-02");
-    expect(serialized).not.toContain("아침에 두 번");
     expect(serialized).not.toContain(result.vetBrief);
   });
 
@@ -60,6 +60,7 @@ describe("report storage", () => {
       result,
       "20000000-0000-4000-8000-000000000001",
       {
+        userId: "30000000-0000-4000-8000-000000000001",
         petId: "40000000-0000-4000-8000-000000000001",
         episodeId: "50000000-0000-4000-8000-000000000001",
       },
@@ -77,6 +78,7 @@ describe("report storage", () => {
     expect(rebuilt.input.petName).toBe("보리");
     expect(rebuilt.petId).toBe(stored.pet_id);
     expect(rebuilt.episodeId).toBe(stored.episode_id);
+    expect(rebuilt.input.note).toBe("아침에 두 번 토했어요.");
   });
 
   it("carries media metadata into display history without adding it to structured reports", () => {

@@ -12,13 +12,21 @@ describe("auth identity helpers", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps Google and Apple visible when provider settings cannot be fetched", async () => {
-    expect(defaultOAuthProviderStatus).toEqual({ google: true, apple: true });
+  it("keeps OAuth providers closed until their status is verified", async () => {
+    expect(defaultOAuthProviderStatus).toEqual({ google: false, apple: false });
 
     await expect(fetchOAuthProviderStatus(undefined, undefined)).resolves.toEqual({
-      google: true,
-      apple: true,
+      google: false,
+      apple: false,
     });
+  });
+
+  it("fails closed when provider settings cannot be fetched", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    await expect(
+      fetchOAuthProviderStatus("https://example.supabase.co", "anon"),
+    ).resolves.toEqual({ google: false, apple: false });
   });
 
   it("reads enabled OAuth providers from Supabase settings", async () => {

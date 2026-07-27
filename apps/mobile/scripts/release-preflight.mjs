@@ -200,6 +200,30 @@ record("Expo 계정", () => {
   context.easAccount = account.split(/\r?\n/)[0];
 });
 
+record("모바일 결제 환경 변수", () => {
+  const output = run(
+    "npx",
+    ["eas-cli", "env:list", "production", "--format", "short"],
+    mobileRoot,
+  );
+  const requiredNames = [
+    "EXPO_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID",
+    ...(platform === "all" || platform === "android"
+      ? ["EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY"]
+      : []),
+    ...(platform === "all" || platform === "ios"
+      ? ["EXPO_PUBLIC_REVENUECAT_IOS_API_KEY"]
+      : []),
+  ];
+  const missing = requiredNames.filter(
+    (name) => !new RegExp(`^${name}=\\S+`, "m").test(output),
+  );
+  ensure(
+    missing.length === 0,
+    `missing EAS production variables: ${missing.join(", ")}`,
+  );
+});
+
 if (platform === "all" || platform === "android") {
   record("Android 원격 버전", () => {
     const output = run(
@@ -245,6 +269,7 @@ if (!skipDeployment && context.apiBaseUrl && context.commit) {
     const health = await response.json();
     ensure(response.ok && health.status === "ok", "production health check failed");
     ensure(health.database === "connected", `database is ${health.database}`);
+    ensure(health.billing === "configured", `billing is ${health.billing}`);
     ensure(
       typeof health.version === "string" && context.commit.startsWith(health.version),
       `deployed ${health.version} does not match ${context.commit.slice(0, 12)}`,

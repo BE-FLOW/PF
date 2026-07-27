@@ -1,33 +1,37 @@
 import type { AiAccessStatus } from "./types";
 
-export const defaultAiMonthlyReportLimit = 5;
+export const defaultAiSummaryProductId = "petflow_ai_summary_1";
 
-export function resolveAiMonthlyReportLimit(rawValue?: string) {
-  const parsed = Number(rawValue);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return defaultAiMonthlyReportLimit;
-  }
-  return Math.min(parsed, 100);
+export function resolveAiSummaryProductId(rawValue?: string) {
+  const productId = rawValue?.trim();
+  return productId || defaultAiSummaryProductId;
 }
 
-export function buildStandardAiAccessStatus(
-  usedThisMonth: number,
+export function buildAiCreditAccessStatus(
+  availableCredits: number,
+  complimentaryCredits: number,
+  purchasedCredits: number,
   usedTotal: number,
-  monthlyReportLimit = defaultAiMonthlyReportLimit,
+  options: {
+    billingConfigured?: boolean;
+    productId?: string;
+  } = {},
 ): AiAccessStatus {
-  const normalizedUsedThisMonth = Math.max(usedThisMonth, 0);
+  const normalizedAvailableCredits = Math.max(availableCredits, 0);
+  const normalizedComplimentaryCredits = Math.max(complimentaryCredits, 0);
+  const normalizedPurchasedCredits = Math.max(purchasedCredits, 0);
   const normalizedUsedTotal = Math.max(usedTotal, 0);
-  const remainingThisMonth = Math.max(
-    monthlyReportLimit - normalizedUsedThisMonth,
-    0,
-  );
+  const billingConfigured = options.billingConfigured ?? false;
 
   return {
-    enabled: remainingThisMonth > 0,
-    reason: remainingThisMonth > 0 ? "active" : "monthly_limit",
-    monthlyReportLimit,
-    usedThisMonth: normalizedUsedThisMonth,
+    enabled: normalizedAvailableCredits > 0,
+    reason: normalizedAvailableCredits > 0 ? "active" : "no_credits",
+    availableCredits: normalizedAvailableCredits,
+    complimentaryCredits: normalizedComplimentaryCredits,
+    purchasedCredits: normalizedPurchasedCredits,
     usedTotal: normalizedUsedTotal,
-    remainingThisMonth,
+    billingConfigured,
+    purchaseAvailable: billingConfigured,
+    productId: resolveAiSummaryProductId(options.productId),
   };
 }

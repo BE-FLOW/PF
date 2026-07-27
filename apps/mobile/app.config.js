@@ -22,6 +22,7 @@ module.exports = {
       backgroundColor: "#f2faeb",
     },
     plugins: [
+      "expo-secure-store",
       [
         "expo-web-browser",
         {
@@ -53,7 +54,7 @@ module.exports = {
         foregroundImage: "./assets/adaptive-icon.png",
         backgroundColor: "#f8dca3",
       },
-      permissions: [],
+      permissions: ["com.android.vending.BILLING"],
     },
     extra: {
       apiBaseUrl,

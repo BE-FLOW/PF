@@ -306,7 +306,7 @@ export function buildEpisodeReport(
           return `${checkpoint.followUpDay}일 전후: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
         })
         .join("\n")
-    : "자동 연결된 경과 기록이 아직 없습니다.";
+    : "같은 흐름에 자동 연결된 기록이 아직 없습니다.";
   const mediaText = mediaSummary.length
     ? [
         ...mediaSummary,

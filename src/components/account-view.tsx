@@ -11,17 +11,18 @@ import {
   type OAuthProvider,
 } from "@/lib/auth-identities";
 import { formatKoreanMobile, normalizeKoreanMobile } from "@/lib/phone";
-import { testerConsentVersion, testerPrivacySummary } from "@/lib/privacy";
-import type { AiAccessStatus, PetProfile, TesterProfile } from "@/lib/types";
+import { profileConsentVersion, profilePrivacySummary } from "@/lib/privacy";
+import type { WebBillingProduct } from "@/lib/billing-web";
+import type { AiAccessStatus, PetProfile, AccountProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
-type TesterDraft = Pick<TesterProfile, "nickname" | "phone">;
+type AccountDraft = Pick<AccountProfile, "nickname" | "phone">;
 type DeploymentHealth = {
   version?: string;
 };
 
-const emptyTesterDraft: TesterDraft = {
+const emptyAccountDraft: AccountDraft = {
   nickname: "",
   phone: "",
 };
@@ -29,7 +30,8 @@ const emptyTesterDraft: TesterDraft = {
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPolicy = [
   { id: "length", label: "8~64자", test: (value: string) => value.length >= 8 && value.length <= 64 },
-  { id: "letter", label: "영문 포함", test: (value: string) => /[A-Za-z]/.test(value) },
+  { id: "lower", label: "영문 소문자", test: (value: string) => /[a-z]/.test(value) },
+  { id: "upper", label: "영문 대문자", test: (value: string) => /[A-Z]/.test(value) },
   { id: "number", label: "숫자 포함", test: (value: string) => /\d/.test(value) },
   { id: "special", label: "특수문자 포함", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
 ];
@@ -69,19 +71,19 @@ function PasswordChecklist({ password }: { password: string }) {
   );
 }
 
-function TesterFields({
+function AccountFields({
   draft,
   setDraft,
 }: {
-  draft: TesterDraft;
-  setDraft: (draft: TesterDraft) => void;
+  draft: AccountDraft;
+  setDraft: (draft: AccountDraft) => void;
 }) {
   return (
-    <div className="tester-fields">
+    <div className="account-fields">
       <div className="field">
-        <label htmlFor="testerNickname">닉네임</label>
+        <label htmlFor="accountNickname">닉네임</label>
         <input
-          id="testerNickname"
+          id="accountNickname"
           maxLength={30}
           value={draft.nickname}
           onChange={(event) => setDraft({ ...draft, nickname: event.target.value })}
@@ -89,9 +91,9 @@ function TesterFields({
         />
       </div>
       <div className="field">
-        <label htmlFor="testerPhone">휴대전화번호 (연락용)</label>
+        <label htmlFor="accountPhone">휴대전화번호 (연락용)</label>
         <input
-          id="testerPhone"
+          id="accountPhone"
           type="tel"
           inputMode="tel"
           autoComplete="tel"
@@ -114,9 +116,9 @@ function PrivacyNotice() {
     <details className="privacy-notice">
       <summary>수집 정보와 이용 안내</summary>
       <dl>
-        <div><dt>필수</dt><dd>{testerPrivacySummary.required}</dd></div>
-        <div><dt>목적</dt><dd>{testerPrivacySummary.purpose}</dd></div>
-        <div><dt>보관</dt><dd>{testerPrivacySummary.retention}</dd></div>
+        <div><dt>필수</dt><dd>{profilePrivacySummary.required}</dd></div>
+        <div><dt>목적</dt><dd>{profilePrivacySummary.purpose}</dd></div>
+        <div><dt>보관</dt><dd>{profilePrivacySummary.retention}</dd></div>
       </dl>
       <p>전화번호는 본인 인증, 광고나 마케팅에 사용하지 않습니다. 주소, 위치, 실명 확인 정보는 받지 않습니다.</p>
       <a href="/privacy" target="_blank" rel="noreferrer">전체 개인정보 안내 보기</a>
@@ -126,21 +128,25 @@ function PrivacyNotice() {
 
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access) {
-    return "AI 요약 사용량을 확인하고 있어요.";
+    return "AI 요약 이용 가능 횟수를 확인하고 있어요.";
   }
   if (access.reason === "unavailable") {
-    return "사용량을 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
+    return "이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
-  if (access.reason === "monthly_limit") {
-    return "이번 달 제공량을 모두 사용했어요. 다음 달 자동으로 다시 이용할 수 있어요.";
+  if (access.reason === "no_credits") {
+    return "필요할 때 AI 병원 요약 1회만 추가해요.";
   }
-  return "기록을 수의사가 보기 좋은 병원용 요약으로 정리해요.";
+  return `AI 병원 요약 ${access.availableCredits}회를 이용할 수 있어요.`;
 }
 
 export function AccountView({
   user,
-  testerProfile,
+  accountProfile,
   aiAccess,
+  billingProduct,
+  billingLoading,
+  billingPurchasePending,
+  billingMessage,
   pets,
   selectedPetId,
   authReady,
@@ -149,8 +155,10 @@ export function AccountView({
   onAuth,
   onOAuth,
   onLinkOAuth,
-  onSaveTesterProfile,
+  onSaveAccountProfile,
   onRequestAccountDeletion,
+  onPurchaseAiCredit,
+  onRefreshAiCredits,
   onOpenGuide,
   onLogout,
   onAddPet,
@@ -158,8 +166,12 @@ export function AccountView({
   onSelectPet,
 }: {
   user: User | null;
-  testerProfile: TesterProfile | null;
+  accountProfile: AccountProfile | null;
   aiAccess: AiAccessStatus | null;
+  billingProduct: WebBillingProduct | null;
+  billingLoading: boolean;
+  billingPurchasePending: boolean;
+  billingMessage: string;
   pets: PetProfile[];
   selectedPetId?: string;
   authReady: boolean;
@@ -169,13 +181,18 @@ export function AccountView({
     mode: AuthMode,
     email: string,
     password: string,
-    profile: TesterDraft,
+    profile: AccountDraft,
     consented: boolean,
   ) => Promise<string>;
   onOAuth: (provider: OAuthProvider) => Promise<string>;
   onLinkOAuth: (provider: OAuthProvider) => Promise<string>;
-  onSaveTesterProfile: (profile: TesterDraft, consented: boolean) => Promise<string>;
+  onSaveAccountProfile: (profile: AccountDraft, consented: boolean) => Promise<string>;
   onRequestAccountDeletion: () => Promise<string>;
+  onPurchaseAiCredit: () => Promise<{
+    purchased: boolean;
+    error?: string;
+  }>;
+  onRefreshAiCredits: () => Promise<void>;
   onOpenGuide: () => void;
   onLogout: () => Promise<void>;
   onAddPet: () => void;
@@ -185,18 +202,18 @@ export function AccountView({
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [draft, setDraft] = useState<TesterDraft>(() =>
-    testerProfile
+  const [draft, setDraft] = useState<AccountDraft>(() =>
+    accountProfile
       ? {
-          nickname: testerProfile.nickname,
-          phone: formatKoreanMobile(testerProfile.phone),
+          nickname: accountProfile.nickname,
+          phone: formatKoreanMobile(accountProfile.phone),
         }
-      : emptyTesterDraft,
+      : emptyAccountDraft,
   );
   const [consented, setConsented] = useState(
-    testerProfile?.consentVersion === testerConsentVersion,
+    accountProfile?.consentVersion === profileConsentVersion,
   );
-  const [editingTester, setEditingTester] = useState(false);
+  const [editingAccount, setEditingAccount] = useState(false);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
   const [linkLoading, setLinkLoading] = useState<OAuthProvider | null>(null);
@@ -209,17 +226,25 @@ export function AccountView({
   const [deletionMessage, setDeletionMessage] = useState("");
   const [deletionRequested, setDeletionRequested] = useState(false);
 
-  const needsTesterProfile = Boolean(
+  const needsAccountProfile = Boolean(
     user &&
-      (!testerProfile ||
-        !normalizeKoreanMobile(testerProfile.phone) ||
-        testerProfile.consentVersion !== testerConsentVersion),
+      (!accountProfile ||
+        !normalizeKoreanMobile(accountProfile.phone) ||
+        accountProfile.consentVersion !== profileConsentVersion),
   );
-  const showTesterForm = needsTesterProfile || editingTester;
+  const showAccountForm = needsAccountProfile || editingAccount;
   const googleLinked = hasLinkedProvider(user, "google");
   const appleLinked = hasLinkedProvider(user, "apple");
   const appleEnabled = enabledOAuthProviders.apple || appleLinked;
   const linkDisabled = linkLoading !== null;
+  const complimentarySummaryAvailable =
+    (aiAccess?.complimentaryCredits ?? 0) > 0;
+  const canOfferPurchase = Boolean(
+    billingProduct &&
+      aiAccess &&
+      aiAccess.reason !== "unavailable" &&
+      !complimentarySummaryAvailable,
+  );
 
   useEffect(() => {
     let active = true;
@@ -272,23 +297,23 @@ export function AccountView({
     setLinkLoading(null);
   }
 
-  async function saveTester() {
+  async function saveAccountInfo() {
     if (!draft.nickname.trim() || !normalizeKoreanMobile(draft.phone) || !consented) {
       setMessage("닉네임, 010 휴대전화번호와 필수 동의를 확인해 주세요.");
       return;
     }
     setLoading(true);
-    const result = await onSaveTesterProfile(draft, consented);
+    const result = await onSaveAccountProfile(draft, consented);
     setMessage(result);
     setLoading(false);
-    if (!result) setEditingTester(false);
+    if (!result) setEditingAccount(false);
   }
 
-  function startEditingTester() {
-    setDraft(testerProfile ?? emptyTesterDraft);
-    setConsented(testerProfile?.consentVersion === testerConsentVersion);
+  function startEditingAccount() {
+    setDraft(accountProfile ?? emptyAccountDraft);
+    setConsented(accountProfile?.consentVersion === profileConsentVersion);
     setMessage("");
-    setEditingTester(true);
+    setEditingAccount(true);
   }
 
   async function requestDeletion() {
@@ -328,12 +353,18 @@ export function AccountView({
           <section className="panel account-summary">
             <div>
               <small>사용자 계정</small>
-              <strong>{testerProfile?.nickname || user.email}</strong>
-              {testerProfile && <span>{user.email}</span>}
+              <strong>{accountProfile?.nickname || user.email}</strong>
+              {accountProfile && <span>{user.email}</span>}
             </div>
             <div className="account-actions">
-              {testerProfile && <button className="text-button" onClick={startEditingTester}>정보 수정</button>}
-              <button className="text-button muted" onClick={onLogout}>로그아웃</button>
+              {accountProfile && <button className="text-button" onClick={startEditingAccount}>정보 수정</button>}
+              <button
+                className="text-button muted"
+                disabled={billingLoading}
+                onClick={onLogout}
+              >
+                로그아웃
+              </button>
             </div>
           </section>
 
@@ -419,29 +450,71 @@ export function AccountView({
                 {!aiAccess
                   ? "확인 중"
                   : aiAccess.enabled
-                    ? "사용 가능"
-                    : aiAccess.reason === "monthly_limit"
-                      ? "이번 달 완료"
+                    ? `${aiAccess.availableCredits}회`
+                    : aiAccess.reason === "no_credits"
+                      ? "이용권 없음"
                       : "확인 필요"}
               </span>
             </div>
             {aiAccess && aiAccess.reason !== "unavailable" && (
               <div className="ai-usage-row">
                 <div>
-                  <span>이번 달</span>
-                  <strong>
-                    {aiAccess.usedThisMonth}/{aiAccess.monthlyReportLimit}회
-                  </strong>
-                </div>
-                <div>
                   <span>남은 요약</span>
-                  <strong>{aiAccess.remainingThisMonth}회</strong>
+                  <strong>{aiAccess.availableCredits}회</strong>
                 </div>
                 <div>
-                  <span>이용 방식</span>
-                  <strong>모든 회원 무료</strong>
+                  <span>완료한 요약</span>
+                  <strong>{aiAccess.usedTotal}회</strong>
                 </div>
               </div>
+            )}
+            {complimentarySummaryAvailable && (
+              <p className="ai-trial-hint">
+                첫 병원 요약은 무료예요. 보고서에서 바로 만들어 보세요.
+              </p>
+            )}
+            {canOfferPurchase && billingProduct && (
+              <div className="ai-billing-actions">
+                <button
+                  className="primary-button compact"
+                  type="button"
+                  disabled={billingLoading}
+                  onClick={() =>
+                    void (billingPurchasePending
+                      ? onRefreshAiCredits()
+                      : onPurchaseAiCredit())
+                  }
+                >
+                  {billingPurchasePending
+                    ? "결제 반영 확인"
+                    : `${billingProduct.priceLabel} · 1회 추가`}
+                </button>
+                {!billingPurchasePending && (
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    disabled={billingLoading}
+                    onClick={() => void onRefreshAiCredits()}
+                  >
+                    구매 확인
+                  </button>
+                )}
+              </div>
+            )}
+            {billingMessage && (
+              <p
+                className={
+                  billingMessage.includes("추가했어요") ||
+                  billingMessage.includes("확인했어요") ||
+                  billingMessage.includes("반영됐어요") ||
+                  billingMessage.includes("완료됐어요")
+                    ? "form-success"
+                    : "form-error"
+                }
+                role="status"
+              >
+                {billingMessage}
+              </p>
             )}
           </section>
 
@@ -483,23 +556,23 @@ export function AccountView({
             )}
           </section>
 
-          {showTesterForm && (
+          {showAccountForm && (
             <section className="form-panel auth-panel">
-              <h2>{needsTesterProfile ? "필수 계정 정보를 알려주세요" : "계정 정보 수정"}</h2>
-              <TesterFields draft={draft} setDraft={setDraft} />
+              <h2>{needsAccountProfile ? "필수 계정 정보를 알려주세요" : "계정 정보 수정"}</h2>
+              <AccountFields draft={draft} setDraft={setDraft} />
               <PrivacyNotice />
               <label className="consent-check">
                 <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
                 <span>휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.</span>
               </label>
               {message && <div className="form-error" role="alert">{message}</div>}
-              <button className="primary-button auth-submit" onClick={saveTester} disabled={loading}>
+              <button className="primary-button auth-submit" onClick={saveAccountInfo} disabled={loading}>
                 {loading ? "저장 중..." : "저장"}
               </button>
             </section>
           )}
 
-          {!needsTesterProfile && (
+          {!needsAccountProfile && (
             <section className="panel">
               <div className="panel-head">
                 <h3>함께하는 아이들</h3>
@@ -598,19 +671,19 @@ export function AccountView({
             <div className="auth-divider"><span>이메일과 비밀번호</span></div>
             <div className="field">
               <label htmlFor="authEmail">이메일</label>
-              <input id="authEmail" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="test@example.com" />
+              <input id="authEmail" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
               {mode === "signup" && (
                 <small className="field-help">가입 후 이메일 인증을 완료하면 기록을 안전하게 이어갈 수 있어요.</small>
               )}
             </div>
             <div className="field">
               <label htmlFor="authPassword">비밀번호</label>
-              <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "signup" ? 8 : undefined} maxLength={64} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"} onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
+              <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "signup" ? 8 : undefined} maxLength={64} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "8자 이상, 대·소문자·숫자·특수문자" : "비밀번호"} onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
               {mode === "signup" && <PasswordChecklist password={password} />}
             </div>
             {mode === "signup" && (
               <>
-                <TesterFields draft={draft} setDraft={setDraft} />
+                <AccountFields draft={draft} setDraft={setDraft} />
                 <PrivacyNotice />
                 <label className="consent-check">
                   <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />

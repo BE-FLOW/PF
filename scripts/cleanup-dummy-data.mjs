@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import { isDummyEmail } from "./dummy-account-policy.mjs";
 
 const args = new Set(process.argv.slice(2));
 const apply = args.has("--apply");
@@ -33,24 +34,6 @@ function requireEnv(name) {
   return value;
 }
 
-function isDummyEmail(email) {
-  const normalized = email.trim().toLowerCase();
-  const [local, domain] = normalized.split("@");
-  if (!local || !domain) return false;
-
-  const nonDeliverableDomains = new Set([
-    "example.com",
-    "example.net",
-    "example.org",
-    "example.test",
-    "test.com",
-    "localhost",
-  ]);
-  if (nonDeliverableDomains.has(domain)) return true;
-
-  return /^(dummy|demo|sample|seed)([.+_-]|$)/.test(local);
-}
-
 async function listDummyUsers(client) {
   const users = [];
   let page = 1;
@@ -68,12 +51,6 @@ async function listDummyUsers(client) {
   }
 
   return users;
-}
-
-async function countRows(query) {
-  const { count, error } = await query;
-  if (error) throw error;
-  return count ?? 0;
 }
 
 async function removeUserStorage(client, userId) {
@@ -108,24 +85,6 @@ async function removeUserStorage(client, userId) {
   return { mediaFiles: mediaPaths.length, petPhotos: photoPaths.length };
 }
 
-function dummyAnonymousReportFilter(query) {
-  return query
-    .is("user_id", null)
-    .or(
-      [
-        "is_test.eq.true",
-        "deployment_environment.in.(seed,development,local,test,preview)",
-        "app_version.in.(seed-v1,dev,local)",
-      ].join(","),
-    );
-}
-
-function selectDummyAnonymousReports(client, options = {}) {
-  return dummyAnonymousReportFilter(
-    client.from("health_reports").select("id", options),
-  );
-}
-
 async function main() {
   loadEnv(envFile);
   const url = requireEnv("SUPABASE_URL").replace(/\/$/, "");
@@ -134,20 +93,12 @@ async function main() {
     auth: { persistSession: false },
   });
 
-  const anonymousReportCount = await countRows(
-    selectDummyAnonymousReports(client, {
-      count: "exact",
-      head: true,
-    }),
-  );
   const dummyUsers = await listDummyUsers(client);
 
   const result = {
     mode: apply ? "apply" : "dry-run",
-    anonymousDummyReports: anonymousReportCount,
     dummyAuthUsers: dummyUsers.length,
     removed: {
-      anonymousDummyReports: 0,
       dummyAuthUsers: 0,
       mediaFiles: 0,
       petPhotos: 0,
@@ -155,14 +106,6 @@ async function main() {
   };
 
   if (apply) {
-    if (anonymousReportCount > 0) {
-      const { count, error } = await dummyAnonymousReportFilter(
-        client.from("health_reports").delete({ count: "exact" }),
-      );
-      if (error) throw error;
-      result.removed.anonymousDummyReports = count ?? 0;
-    }
-
     for (const user of dummyUsers) {
       const storage = await removeUserStorage(client, user.id);
       const { error } = await client.auth.admin.deleteUser(user.id);

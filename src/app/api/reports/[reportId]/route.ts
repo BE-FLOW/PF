@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { accessTokenFromRequest } from "@/lib/api-auth";
-import { analyzeLocally, isHealthCheckInput } from "@/lib/analysis";
+import { readJsonBody } from "@/lib/api-request";
+import { isHealthCheckInput } from "@/lib/analysis";
+import { isUuid } from "@/lib/report-storage";
 import {
-  deleteAnonymousTestReport,
   deleteHealthReport,
   updateHealthReport,
 } from "@/lib/supabase-admin";
@@ -14,30 +15,36 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ reportId: string }> },
 ) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  const accessToken = accessTokenFromRequest(request);
+  const { reportId } = await context.params;
+  if (!accessToken) {
+    return NextResponse.json({ error: "로그인이 필요해요." }, { status: 401 });
+  }
+  if (!isUuid(reportId)) {
     return NextResponse.json(
-      { error: "요청 형식이 올바르지 않습니다." },
+      { error: "기록 정보를 다시 확인해 주세요." },
       { status: 400 },
     );
   }
+  const parsed = await readJsonBody(request, 16 * 1024);
+  if (!parsed.ok) {
+    return NextResponse.json(
+      { error: parsed.error },
+      { status: parsed.status },
+    );
+  }
 
-  if (!isHealthCheckInput(body)) {
+  if (!isHealthCheckInput(parsed.value)) {
     return NextResponse.json(
       { error: "입력값을 다시 확인해 주세요." },
       { status: 400 },
     );
   }
 
-  const { reportId } = await context.params;
-  const localResult = analyzeLocally(body);
   const saved = await updateHealthReport(
-    accessTokenFromRequest(request),
+    accessToken,
     reportId,
-    body,
-    localResult,
+    parsed.value,
   );
 
   if (!saved) {
@@ -47,7 +54,7 @@ export async function PATCH(
     );
   }
 
-  const { report } = saved;
+  const { report, result: localResult } = saved;
   const result: AnalysisResult & {
     episodeId?: string | null;
     media?: ReportMediaAttachment[];
@@ -73,10 +80,17 @@ export async function DELETE(
   context: { params: Promise<{ reportId: string }> },
 ) {
   const { reportId } = await context.params;
-  const deleted =
-    request.headers.get("x-petflow-test") === "true"
-      ? await deleteAnonymousTestReport(reportId)
-      : await deleteHealthReport(accessTokenFromRequest(request), reportId);
+  const accessToken = accessTokenFromRequest(request);
+  if (!accessToken) {
+    return NextResponse.json({ error: "로그인이 필요해요." }, { status: 401 });
+  }
+  if (!isUuid(reportId)) {
+    return NextResponse.json(
+      { error: "기록 정보를 다시 확인해 주세요." },
+      { status: 400 },
+    );
+  }
+  const deleted = await deleteHealthReport(accessToken, reportId);
 
   if (!deleted) {
     return NextResponse.json(

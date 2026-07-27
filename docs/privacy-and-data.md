@@ -4,80 +4,60 @@
 
 필수:
 
-- 로그인 이메일
-- 테스터 닉네임
-- 국내 휴대전화번호 (`010` 11자리)
-- 개인정보 수집 동의 버전과 시각
+- 로그인 이메일 또는 OAuth 계정 식별자
+- 닉네임
+- 국내 휴대전화번호와 수집 동의 시각
 
 선택:
 
-- 반려동물 품종, 생일, 성별, 체중
+- 반려동물 이름, 종, 품종, 생일, 성별·중성화, 체중, 프로필 사진
+- 보호자가 작성한 관찰, 선택한 상태, 기록 날짜, 사진·영상
+- 보호자가 옮긴 병원 안내와 AI 요약 피드백
 
-수집하지 않음:
-
-- 주소와 정확한 위치
-- 실명 확인 정보
-- 연령대와 반려 경험
-- 반려동물 등록번호
+주소, 정밀 위치, 법적 신원, 주민등록정보는 수집하지 않습니다. 휴대전화번호는
+SMS 로그인·광고·마케팅에 사용하지 않습니다.
 
 ## 저장 위치
 
-- 이메일과 인증: Supabase Auth
-- 테스터 정보: `tester_profiles`
-- 반려동물 프로필: `pets`
-- 건강 사건과 진행 상태: `episodes`
-- 구조화된 건강 통계: `health_reports`
-- 병원에서 받은 계획: `episode_plans`, `plan_tasks`
-- 3일·7일·14일과 30일·60일·90일 보호자 경과: `episode_progress_logs`
-- AI 요약 사용량과 피드백: `ai_report_usage`, `ai_report_feedback`
-- 계정 삭제 요청: `account_deletion_requests`
-- 피드백: `health_report_feedback`
+- 인증과 이메일: Supabase Auth
+- 계정 프로필: `tester_profiles` (기존 앱 호환용 내부명)
+- 반려동물과 예방접종: `pets`, `pet_vaccinations`
+- 자동 시간 흐름과 관찰 기록: `episodes`, `health_reports`
+- 첨부 메타데이터: `health_report_media`
+- 보호자가 옮긴 병원 계획: `episode_plans`, `plan_tasks`
+- 기존 장기 기록 호환 데이터: `episode_progress_logs` (읽기 전용)
+- AI 사용량과 피드백: `ai_report_usage`, `ai_report_feedback`
+- 결제 검증과 이용권 원장: `billing_purchases`, `billing_events`,
+  `ai_credit_grants`, `ai_credit_ledger`
+- 최소 구매 흐름 지표: `monetization_events`
+- 일반 기록 피드백: `health_report_feedback`
+- 사진·영상 원본: Supabase 비공개 Storage 버킷
 
-`episodes`에는 사건 식별자, 반려동물 연결, 진행 상태, 시작·최근 활동·종료
-시각만 저장한다. `health_reports`에는 반려동물 이름, 생일, 자유 메모, 생성된
-병원 요약 원문을 저장하지 않는다.
-
-사건 단위 병원 전달 요약은 브라우저에서 구조화된 기록으로 즉시 만들며, 별도
-공개 링크나 요약 원문을 서버에 저장하지 않는다. 사용자가 복사 또는 기기 공유를
-직접 선택한 경우에만 기기의 공유 기능으로 전달한다.
-
-수의사 검토용 AI 요약은 로그인 사용자가 요청할 때 Route Handler에서 같은 사건의
-구조화 기록, 보호자가 입력한 병원 계획,
-3일·7일·14일과 30일·60일·90일 경과만 읽어 즉시 생성한다. 생성된 리포트 원문은
-별도 테이블에 저장하지 않으며, 화면 표시와 사용자가 직접 누르는 복사 기능으로만
-제공한다. OpenAI 요청은 `store: false`로 전송한다. 대신 운영 판단을 위해 생성
-성공·실패, 사용 모델, 토큰 사용량,
-선택적으로 설정된 비용 추정값, 유용성 점수와 짧은 의견은 저장한다.
-
-전화번호는 서비스 안내와 테스트 관련 연락, 요청·장애 대응에만 사용한다.
-광고·마케팅과 SMS 로그인에는 사용하지 않는다.
+AI가 생성한 병원 전달 초안 본문은 DB에 저장하지 않습니다. OpenAI 요청은
+`store: false`를 사용합니다. 운영에 필요한 성공·실패, 모델, 토큰 수, 추정 비용만
+사용량 행에 남깁니다.
 
 ## 접근 통제
 
-`pets`와 `tester_profiles`는 RLS가 활성화되어 있으며 로그인 사용자는 자신의
-행만 조회·수정·삭제할 수 있다. 관리자 집계 뷰 `tester_management`는
-`service_role`만 조회할 수 있다. `health_reports`, `episode_plans`, `plan_tasks`,
-`episode_progress_logs`, `ai_report_usage`, `ai_report_feedback`,
-`account_deletion_requests`는 브라우저에서 직접 접근할 수 없고 소유권을 확인하는
-Route Handler를 통해서만 조회·저장한다.
+- Supabase Auth 토큰과 RLS가 모든 계정 소유 행을 제한합니다.
+- 비공개 API는 서버에서 토큰과 데이터 소유권을 다시 확인합니다.
+- 원문 기록과 AI 호출은 브라우저 `localStorage`에 저장하지 않습니다.
+- 모바일 인증 세션은 OS 보안 저장소에 보관합니다.
+- 파일 업로드 경로와 짧은 서명 URL은 서버가 발급합니다.
+- Service role과 OpenAI 키는 서버 환경변수에만 둡니다.
+- AI 요약 이용권과 사용 내역은 서버 원장에 기록하고 원자적으로 예약합니다.
+- 스토어 거래 식별자와 상품·플랫폼·환불 상태만 보관하며 결제수단 정보는
+  PetFlow 서버에 저장하지 않습니다.
+- 구매 흐름 지표는 구매창 열기·결제 시도·취소·실패·요약 공유 여부와 앱
+  버전만 저장합니다. 관찰 원문, 사진·영상, 이메일, 전화번호는 이 지표에
+  복사하지 않습니다.
 
-## 관리 화면
+## 보관과 삭제
 
-- 이메일과 가입 상태: Supabase Authentication > Users
-- 테스터 연락처와 활동량: Table Editor > `tester_management`
-- 반려동물: Table Editor > `pets`
-- 리포트 통계: Table Editor > `health_reports`
-- 사건별 병원 계획: Table Editor > `episode_plans`, `plan_tasks`
-- 사건별 경과: Table Editor > `episode_progress_logs`
-- AI 요약 사용량: Table Editor > `ai_usage_management`, `ai_report_usage`
-- AI 요약 피드백: Table Editor > `ai_report_feedback`
-- 계정 삭제 요청: Table Editor > `account_deletion_management`
-- 피드백: Table Editor > `health_report_feedback`
+계정과 기록은 사용자가 삭제할 때까지 보관합니다. 사용자는 기록·반려동물을
+개별 삭제하거나 계정 전체를 탈퇴할 수 있습니다. 탈퇴 시 비공개 파일과 Auth
+사용자를 먼저 삭제하고, 연결된 DB 행은 cascade로 삭제합니다. 삭제 실패를 성공으로
+표시하거나 별도 공개 삭제 대기열에 남기지 않습니다.
 
-테스터는 앱 또는 웹 계정 화면에서 계정 삭제 요청을 남길 수 있다. 운영자는
-`account_deletion_management`에서 요청을 확인한 뒤 Supabase Authentication에서
-Auth 사용자를 삭제한다. Auth 사용자를 삭제하면 테스터 프로필과 반려동물은
-cascade로 삭제된다. 계정에 연결된 사건, 건강 기록, 병원 계획과 체크 항목도 함께
-삭제된다. 경과 기록도 함께 삭제되며, 계정과 연결되지 않은 익명 테스트 통계는
-영향을 받지 않는다. AI 요약 사용량, 피드백과 계정 삭제 요청 행도 Auth
-사용자 삭제 시 함께 삭제된다.
+AI 생성물은 진단이나 수의사 확인 정보로 표시하지 않습니다. 사용자 원문을 외부
+분석 도구나 모델 학습에 기본 제공하지 않습니다.

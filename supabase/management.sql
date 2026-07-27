@@ -1,18 +1,16 @@
--- Useful read-only queries for the Supabase SQL Editor.
+-- Privacy-preserving operational aggregates for the Supabase SQL Editor.
 
-select *
-from public.tester_management
-order by created_at desc;
-
-select *
-from public.account_deletion_management
-order by requested_at desc;
+select
+  (select count(*)::integer from auth.users) as account_count,
+  (select count(*)::integer from public.pets) as pet_count,
+  (select count(*)::integer from public.health_reports) as report_count,
+  (select count(*)::integer from public.health_report_media) as media_count,
+  (select count(*)::integer from public.episodes) as episode_count;
 
 select
   risk_level,
   count(*)::integer as report_count
 from public.health_reports
-where is_test = false
 group by risk_level
 order by risk_level;
 
@@ -24,52 +22,44 @@ group by feedback
 order by feedback;
 
 select
-  plan.user_id,
-  plan.pet_id,
-  plan.episode_id,
-  count(task.id)::integer as task_count,
-  count(task.completed_at)::integer as completed_task_count,
-  plan.reported_at
-from public.episode_plans plan
-left join public.plan_tasks task on task.plan_id = plan.id
-group by plan.id
-order by plan.reported_at desc;
-
-select
-  progress.user_id,
-  progress.pet_id,
-  progress.episode_id,
-  progress.follow_up_day,
-  progress.condition_change,
-  progress.appetite,
-  progress.energy,
-  progress.recorded_at
-from public.episode_progress_logs progress
-order by progress.recorded_at desc;
-
-select *
-from public.ai_usage_management
-order by last_ai_report_at desc nulls last;
-
-select
-  usage.user_id,
-  usage.episode_id,
+  date_trunc('day', usage.generated_at) as usage_day,
   usage.status,
   usage.model,
-  usage.prompt_tokens,
-  usage.completion_tokens,
-  usage.total_tokens,
-  usage.estimated_cost_usd,
-  usage.error_code,
-  usage.generated_at
+  count(*)::integer as request_count,
+  sum(usage.total_tokens)::bigint as total_tokens,
+  sum(usage.estimated_cost_usd) as estimated_cost_usd
 from public.ai_report_usage usage
-order by usage.generated_at desc;
+group by usage_day, usage.status, usage.model
+order by usage_day desc, usage.status, usage.model;
 
 select
-  feedback.user_id,
-  feedback.episode_id,
   feedback.usefulness_score,
-  feedback.comment,
-  feedback.created_at
+  count(*)::integer as feedback_count
 from public.ai_report_feedback feedback
-order by feedback.created_at desc;
+group by feedback.usefulness_score
+order by feedback.usefulness_score;
+
+-- Revenue and conversion contain no observation text, media, email, or phone.
+select *
+from public.billing_daily_metrics
+order by metric_date desc
+limit 90;
+
+select
+  purchase.product_id,
+  purchase.store,
+  purchase.currency,
+  count(*)::integer as purchase_count,
+  count(distinct purchase.user_id)::integer as purchasing_accounts,
+  sum(purchase.price_amount) as gross_revenue_in_purchase_currency,
+  sum(purchase.price_usd) as gross_revenue_usd,
+  sum(
+    purchase.price_usd
+      * (1 - coalesce(purchase.tax_percentage, 0))
+      * (1 - coalesce(purchase.commission_percentage, 0))
+  ) as estimated_proceeds_usd
+from public.billing_purchases purchase
+where purchase.status = 'active'
+  and purchase.environment = 'production'
+group by purchase.product_id, purchase.store, purchase.currency
+order by purchase_count desc;

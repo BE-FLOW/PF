@@ -1,22 +1,24 @@
 import { NextResponse } from "next/server";
+import { isRevenueCatConfigured } from "@/lib/revenuecat";
 import { checkDatabaseConnection } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const database = await checkDatabaseConnection();
+  const healthy = database === "connected";
+  const version =
+    process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ??
+    process.env.GIT_COMMIT_SHA?.slice(0, 12) ??
+    "local";
   return NextResponse.json(
     {
-      status: database === "error" ? "degraded" : "ok",
+      status: healthy ? "ok" : "degraded",
       database,
-      environment:
-        process.env.VERCEL_ENV || process.env.NODE_ENV || "development",
-      version:
-        process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ||
-        process.env.NEXT_PUBLIC_APP_VERSION ||
-        "dev",
+      billing: isRevenueCatConfigured() ? "configured" : "unconfigured",
+      version,
       checkedAt: new Date().toISOString(),
     },
-    { status: database === "error" ? 503 : 200 },
+    { status: healthy ? 200 : 503 },
   );
 }

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { accessTokenFromRequest } from "@/lib/api-auth";
+import { readJsonBody } from "@/lib/api-request";
 import { extractResponseOutputText } from "@/lib/openai-response";
-import { storedReportToHistoryRecord } from "@/lib/report-storage";
+import { isUuid, storedReportToHistoryRecord } from "@/lib/report-storage";
 import {
   completeAiReportUsage,
+  getAiAccessStatusForUser,
   getAiReportAccess,
   getEpisodeVetReviewBundle,
   recordAiReportUsage,
@@ -16,6 +18,14 @@ import {
 import type { VetReviewDraft } from "@/lib/types";
 
 export const runtime = "nodejs";
+
+async function completeUsageWithRetry(
+  input: Parameters<typeof completeAiReportUsage>[0],
+) {
+  if (await completeAiReportUsage(input)) return true;
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  return completeAiReportUsage(input);
+}
 
 function cleanStringArray(value: unknown, minItems: number, maxItems: number) {
   if (!Array.isArray(value)) return null;
@@ -39,18 +49,32 @@ interface OpenAiUsage {
   total_tokens?: number;
 }
 
-async function requestedReportIds(request: Request) {
-  try {
-    const body = (await request.json()) as { reportIds?: unknown };
-    if (!Array.isArray(body.reportIds)) return [];
-    return [...new Set(body.reportIds)]
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.trim())
-      .filter(Boolean)
-      .slice(0, 60);
-  } catch {
-    return [];
+type RequestedReportIds =
+  | { ids: string[] }
+  | { error: { status: number; error: string } };
+
+async function requestedReportIds(request: Request): Promise<RequestedReportIds> {
+  const parsed = await readJsonBody<{ reportIds?: unknown }>(request, 8 * 1024);
+  if (!parsed.ok) {
+    return { error: { status: parsed.status, error: parsed.error } };
   }
+  if (parsed.value.reportIds === undefined) return { ids: [] };
+  const reportIds = parsed.value.reportIds;
+  if (
+    !Array.isArray(reportIds) ||
+    reportIds.length > 60 ||
+    !reportIds.every(
+      (value): value is string => typeof value === "string" && isUuid(value),
+    )
+  ) {
+    return {
+      error: {
+        status: 400,
+        error: "선택한 기록 범위를 다시 확인해 주세요.",
+      },
+    };
+  }
+  return { ids: [...new Set(reportIds)] };
 }
 
 async function enrichWithOpenAI(
@@ -137,7 +161,7 @@ async function enrichWithOpenAI(
                   "진단명, 질병 확정, 약물명, 용량, 치료 처방, 치료 계획을 생성하지 마세요. " +
                   "보호자가 입력한 병원 계획과 경과는 수의사 확인 전 정보로 분리하세요. " +
                   "첨부 사진·영상은 종류와 개수만 요약하고 이미지·영상 내용을 판독하거나 해석하지 마세요. " +
-                  "날짜별 변화, 반복 증상, 식욕·활력, 앱 안전 분류, 보호자 입력 계획, 3·7·14·30·60·90일 경과를 구분하세요. " +
+                  "날짜별 변화, 반복 증상, 식욕·활력, 앱 안전 분류와 보호자가 옮긴 병원 안내를 구분하세요. " +
                   "다른 병원에 처음 방문해도 이전 경과를 다시 설명하는 시간을 줄일 수 있게 handoffNote를 시간 순서로 작성하세요. " +
                   "SOAP-LOOP의 관찰·정리·계획·경과 구조를 반영하되 SOAP 같은 전문 약어를 제목으로 노출하지 마세요. " +
                   "보고서는 진료 전 검토 시간을 줄이는 초안이며 진단을 대신하지 않습니다. 한국어로 짧고 밀도 있게 작성하세요.",
@@ -224,8 +248,16 @@ export async function POST(
   context: { params: Promise<{ episodeId: string }> },
 ) {
   const { episodeId } = await context.params;
-  const reportIds = await requestedReportIds(request);
   const accessToken = accessTokenFromRequest(request);
+  if (!accessToken) {
+    return NextResponse.json({ error: "로그인이 필요해요." }, { status: 401 });
+  }
+  if (!isUuid(episodeId)) {
+    return NextResponse.json(
+      { error: "건강 흐름 정보를 다시 확인해 주세요." },
+      { status: 400 },
+    );
+  }
   const access = await getAiReportAccess(accessToken);
   if (!access) {
     return NextResponse.json(
@@ -233,13 +265,21 @@ export async function POST(
       { status: 401 },
     );
   }
+  const requested = await requestedReportIds(request);
+  if ("error" in requested) {
+    return NextResponse.json(
+      { error: requested.error.error },
+      { status: requested.error.status },
+    );
+  }
+  const reportIds = requested.ids;
   if (!access.status.enabled) {
     const unavailable = access.status.reason === "unavailable";
     return NextResponse.json(
       {
         error: unavailable
-          ? "AI 요약 사용량을 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
-          : "이번 달 AI 요약 사용량을 모두 사용했어요.",
+          ? "AI 요약 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
+          : "AI 병원 요약 1회 이용권이 필요해요.",
         access: access.status,
       },
       { status: unavailable ? 503 : 429 },
@@ -250,7 +290,7 @@ export async function POST(
   if (!bundle) {
     return NextResponse.json(
       { error: "수의사 검토용 초안을 만들 권한이나 기록을 확인하지 못했어요." },
-      { status: 401 },
+      { status: 404 },
     );
   }
   if (!bundle.reports.length) {
@@ -303,14 +343,16 @@ export async function POST(
     petId: bundle.episode.petId,
     episodeId: bundle.episode.id,
     model,
-    monthlyReportLimit: access.status.monthlyReportLimit,
   });
   if (!reservation.usageId) {
+    const latestAccess =
+      (await getAiAccessStatusForUser(access.userId)) ?? access.status;
     return NextResponse.json(
       {
+        access: latestAccess,
         error: reservation.unavailable
-          ? "AI 요약 사용량을 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
-          : "이번 달 AI 요약 사용량을 모두 사용했어요.",
+          ? "AI 요약 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
+          : "AI 병원 요약 1회 이용권이 필요해요.",
       },
       { status: reservation.unavailable ? 503 : 429 },
     );
@@ -318,7 +360,7 @@ export async function POST(
 
   const result = await enrichWithOpenAI(localDraft, apiKey, model);
   if (!result.draft) {
-    await completeAiReportUsage({
+    await completeUsageWithRetry({
       usageId: reservation.usageId,
       userId: access.userId,
       status: "failed",
@@ -331,7 +373,7 @@ export async function POST(
     );
   }
 
-  const usageCompleted = await completeAiReportUsage({
+  const usageCompleted = await completeUsageWithRetry({
     usageId: reservation.usageId,
     userId: access.userId,
     status: "succeeded",
@@ -340,10 +382,19 @@ export async function POST(
     completionTokens: result.usage?.output_tokens ?? null,
     totalTokens: result.usage?.total_tokens ?? null,
   });
+  if (!usageCompleted) {
+    return NextResponse.json(
+      {
+        error:
+          "AI 요약 처리 상태를 확정하지 못했어요. 이용권은 자동으로 복구되니 잠시 후 다시 시도해 주세요.",
+      },
+      { status: 503 },
+    );
+  }
   return NextResponse.json({
     draft: {
       ...result.draft,
-      usageId: usageCompleted ? reservation.usageId : undefined,
+      usageId: reservation.usageId,
     },
   });
 }

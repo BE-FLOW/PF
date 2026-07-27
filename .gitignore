@@ -57,3 +57,6 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# Supabase CLI local project state
+supabase/.temp/

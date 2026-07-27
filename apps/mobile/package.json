@@ -25,6 +25,10 @@
     "submit:ios:latest": "npx eas-cli submit --platform ios --profile production --latest --non-interactive --wait",
     "submit:ios:testflight-external": "node scripts/distribute-ios-testflight.mjs",
     "status:ios": "node scripts/ios-store-status.mjs",
+    "status:ios:iap": "node scripts/ios-iap-status.mjs",
+    "configure:ios:iap": "node scripts/configure-ios-iap.mjs",
+    "status:android:iap": "node scripts/android-iap-status.mjs",
+    "configure:android:iap": "node scripts/configure-android-iap.mjs",
     "prepare:ios:app-store": "node scripts/prepare-ios-app-store.mjs",
     "upload:ios:screenshots": "node scripts/upload-ios-screenshots.mjs",
     "release:android:closed": "npm run verify && npm run release:preflight:android && npm run build:android:production && npm run submit:android:closed",
@@ -35,16 +39,18 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.108.2",
-    "expo": "~56.0.16",
+    "expo": "~56.0.17",
     "expo-application": "~56.0.3",
-    "expo-auth-session": "~56.0.15",
+    "expo-auth-session": "~56.0.16",
     "expo-crypto": "~56.0.4",
     "expo-file-system": "~56.0.8",
     "expo-font": "~56.0.7",
-    "expo-image-picker": "~56.0.21",
-    "expo-web-browser": "~56.0.5",
+    "expo-image-picker": "~56.0.22",
+    "expo-secure-store": "~56.0.4",
+    "expo-web-browser": "~56.0.6",
     "react": "19.2.3",
     "react-native": "0.85.3",
+    "react-native-purchases": "^10.4.4",
     "react-native-url-polyfill": "^3.0.0"
   },
   "devDependencies": {
@@ -53,6 +59,7 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
+    "shell-quote": "1.10.0",
     "uuid": "^11.1.1"
   }
 }

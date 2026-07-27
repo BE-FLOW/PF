@@ -4,6 +4,10 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { hasStatus, parseArgs } from "./lib/app-store-connect.mjs";
+import {
+  hasStatus as hasGooglePlayStatus,
+  parseArgs as parseGooglePlayArgs,
+} from "./lib/google-play.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDir, "..");
@@ -35,5 +39,16 @@ describe("mobile release configuration", () => {
     expect(args.get("--app-id")).toBe("123");
     expect(args.get("--dry-run")).toBe("true");
     expect(hasStatus({ status: 409 }, 409)).toBe(true);
+  });
+
+  it("parses Google Play script options without loading credentials", () => {
+    const args = parseGooglePlayArgs([
+      "--package-name",
+      "com.beflow.petflow",
+      "--apply",
+    ]);
+    expect(args.get("--package-name")).toBe("com.beflow.petflow");
+    expect(args.get("--apply")).toBe("true");
+    expect(hasGooglePlayStatus({ status: 403 }, 403)).toBe(true);
   });
 });

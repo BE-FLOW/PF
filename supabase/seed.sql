@@ -1,2 +1,2 @@
 -- PetFlow intentionally does not seed demo rows.
--- Tester data should be created through signup, pet registration, and health records.
+-- Validation records must use the same account and record flows as production data.

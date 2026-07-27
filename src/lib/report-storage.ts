@@ -13,11 +13,12 @@ const uuidPattern =
 export interface StoredHealthReport {
   id: string;
   client_id: string;
-  user_id: string | null;
-  pet_id: string | null;
-  episode_id: string | null;
+  user_id: string;
+  pet_id: string;
+  episode_id: string;
   species: HealthCheckInput["species"];
   breed: string | null;
+  owner_note: string | null;
   age_group: HealthCheckInput["ageGroup"];
   symptoms: HealthCheckInput["symptoms"];
   appetite: HealthCheckInput["appetite"];
@@ -29,13 +30,12 @@ export interface StoredHealthReport {
   analysis_source: AnalysisResult["source"];
   app_version: string;
   deployment_environment: string;
-  is_test: boolean;
   created_at: string;
 }
 
 export type DisplayHealthReport = Omit<
   StoredHealthReport,
-  "client_id" | "user_id" | "app_version" | "deployment_environment" | "is_test"
+  "client_id" | "user_id" | "app_version" | "deployment_environment"
 > & {
   media?: ReportMediaAttachment[];
 };
@@ -51,20 +51,20 @@ export function toStoredHealthReport(
   options: {
     appVersion?: string;
     environment?: string;
-    isTest?: boolean;
-    userId?: string | null;
-    petId?: string | null;
-    episodeId?: string | null;
-  } = {},
+    userId: string;
+    petId: string;
+    episodeId: string;
+  },
 ): StoredHealthReport {
   return {
     id: result.id,
     client_id: clientId,
-    user_id: options.userId ?? null,
-    pet_id: options.petId ?? null,
-    episode_id: options.episodeId ?? null,
+    user_id: options.userId,
+    pet_id: options.petId,
+    episode_id: options.episodeId,
     species: input.species,
     breed: input.breed?.trim().slice(0, 80) || null,
+    owner_note: input.note.trim().slice(0, 1000) || null,
     age_group: input.ageGroup,
     symptoms: input.symptoms,
     appetite: input.appetite,
@@ -76,7 +76,6 @@ export function toStoredHealthReport(
     analysis_source: result.source,
     app_version: options.appVersion || "dev",
     deployment_environment: options.environment || "development",
-    is_test: options.isTest ?? false,
     created_at: result.createdAt,
   };
 }
@@ -92,6 +91,7 @@ export function storedReportToHistoryRecord(
     energy: stored.energy,
     duration: stored.duration,
     redFlags: stored.red_flags,
+    note: stored.owner_note ?? "",
   };
   const generated = analyzeLocally(input);
   return {

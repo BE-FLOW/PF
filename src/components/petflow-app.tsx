@@ -52,7 +52,6 @@ import {
   maxReportMediaSizeBytes,
   reportMediaAccept,
   reportMediaBucket,
-  reportMediaExtensionFromMimeType,
   reportMediaKindFromMimeType,
 } from "@/lib/report-media";
 import {
@@ -60,9 +59,18 @@ import {
   maxPetPhotoSizeBytes,
   petPhotoAccept,
   petPhotoBucket,
-  petPhotoExtensionFromMimeType,
 } from "@/lib/pet-photo";
-import { testerConsentVersion } from "@/lib/privacy";
+import { profileConsentVersion } from "@/lib/privacy";
+import {
+  getWebBillingProduct,
+  isWebBillingAvailable,
+  purchaseWebAiSummary,
+  type WebBillingProduct,
+} from "@/lib/billing-web";
+import type {
+  MonetizationContext,
+  MonetizationEventName,
+} from "@/lib/monetization";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AiAccessStatus,
@@ -79,7 +87,7 @@ import type {
   ReportMediaAttachment,
   ReportMediaKind,
   RiskLevel,
-  TesterProfile,
+  AccountProfile,
   VaccinationRecord,
   VetReviewDraft,
 } from "@/lib/types";
@@ -139,9 +147,29 @@ const views: View[] = [
 ];
 
 const quickGuideStoragePrefix = "petflow-quick-guide-v1";
+const billingPendingStoragePrefix = "petflow-billing-pending-v1";
 
 function quickGuideStorageKey(userId: string) {
   return `${quickGuideStoragePrefix}:${userId}`;
+}
+
+function billingPendingStorageKey(userId: string) {
+  return `${billingPendingStoragePrefix}:${userId}`;
+}
+
+function readPendingBillingMinimum(userId: string) {
+  try {
+    const rawValue = localStorage.getItem(billingPendingStorageKey(userId));
+    if (!rawValue) return null;
+    const value = JSON.parse(rawValue) as { minimumCredits?: unknown };
+    return Number.isInteger(value.minimumCredits) &&
+      Number(value.minimumCredits) > 0 &&
+      Number(value.minimumCredits) <= 100
+      ? Number(value.minimumCredits)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function hasSeenQuickGuide(userId: string) {
@@ -263,15 +291,6 @@ function HeroPetPhoto({ pet }: { pet: PetProfile }) {
   return <span>{pet.name ? avatarLabel(pet.name) : <Icon name="paw" size={24} />}</span>;
 }
 
-function formatFollowUpDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "날짜 확인 전";
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "long",
-    day: "numeric",
-  }).format(date);
-}
-
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
     month: "long",
@@ -344,35 +363,16 @@ function recordDateLabel(value: string) {
   }).format(date)} 기록`;
 }
 
+function aiDraftActionLabel(loading: boolean, hasDraft: boolean) {
+  if (loading) return "초안 만드는 중...";
+  return hasDraft ? "다시 만들기 · 1회" : "AI 요약 만들기 · 1회";
+}
+
 function formatFileSize(bytes: number) {
   if (bytes >= 1024 * 1024) {
     return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)}MB`;
   }
   return `${Math.max(1, Math.round(bytes / 1024))}KB`;
-}
-
-function mediaExtension(file: File) {
-  const extensionFromName = file.name
-    .split(".")
-    .pop()
-    ?.toLowerCase()
-    .replace(/[^a-z0-9]/g, "")
-    .slice(0, 8);
-  if (extensionFromName) return extensionFromName;
-  return reportMediaExtensionFromMimeType(file.type);
-}
-
-function petPhotoExtension(file: File) {
-  const extensionFromName = file.name
-    .split(".")
-    .pop()
-    ?.toLowerCase()
-    .replace(/[^a-z0-9]/g, "")
-    .slice(0, 8);
-  if (extensionFromName && ["jpg", "jpeg", "png", "webp", "heic", "heif"].includes(extensionFromName)) {
-    return extensionFromName === "jpeg" ? "jpg" : extensionFromName;
-  }
-  return petPhotoExtensionFromMimeType(file.type);
 }
 
 async function createPetPhotoSignedUrl(
@@ -482,19 +482,6 @@ function HistoryMediaPreview({ media = [] }: { media?: ReportMediaAttachment[] }
   );
 }
 
-function getOrCreateClientId() {
-  const storageKey = "petflow-client-id";
-  try {
-    const saved = localStorage.getItem(storageKey);
-    if (saved) return saved;
-    const created = crypto.randomUUID();
-    localStorage.setItem(storageKey, created);
-    return created;
-  } catch {
-    return crypto.randomUUID();
-  }
-}
-
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -564,12 +551,7 @@ function mergePetHistory(
   petId: string,
 ) {
   const otherPets = current.filter((record) => record.petId !== petId);
-  const localOnly = current.filter(
-    (record) =>
-      record.petId === petId &&
-      !remoteRecords.some((remote) => remote.result.id === record.result.id),
-  );
-  const merged = sortHistoryRecords([...remoteRecords, ...localOnly]);
+  const merged = sortHistoryRecords(remoteRecords);
   return [...merged, ...otherPets].slice(0, 100);
 }
 
@@ -1930,12 +1912,8 @@ function ResultView({
       setVetDraftError("계정에 연결된 건강 기록에서만 AI 요약을 만들 수 있어요.");
       return;
     }
-    if (!canUseAiReport) {
-      setVetDraftError(
-        aiAccess?.reason === "monthly_limit"
-          ? "이번 달 AI 요약 사용량을 모두 사용했어요."
-          : "AI 요약 사용량을 확인하지 못했어요.",
-      );
+    if (!canUseAiReport && aiAccess?.reason !== "no_credits") {
+      setVetDraftError("AI 요약 이용 가능 횟수를 확인하지 못했어요.");
       return;
     }
     setVetDraftState("loading");
@@ -2101,9 +2079,9 @@ function ResultView({
               </div>
               <span className="vet-draft-badge">
                 {canUseAiReport
-                  ? `${aiAccess?.remainingThisMonth ?? 0}회 남음`
-                  : aiAccess?.reason === "monthly_limit"
-                    ? "이번 달 완료"
+                  ? `${aiAccess?.availableCredits ?? 0}회`
+                  : aiAccess?.reason === "no_credits"
+                    ? "1회 추가"
                     : "확인 필요"}
               </span>
             </div>
@@ -2111,18 +2089,10 @@ function ResultView({
               <p className="plan-empty">
                 서버에 저장되고 같은 건강 흐름에 연결된 기록에서 만들 수 있어요.
               </p>
-            ) : !canUseAiReport ? (
+            ) : !canUseAiReport && aiAccess?.reason !== "no_credits" ? (
               <div className="vet-draft-locked">
-                <strong>
-                  {aiAccess?.reason === "monthly_limit"
-                    ? "이번 달 AI 요약 사용량을 모두 사용했어요."
-                    : "AI 요약 사용량을 확인하지 못했어요."}
-                </strong>
-                <p>
-                  {aiAccess?.reason === "monthly_limit"
-                    ? "다음 달에 자동으로 다시 이용할 수 있어요."
-                    : "잠시 후 다시 시도해 주세요."}
-                </p>
+                <strong>AI 요약 이용 가능 횟수를 확인하지 못했어요.</strong>
+                <p>잠시 후 다시 시도해 주세요.</p>
               </div>
             ) : (
               <>
@@ -2134,11 +2104,10 @@ function ResultView({
                     disabled={vetDraftState === "loading"}
                   >
                     <Icon name={vetDraft ? "check" : "spark"} size={14} />
-                    {vetDraftState === "loading"
-                      ? "초안 만드는 중..."
-                      : vetDraft
-                      ? "AI 요약 다시 만들기"
-                      : "AI 요약 만들기"}
+                    {aiDraftActionLabel(
+                      vetDraftState === "loading",
+                      Boolean(vetDraft),
+                    )}
                   </button>
                   {vetDraft && (
                     <button
@@ -2490,7 +2459,6 @@ function EpisodeReportView({
   progress,
   onBack,
   onSelectRecord,
-  onContinueRecord,
   onSavePlan,
   onTogglePlanTask,
   onCreateVetDraft,
@@ -2504,7 +2472,6 @@ function EpisodeReportView({
   progress: EpisodeProgress[];
   onBack: () => void;
   onSelectRecord: (record: HistoryRecord) => void;
-  onContinueRecord: () => void;
   onSavePlan: (episodeId: string, tasks: string[]) => Promise<string>;
   onTogglePlanTask: (
     episodeId: string,
@@ -2535,13 +2502,6 @@ function EpisodeReportView({
   const completedFollowUps = report.followUpCheckpoints.filter(
     (checkpoint) => checkpoint.recordedAt,
   );
-  const lastCompletedFollowUpIndex = report.followUpCheckpoints.reduce(
-    (lastIndex, checkpoint, index) => checkpoint.recordedAt ? index : lastIndex,
-    -1,
-  );
-  const nextFollowUp = selection.episode?.status === "open"
-    ? report.followUpCheckpoints[lastCompletedFollowUpIndex + 1]
-    : undefined;
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
   >("idle");
@@ -2623,12 +2583,8 @@ function EpisodeReportView({
       setVetDraftError("계정에 연결된 Episode 기록에서만 초안을 만들 수 있어요.");
       return;
     }
-    if (!canUseAiReport) {
-      setVetDraftError(
-        aiAccess?.reason === "monthly_limit"
-          ? "이번 달 AI 요약 사용량을 모두 사용했어요."
-          : "AI 요약 사용량을 확인하지 못했어요.",
-      );
+    if (!canUseAiReport && aiAccess?.reason !== "no_credits") {
+      setVetDraftError("AI 요약 이용 가능 횟수를 확인하지 못했어요.");
       return;
     }
     setVetDraftState("loading");
@@ -2663,7 +2619,6 @@ function EpisodeReportView({
     setFeedbackError("");
     const message = await onSaveAiFeedback({
       usageId: vetDraft.usageId,
-      episodeId: selection.episode?.id,
       usefulnessScore: feedbackScore,
       comment: feedbackComment.trim() || undefined,
     });
@@ -2739,7 +2694,7 @@ function EpisodeReportView({
           <span>자동 포함</span>
           <strong>관찰 {report.recordCount}회</strong>
           <strong>계획 {completedPlanTaskCount}/{totalPlanTaskCount}개</strong>
-          <strong>자동 경과 {completedFollowUps.length}회</strong>
+          <strong>연결 기록 {completedFollowUps.length}회</strong>
           <strong>첨부 {report.mediaCount}개</strong>
           <strong>다른 병원 첫 설명</strong>
         </div>
@@ -2748,18 +2703,10 @@ function EpisodeReportView({
           <p className="plan-empty">
             계정에 연결된 Episode 기록부터 남기면 AI 초안을 만들 수 있어요.
           </p>
-        ) : !canUseAiReport ? (
+        ) : !canUseAiReport && aiAccess?.reason !== "no_credits" ? (
           <div className="vet-draft-locked">
-            <strong>
-              {aiAccess?.reason === "monthly_limit"
-                ? "이번 달 AI 요약 사용량을 모두 사용했어요."
-                : "AI 요약 사용량을 확인하지 못했어요."}
-            </strong>
-            <p>
-              {aiAccess?.reason === "monthly_limit"
-                ? "다음 달에 자동으로 다시 이용할 수 있어요."
-                : "잠시 후 다시 시도해 주세요."}
-            </p>
+            <strong>AI 요약 이용 가능 횟수를 확인하지 못했어요.</strong>
+            <p>잠시 후 다시 시도해 주세요.</p>
           </div>
         ) : (
           <>
@@ -2771,11 +2718,10 @@ function EpisodeReportView({
                 disabled={vetDraftState === "loading"}
               >
                 <Icon name={vetDraft ? "check" : "spark"} size={14} />
-                {vetDraftState === "loading"
-                  ? "초안 만드는 중..."
-                  : vetDraft
-                    ? "AI 요약 다시 만들기"
-                    : "AI 요약 만들기"}
+                {aiDraftActionLabel(
+                  vetDraftState === "loading",
+                  Boolean(vetDraft),
+                )}
               </button>
               {vetDraft && (
                 <button
@@ -3068,63 +3014,6 @@ function EpisodeReportView({
         </p>
       </section>
 
-      <section className="result-card episode-progress-card" id="episode-progress">
-        <div className="episode-plan-head">
-          <div>
-            <span className="episode-plan-step">FOLLOW UP</span>
-            <h3>
-              <Icon name="activity" size={18} /> 경과 흐름
-            </h3>
-            <p>건강 기록을 남기면 같은 흐름에 자동으로 이어져요.</p>
-          </div>
-          <span className="progress-source-badge">자동 연결</span>
-        </div>
-
-        {!selection.episode ? (
-          <p className="plan-empty">
-            계정에 연결된 기록부터 경과 흐름을 만들 수 있어요.
-          </p>
-        ) : (
-          <div className="follow-up-summary">
-            <div className="follow-up-status-row">
-              <strong>연결된 기록 {selection.records.length}회</strong>
-              <span>자동 정리 {completedFollowUps.length}회</span>
-            </div>
-            {completedFollowUps.length ? (
-              <div className="follow-up-chip-row" aria-label="자동 연결된 경과 시점">
-                {completedFollowUps.map((checkpoint) => (
-                  <span key={checkpoint.followUpDay}>
-                    <Icon name="check" size={13} /> {checkpoint.followUpDay}일 전후
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="follow-up-empty">첫 기록을 기준으로 다음 기록부터 자동 연결돼요.</p>
-            )}
-            {nextFollowUp && (
-              <div className="follow-up-next">
-                <span>다음 확인</span>
-                <strong>
-                  {nextFollowUp.followUpDay}일 전후 · {formatFollowUpDate(nextFollowUp.targetAt)}
-                </strong>
-              </div>
-            )}
-            {selection.episode.status === "open" && (
-              <button
-                type="button"
-                className="primary-button compact follow-up-action"
-                onClick={onContinueRecord}
-              >
-                <Icon name="plus" size={14} /> 기록 이어가기
-              </button>
-            )}
-          </div>
-        )}
-        <p className="plan-safety-note">
-          연결된 내용은 보호자의 건강 기록이며 수의사의 확인이나 진단을 대신하지 않습니다.
-        </p>
-      </section>
-
       <div className="disclaimer episode-report-disclaimer">
         <strong>자료의 범위</strong> {report.disclaimer}
       </div>
@@ -3141,8 +3030,15 @@ export function PetFlowApp() {
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string>();
   const [user, setUser] = useState<User | null>(null);
-  const [testerProfile, setTesterProfile] = useState<TesterProfile | null>(null);
+  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
   const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
+  const [billingProduct, setBillingProduct] =
+    useState<WebBillingProduct | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingPurchasePending, setBillingPurchasePending] = useState(false);
+  const [billingMessage, setBillingMessage] = useState("");
+  const billingPendingMinimumCreditsRef = useRef<number | null>(null);
+  const billingOperationInFlightRef = useRef(false);
   const [authReady, setAuthReady] = useState(false);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [authEntryMode, setAuthEntryMode] = useState<"login" | "signup">("login");
@@ -3156,6 +3052,12 @@ export function PetFlowApp() {
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
   const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
   const vaccinationTableAvailableRef = useRef(true);
+  const accountLoadSequenceRef = useRef(0);
+  const historyLoadSequenceRef = useRef(0);
+  const submissionAttemptRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
   const [pendingMedia, setPendingMedia] = useState<PendingMediaFile[]>([]);
   const pendingMediaRef = useRef<PendingMediaFile[]>([]);
   const [mediaError, setMediaError] = useState("");
@@ -3247,7 +3149,64 @@ export function PetFlowApp() {
   }, [appNotice]);
 
   useEffect(() => {
-    if (!authReady || !user || !testerProfile) return;
+    let active = true;
+    if (!user?.id || !isWebBillingAvailable()) {
+      window.queueMicrotask(() => {
+        if (!active) return;
+        setBillingProduct(null);
+        if (!user?.id) {
+          setBillingPurchasePending(false);
+          setBillingMessage("");
+          billingPendingMinimumCreditsRef.current = null;
+        }
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    billingPendingMinimumCreditsRef.current = null;
+    const persistedMinimum = readPendingBillingMinimum(user.id);
+    if (persistedMinimum !== null) {
+      billingPendingMinimumCreditsRef.current = persistedMinimum;
+    }
+    window.queueMicrotask(() => {
+      if (!active) return;
+      setBillingProduct(null);
+      setBillingPurchasePending(false);
+      setBillingMessage("");
+      if (persistedMinimum !== null) {
+        setBillingPurchasePending(true);
+        setBillingMessage(
+          "이전 결제 내역을 확인하고 있어요. 중복 결제 없이 반영만 진행해요.",
+        );
+      }
+    });
+    void Promise.all([
+      getWebBillingProduct(user.id),
+      syncAiCreditPurchases().catch(() => null),
+    ]).then(([product, synced]) => {
+      const minimumCredits = billingPendingMinimumCreditsRef.current;
+      if (
+        minimumCredits !== null &&
+        (synced?.access?.availableCredits ?? 0) >= minimumCredits
+      ) {
+        billingPendingMinimumCreditsRef.current = null;
+        removeLocalStorageItem(billingPendingStorageKey(user.id));
+        if (active) {
+          setBillingPurchasePending(false);
+          setBillingMessage("결제가 반영됐어요.");
+        }
+      }
+      if (active) setBillingProduct(product);
+    });
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!authReady || !user || !accountProfile) return;
     let active = true;
     const shouldOpen = !hasSeenQuickGuide(user.id);
     window.queueMicrotask(() => {
@@ -3256,7 +3215,7 @@ export function PetFlowApp() {
     return () => {
       active = false;
     };
-  }, [authReady, testerProfile, user]);
+  }, [authReady, accountProfile, user]);
 
   function closeQuickGuide() {
     if (user) {
@@ -3341,32 +3300,9 @@ export function PetFlowApp() {
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      try {
-        const saved = localStorage.getItem("petflow-history");
-        const savedProfile = localStorage.getItem("petflow-profile");
-        const records = saved ? (JSON.parse(saved) as HistoryRecord[]) : [];
-        if (records.length) setHistory(records);
-        if (savedProfile) {
-          const parsed = JSON.parse(savedProfile) as PetProfile;
-          setProfile(parsed);
-          setInput(profileToHealthInput(parsed));
-        } else if (records[0]) {
-          const previous = records[0].input;
-          const migrated: PetProfile = {
-            name: previous.petName,
-            species: previous.species,
-            breed: previous.breed ?? "",
-            birthDate: previous.birthDate ?? "",
-            sex: previous.sex ?? "unknown",
-            weight: previous.weight ?? "",
-          };
-          setProfile(migrated);
-          setInput(profileToHealthInput(migrated));
-          setLocalStorageItem("petflow-profile", JSON.stringify(migrated));
-        }
-      } catch {
-        /* Ignore invalid local snapshots and continue with the default state. */
-      }
+      removeLocalStorageItem("petflow-history");
+      removeLocalStorageItem("petflow-profile");
+      removeLocalStorageItem("petflow-client-id");
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -3379,8 +3315,17 @@ export function PetFlowApp() {
     }
 
     async function loadAccount(nextUser: User | null) {
+      const loadSequence = ++accountLoadSequenceRef.current;
+      historyLoadSequenceRef.current += 1;
+      submissionAttemptRef.current = null;
       setUser(nextUser);
+      setHistory([]);
+      setSelected(null);
+      setEditingRecord(null);
+      setSelectedEpisodeReport(null);
       if (!nextUser || !supabase) {
+        setProfile(initialProfile);
+        setInput(initialInput);
         setPets([]);
         setEpisodes([]);
         setPlans([]);
@@ -3389,14 +3334,13 @@ export function PetFlowApp() {
         vaccinationTableAvailableRef.current = true;
         clearPendingMedia();
         setMediaUploadWarning("");
-        setTesterProfile(null);
+        setAccountProfile(null);
         setAiAccess(null);
-        setSelectedEpisodeReport(null);
         setSelectedPetId(undefined);
         setAuthReady(true);
         return;
       }
-      const [petResult, { data: tester }] = await Promise.all([
+      const [petResult, { data: profileRow }] = await Promise.all([
         supabase
           .from("pets")
           .select("id,name,species,breed,birth_date,sex,weight,photo_path,created_at")
@@ -3406,6 +3350,7 @@ export function PetFlowApp() {
           .select("nickname,phone,consent_version,consented_at,phone_consented_at")
           .maybeSingle(),
       ]);
+      if (loadSequence !== accountLoadSequenceRef.current) return;
       let petRows: Array<{
         id: string;
         name: string;
@@ -3442,28 +3387,31 @@ export function PetFlowApp() {
           };
         }),
       );
+      if (loadSequence !== accountLoadSequenceRef.current) return;
       setPets(loadedPets);
       await loadVaccinationsForPets(
         loadedPets.map((pet) => pet.id).filter((id): id is string => Boolean(id)),
+        loadSequence,
       );
-      setTesterProfile(
-        tester
+      if (loadSequence !== accountLoadSequenceRef.current) return;
+      setAccountProfile(
+        profileRow
           ? {
-              nickname: tester.nickname,
-              phone: tester.phone ?? "",
-              consentVersion: tester.consent_version,
-              consentedAt: tester.consented_at,
-              phoneConsentedAt: tester.phone_consented_at ?? "",
+              nickname: profileRow.nickname,
+              phone: profileRow.phone ?? "",
+              consentVersion: profileRow.consent_version,
+              consentedAt: profileRow.consented_at,
+              phoneConsentedAt: profileRow.phone_consented_at ?? "",
             }
           : null,
       );
       const nextPet = loadedPets[0];
       const { data: sessionData } = await supabase.auth.getSession();
-      if (sessionData.session) {
-        setAiAccess(await fetchAiAccessStatus(sessionData.session.access_token));
-      } else {
-        setAiAccess(null);
-      }
+      const nextAiAccess = sessionData.session
+        ? await fetchAiAccessStatus(sessionData.session.access_token)
+        : null;
+      if (loadSequence !== accountLoadSequenceRef.current) return;
+      setAiAccess(nextAiAccess);
       if (nextPet) {
         setProfile(nextPet);
         setSelectedPetId(nextPet.id);
@@ -3473,6 +3421,7 @@ export function PetFlowApp() {
             nextPet,
             sessionData.session.access_token,
           );
+          if (loadSequence !== accountLoadSequenceRef.current) return;
           setEpisodes(timeline.episodes);
           setPlans(timeline.plans);
           setProgress(timeline.progress);
@@ -3499,21 +3448,14 @@ export function PetFlowApp() {
 
   function persist(records: HistoryRecord[]) {
     setHistory(records);
-    setLocalStorageItem("petflow-history", JSON.stringify(records));
   }
   async function uploadPendingMediaFiles({
     reportId,
-    clientId,
     accessToken,
-    userId,
-    petId,
     files,
   }: {
     reportId: string;
-    clientId: string;
     accessToken: string;
-    userId: string;
-    petId: string;
     files: PendingMediaFile[];
   }): Promise<ReportMediaAttachment[]> {
     const supabase = getSupabaseBrowserClient();
@@ -3527,23 +3469,47 @@ export function PetFlowApp() {
       kind: ReportMediaKind;
     }> = [];
     try {
+      const descriptors = files.map((item) => ({
+        fileName: item.file.name.slice(0, 160),
+        mimeType: item.file.type,
+        sizeBytes: item.file.size,
+        kind: item.kind,
+      }));
+      const prepareResponse = await fetch(
+        `/api/reports/${reportId}/media/upload`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ files: descriptors }),
+        },
+      );
+      const prepared = (await prepareResponse.json()) as {
+        uploads?: Array<{ storagePath: string; token: string }>;
+      };
+      if (
+        !prepareResponse.ok ||
+        !prepared.uploads ||
+        prepared.uploads.length !== files.length
+      ) {
+        throw new Error("media upload authorization failed");
+      }
+
       for (const [index, item] of files.entries()) {
-        const storagePath = `${userId}/${petId}/${reportId}/${Date.now()}-${index}-${crypto.randomUUID()}.${mediaExtension(item.file)}`;
+        const upload = prepared.uploads[index];
         const { error: uploadError } = await supabase.storage
           .from(reportMediaBucket)
-          .upload(storagePath, item.file, {
+          .uploadToSignedUrl(upload.storagePath, upload.token, item.file, {
             cacheControl: "3600",
             contentType: item.file.type,
-            upsert: false,
           });
         if (uploadError) throw uploadError;
-        uploadedPaths.push(storagePath);
+        uploadedPaths.push(upload.storagePath);
         registeredFiles.push({
-          storagePath,
-          fileName: item.file.name.slice(0, 160),
-          mimeType: item.file.type,
-          sizeBytes: item.file.size,
-          kind: item.kind,
+          storagePath: upload.storagePath,
+          ...descriptors[index],
         });
       }
 
@@ -3553,7 +3519,7 @@ export function PetFlowApp() {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ clientId, files: registeredFiles }),
+        body: JSON.stringify({ files: registeredFiles }),
       });
       const payload = (await response.json()) as {
         media?: ReportMediaAttachment[];
@@ -3570,6 +3536,7 @@ export function PetFlowApp() {
   async function loadPetHistory(nextProfile: PetProfile) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !nextProfile.id) return;
+    const loadSequence = ++historyLoadSequenceRef.current;
     setFlowLoading(true);
     setEpisodes([]);
     setPlans([]);
@@ -3581,6 +3548,7 @@ export function PetFlowApp() {
         nextProfile,
         data.session.access_token,
       );
+      if (loadSequence !== historyLoadSequenceRef.current) return;
       setEpisodes(timeline.episodes);
       setPlans(timeline.plans);
       setProgress(timeline.progress);
@@ -3588,10 +3556,15 @@ export function PetFlowApp() {
         mergePetHistory(current, timeline.records, nextProfile.id as string),
       );
     } finally {
-      setFlowLoading(false);
+      if (loadSequence === historyLoadSequenceRef.current) {
+        setFlowLoading(false);
+      }
     }
   }
-  async function loadVaccinationsForPets(petIds: string[]) {
+  async function loadVaccinationsForPets(
+    petIds: string[],
+    loadSequence = accountLoadSequenceRef.current,
+  ) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !petIds.length) {
       setVaccinations([]);
@@ -3607,6 +3580,7 @@ export function PetFlowApp() {
       .in("pet_id", petIds)
       .order("due_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false });
+    if (loadSequence !== accountLoadSequenceRef.current) return;
     if (isMissingVaccinationTableError(error)) {
       vaccinationTableAvailableRef.current = false;
       setVaccinations([]);
@@ -3687,8 +3661,11 @@ export function PetFlowApp() {
     vaccination: VaccinationDraft,
   ): Promise<string | null> {
     const supabase = getSupabaseBrowserClient();
+    if (!user || !supabase) {
+      return "반려동물 정보는 로그인한 계정에만 저장할 수 있어요.";
+    }
     let savedProfile = nextProfile;
-    if (user && supabase) {
+    {
       const payload = {
         ...(nextProfile.id ? { id: nextProfile.id } : {}),
         user_id: user.id,
@@ -3745,14 +3722,41 @@ export function PetFlowApp() {
       }
 
       if (photoColumnReady && photo.file) {
-        const nextPhotoPath = `${user.id}/${data.id}/${Date.now()}-${crypto.randomUUID()}.${petPhotoExtension(photo.file)}`;
+        const { data: authData } = await supabase.auth.getSession();
+        if (!authData.session) return "다시 로그인한 뒤 사진을 저장해 주세요.";
+        const prepareResponse = await fetch(
+          `/api/pets/${data.id}/photo-upload`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${authData.session.access_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              fileName: photo.file.name.slice(0, 160),
+              mimeType: photo.file.type,
+              sizeBytes: photo.file.size,
+            }),
+          },
+        );
+        const prepared = (await prepareResponse.json()) as {
+          upload?: { storagePath: string; token: string };
+        };
+        if (!prepareResponse.ok || !prepared.upload) {
+          return "사진을 저장할 권한을 확인하지 못했어요.";
+        }
+        const nextPhotoPath = prepared.upload.storagePath;
         const { error: uploadError } = await supabase.storage
           .from(petPhotoBucket)
-          .upload(nextPhotoPath, photo.file, {
+          .uploadToSignedUrl(
+            nextPhotoPath,
+            prepared.upload.token,
+            photo.file,
+            {
             cacheControl: "3600",
             contentType: photo.file.type,
-            upsert: false,
-          });
+            },
+          );
         if (uploadError) return "사진을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
 
         const { error: photoUpdateError } = await supabase
@@ -3800,13 +3804,8 @@ export function PetFlowApp() {
           : [...current, savedProfile];
       });
       setSelectedPetId(savedProfile.id);
-    } else if (photo.file || photo.remove) {
-      return "사진은 로그인한 계정에 저장할 수 있어요. 먼저 로그인해 주세요.";
     }
     setProfile(savedProfile);
-    if (!user) {
-      setLocalStorageItem("petflow-profile", JSON.stringify(savedProfile));
-    }
     const nextInput = profileToHealthInput(savedProfile);
     setInput((current) =>
       profileReturnView === "check"
@@ -3830,7 +3829,7 @@ export function PetFlowApp() {
     mode: "login" | "signup",
     email: string,
     password: string,
-    tester: Pick<TesterProfile, "nickname" | "phone">,
+    profile: Pick<AccountProfile, "nickname" | "phone">,
     consented: boolean,
   ) {
     const supabase = getSupabaseBrowserClient();
@@ -3850,7 +3849,7 @@ export function PetFlowApp() {
       return "가입 확인 메일을 보냈어요. 확인 후 로그인해 주세요.";
     }
     if (mode === "signup" && result.data.user && consented) {
-      const profileResult = await saveTesterProfile(tester, consented, result.data.user.id);
+      const profileResult = await saveAccountProfile(profile, consented, result.data.user.id);
       if (profileResult) return profileResult;
     }
     return "";
@@ -3894,32 +3893,32 @@ export function PetFlowApp() {
     return "";
   }
 
-  async function saveTesterProfile(
-    tester: Pick<TesterProfile, "nickname" | "phone">,
+  async function saveAccountProfile(
+    profile: Pick<AccountProfile, "nickname" | "phone">,
     consented: boolean,
     userId = user?.id,
   ) {
     const supabase = getSupabaseBrowserClient();
-    const phone = normalizeKoreanMobile(tester.phone);
-    if (!supabase || !userId || !consented || !tester.nickname.trim() || !phone) {
+    const phone = normalizeKoreanMobile(profile.phone);
+    if (!supabase || !userId || !consented || !profile.nickname.trim() || !phone) {
       return "필수 정보를 다시 확인해 주세요.";
     }
     const consentedAt = new Date().toISOString();
     const { error: profileError } = await supabase.from("tester_profiles").upsert({
       user_id: userId,
-      nickname: tester.nickname.trim(),
+      nickname: profile.nickname.trim(),
       phone,
-      consent_version: testerConsentVersion,
+      consent_version: profileConsentVersion,
       consented_at: consentedAt,
       phone_consented_at: consentedAt,
       updated_at: consentedAt,
     });
     if (profileError) return "계정 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
-    setTesterProfile({
-      ...tester,
-      nickname: tester.nickname.trim(),
+    setAccountProfile({
+      ...profile,
+      nickname: profile.nickname.trim(),
       phone,
-      consentVersion: testerConsentVersion,
+      consentVersion: profileConsentVersion,
       consentedAt,
       phoneConsentedAt: consentedAt,
     });
@@ -3936,26 +3935,37 @@ export function PetFlowApp() {
     setMediaUploadWarning("");
     setProfile(initialProfile);
     setInput(initialInput);
+    setHistory([]);
+    setSelected(null);
+    setEditingRecord(null);
     setPets([]);
     setEpisodes([]);
     setPlans([]);
     setProgress([]);
     setVaccinations([]);
-    setTesterProfile(null);
+    setAccountProfile(null);
     setAiAccess(null);
+    setBillingProduct(null);
+    setBillingPurchasePending(false);
+    setBillingMessage("");
+    billingPendingMinimumCreditsRef.current = null;
     setQuickGuideOpen(false);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
     setRecordDateKey(toRecordDateKey(new Date()));
+    submissionAttemptRef.current = null;
+    removeLocalStorageItem("petflow-history");
     removeLocalStorageItem("petflow-profile");
+    removeLocalStorageItem("petflow-client-id");
     setView("home", { history: "replace" });
   }
   function startNew(selectedDateKey?: string) {
+    submissionAttemptRef.current = null;
     if (!authReady || !user) {
       openAuth("login", "push");
       return;
     }
-    if (!testerProfile) {
+    if (!accountProfile) {
       setView("account");
       return;
     }
@@ -4052,7 +4062,6 @@ export function PetFlowApp() {
     setError("");
     setMediaUploadWarning("");
     try {
-      const clientId = getOrCreateClientId();
       const supabase = getSupabaseBrowserClient();
       const { data: sessionData } = supabase
         ? await supabase.auth.getSession()
@@ -4110,10 +4119,7 @@ export function PetFlowApp() {
             try {
               const addedMedia = await uploadPendingMediaFiles({
                 reportId: editingRecord.result.id,
-                clientId,
                 accessToken: sessionData.session.access_token,
-                userId: sessionData.session.user.id,
-                petId,
                 files: pendingMedia,
               });
               media = [...media, ...addedMedia];
@@ -4159,11 +4165,23 @@ export function PetFlowApp() {
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
+      const requestFingerprint = JSON.stringify({
+        input: submissionInput,
+        petId: selectedPetId,
+        recordDateKey,
+      });
+      if (submissionAttemptRef.current?.fingerprint !== requestFingerprint) {
+        submissionAttemptRef.current = {
+          fingerprint: requestFingerprint,
+          requestId: crypto.randomUUID(),
+        };
+      }
+      const requestId = submissionAttemptRef.current.requestId;
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-petflow-client-id": clientId,
+          "Idempotency-Key": requestId,
           ...(sessionData.session?.access_token
             ? { Authorization: `Bearer ${sessionData.session.access_token}` }
             : {}),
@@ -4177,6 +4195,10 @@ export function PetFlowApp() {
         episodeId?: string | null;
       };
       const { episodeId, ...result } = responsePayload;
+      if (result.storage !== "remote" || !episodeId) {
+        throw new Error("server did not confirm the saved record");
+      }
+      submissionAttemptRef.current = null;
       let media: ReportMediaAttachment[] = [];
       if (pendingMedia.length) {
         if (
@@ -4189,10 +4211,7 @@ export function PetFlowApp() {
           try {
             media = await uploadPendingMediaFiles({
               reportId: result.id,
-              clientId,
               accessToken: sessionData.session.access_token,
-              userId: sessionData.session.user.id,
-              petId: selectedPetId,
               files: pendingMedia,
             });
           } catch {
@@ -4319,7 +4338,221 @@ export function PetFlowApp() {
       return "계획 체크 상태를 저장하지 못했어요.";
     }
   }
+
+  async function syncAiCreditPurchases() {
+    const supabase = getSupabaseBrowserClient();
+    const { data } = supabase
+      ? await supabase.auth.getSession()
+      : { data: { session: null } };
+    if (!data.session) {
+      return { access: null, error: "로그인 상태를 다시 확인해 주세요." };
+    }
+    const response = await fetch("/api/billing/sync", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${data.session.access_token}` },
+    });
+    const payload = (await response.json()) as {
+      access?: AiAccessStatus;
+      error?: string;
+    };
+    if (payload.access) setAiAccess(payload.access);
+    return {
+      access: payload.access ?? null,
+      error: response.ok ? "" : payload.error ?? "구매 내역을 확인하지 못했어요.",
+    };
+  }
+
+  async function recordWebMonetizationEvent(
+    eventName: MonetizationEventName,
+    context: MonetizationContext,
+  ) {
+    const supabase = getSupabaseBrowserClient();
+    const { data } = supabase
+      ? await supabase.auth.getSession()
+      : { data: { session: null } };
+    if (!data.session) return;
+
+    await fetch("/api/billing/events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        eventId: crypto.randomUUID(),
+        eventName,
+        context,
+        platform: "web",
+      }),
+    }).catch(() => undefined);
+  }
+
+  async function syncAiCreditPurchase(
+    minimumCredits: number,
+    delays = [0, 700, 1_500, 2_800],
+  ) {
+    let latest: Awaited<ReturnType<typeof syncAiCreditPurchases>> = {
+      access: null,
+      error: "",
+    };
+
+    for (const delay of delays) {
+      if (delay > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+      }
+      latest = await syncAiCreditPurchases();
+      if (
+        !latest.error &&
+        (latest.access?.availableCredits ?? 0) >= minimumCredits
+      ) {
+        return latest;
+      }
+    }
+
+    return latest;
+  }
+
+  async function purchaseAiCredit(
+    context: MonetizationContext = "report",
+  ) {
+    if (!user?.id) {
+      const error = "로그인이 필요해요.";
+      setBillingMessage(error);
+      return { purchased: false, error };
+    }
+    if (billingOperationInFlightRef.current) {
+      return { purchased: false };
+    }
+    billingOperationInFlightRef.current = true;
+    let storePurchaseCompleted = false;
+    setBillingLoading(true);
+    setBillingMessage("");
+    try {
+      const pendingMinimum = billingPendingMinimumCreditsRef.current;
+      if (pendingMinimum !== null) {
+        const synced = await syncAiCreditPurchase(pendingMinimum);
+        if (
+          !synced.error &&
+          (synced.access?.availableCredits ?? 0) >= pendingMinimum
+        ) {
+          billingPendingMinimumCreditsRef.current = null;
+          removeLocalStorageItem(billingPendingStorageKey(user.id));
+          setBillingPurchasePending(false);
+          setBillingMessage("결제가 반영됐어요.");
+          return { purchased: true };
+        }
+
+        const error =
+          synced.error ||
+          "결제는 완료됐어요. 중복 결제 없이 반영만 다시 확인해 주세요.";
+        setBillingMessage(error);
+        return { purchased: false, error };
+      }
+
+      const current = await syncAiCreditPurchases();
+      if (current.error || !current.access) {
+        const error =
+          current.error || "결제 준비 상태를 확인하지 못했어요.";
+        setBillingMessage(error);
+        return { purchased: false, error };
+      }
+      const minimumCredits = current.access.availableCredits + 1;
+
+      void recordWebMonetizationEvent("purchase_started", context);
+      const purchase = await purchaseWebAiSummary(user.id);
+      if (purchase.status === "cancelled") {
+        void recordWebMonetizationEvent("purchase_cancelled", context);
+        return { purchased: false };
+      }
+      if (purchase.status !== "purchased") {
+        void recordWebMonetizationEvent("purchase_failed", context);
+        setBillingMessage(purchase.message);
+        return { purchased: false, error: purchase.message };
+      }
+      storePurchaseCompleted = true;
+      billingPendingMinimumCreditsRef.current = minimumCredits;
+      setLocalStorageItem(
+        billingPendingStorageKey(user.id),
+        JSON.stringify({ minimumCredits }),
+      );
+      setBillingPurchasePending(true);
+      const synced = await syncAiCreditPurchase(minimumCredits);
+      if (
+        synced.error ||
+        (synced.access?.availableCredits ?? 0) < minimumCredits
+      ) {
+        void recordWebMonetizationEvent("purchase_sync_delayed", context);
+        const error =
+          synced.error ||
+          "결제는 완료됐어요. 잠시 뒤 구매 내역 확인을 눌러 주세요.";
+        setBillingMessage(error);
+        return { purchased: false, error };
+      }
+      billingPendingMinimumCreditsRef.current = null;
+      removeLocalStorageItem(billingPendingStorageKey(user.id));
+      setBillingPurchasePending(false);
+      setBillingMessage("AI 병원 요약 1회를 추가했어요.");
+      return { purchased: true };
+    } catch {
+      void recordWebMonetizationEvent("purchase_failed", context);
+      const error = storePurchaseCompleted
+        ? "결제가 완료됐을 수 있어요. 구매 내역 확인을 눌러 반영해 주세요."
+        : "결제 준비 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.";
+      setBillingMessage(error);
+      return { purchased: false, error };
+    } finally {
+      billingOperationInFlightRef.current = false;
+      setBillingLoading(false);
+    }
+  }
+
+  async function refreshAiCreditPurchases() {
+    if (billingOperationInFlightRef.current) return;
+    billingOperationInFlightRef.current = true;
+    setBillingLoading(true);
+    setBillingMessage("");
+    void recordWebMonetizationEvent("purchase_history_checked", "account");
+    try {
+      const synced = await syncAiCreditPurchases();
+      const pendingMinimum = billingPendingMinimumCreditsRef.current;
+      if (
+        pendingMinimum !== null &&
+        !synced.error &&
+        (synced.access?.availableCredits ?? 0) >= pendingMinimum
+      ) {
+        billingPendingMinimumCreditsRef.current = null;
+        if (user?.id) {
+          removeLocalStorageItem(billingPendingStorageKey(user.id));
+        }
+        setBillingPurchasePending(false);
+        setBillingMessage("결제가 반영됐어요.");
+        return;
+      }
+      setBillingMessage(
+        synced.error ||
+          (synced.access?.availableCredits
+            ? `AI 병원 요약 ${synced.access.availableCredits}회를 확인했어요.`
+            : "추가된 AI 요약 이용권이 없어요."),
+      );
+    } finally {
+      billingOperationInFlightRef.current = false;
+      setBillingLoading(false);
+    }
+  }
+
   async function createVetDraft(episodeId: string, reportIds?: string[]) {
+    if (!aiAccess?.enabled) {
+      if (aiAccess?.reason !== "no_credits") {
+        return { error: "AI 요약 이용 가능 횟수를 확인하지 못했어요." };
+      }
+      const purchase = await purchaseAiCredit("report");
+      if (!purchase.purchased) {
+        return {
+          error: purchase.error || "AI 병원 요약 1회 이용권이 필요해요.",
+        };
+      }
+    }
+
     const supabase = getSupabaseBrowserClient();
     try {
       const { data } = supabase
@@ -4405,12 +4638,19 @@ export function PetFlowApp() {
     );
     if (!value) return;
     try {
+      const supabase = getSupabaseBrowserClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) return;
       await fetch("/api/feedback", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           reportId: updated.result.id,
-          clientId: getOrCreateClientId(),
           feedback: value,
         }),
       });
@@ -4432,7 +4672,7 @@ export function PetFlowApp() {
         }
         authReady={authReady}
         signedIn={Boolean(user)}
-        canUseApp={Boolean(user && testerProfile)}
+        canUseApp={Boolean(user && accountProfile)}
       />
       <header className="mobile-header">
         <Brand small onClick={() => setView("home", { history: "replace" })} />
@@ -4463,7 +4703,7 @@ export function PetFlowApp() {
           <HomeView
             authReady={authReady}
             signedIn={Boolean(user)}
-            accountComplete={Boolean(testerProfile)}
+            accountComplete={Boolean(accountProfile)}
             profile={profile}
             history={visibleHistory}
             onStart={startNew}
@@ -4493,10 +4733,14 @@ export function PetFlowApp() {
         )}{" "}
         {currentView === "account" && (
           <AccountView
-            key={`${user?.id ?? "guest"}:${testerProfile?.consentVersion ?? "none"}:${testerProfile?.phone ?? "none"}:${authEntryMode}`}
+            key={`${user?.id ?? "guest"}:${accountProfile?.consentVersion ?? "none"}:${accountProfile?.phone ?? "none"}:${authEntryMode}`}
             user={user}
-            testerProfile={testerProfile}
+            accountProfile={accountProfile}
             aiAccess={aiAccess}
+            billingProduct={billingProduct}
+            billingLoading={billingLoading}
+            billingPurchasePending={billingPurchasePending}
+            billingMessage={billingMessage}
             pets={pets}
             selectedPetId={selectedPetId}
             authReady={authReady}
@@ -4505,8 +4749,10 @@ export function PetFlowApp() {
             onAuth={handleAuth}
             onOAuth={handleOAuth}
             onLinkOAuth={handleLinkOAuth}
-            onSaveTesterProfile={saveTesterProfile}
+            onSaveAccountProfile={saveAccountProfile}
             onRequestAccountDeletion={requestAccountDeletion}
+            onPurchaseAiCredit={() => purchaseAiCredit("account")}
+            onRefreshAiCredits={refreshAiCreditPurchases}
             onOpenGuide={() => setQuickGuideOpen(true)}
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
@@ -4603,7 +4849,6 @@ export function PetFlowApp() {
                 : []
             }
             onBack={() => setView("history", { history: "replace" })}
-            onContinueRecord={startNew}
             onSavePlan={savePlan}
             onTogglePlanTask={togglePlanTask}
             onCreateVetDraft={createVetDraft}
@@ -4618,7 +4863,7 @@ export function PetFlowApp() {
           />
         )}
       </main>
-      {user && testerProfile && (
+      {user && accountProfile && (
         <MobileNav view={currentView} setView={setView} onStart={startNew} />
       )}
       <QuickGuideDialog open={quickGuideOpen} onClose={closeQuickGuide} />

@@ -27,7 +27,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { testerConsentVersion, testerPrivacySummary } from "./src/lib/privacy";
+import { profileConsentVersion, profilePrivacySummary } from "./src/lib/privacy";
 import {
   defaultOAuthProviderStatus,
   fetchOAuthProviderStatus,
@@ -42,6 +42,23 @@ import {
   type OAuthProvider,
 } from "./src/lib/auth";
 import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
+import {
+  configureMobileBilling,
+  getMobileBillingProduct,
+  isMobileBillingAvailable,
+  purchaseAiSummaryCredit,
+  refreshAiSummaryPurchaseHistory,
+  resetMobileBillingCache,
+  subscribeToMobileBillingUpdates,
+  type MobileBillingProduct,
+} from "./src/lib/billing";
+import {
+  recordMobileMonetizationEvent,
+  syncBillingAccess,
+  syncBillingAfterPurchase,
+  type MonetizationContext,
+  type MonetizationEventName,
+} from "./src/lib/monetization";
 import {
   buildRecordCalendar,
   isRecordDateInRange,
@@ -133,20 +150,52 @@ const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
 ];
 
 const quickGuideStoragePrefix = "petflow-quick-guide-v1";
+const billingPendingStoragePrefix = "petflow-billing-pending-v1";
 
 function quickGuideStorageKey(userId: string) {
   return `${quickGuideStoragePrefix}:${userId}`;
 }
 
+function billingPendingStorageKey(userId: string) {
+  return `${billingPendingStoragePrefix}:${userId}`;
+}
+
+async function readPendingBillingMinimum(userId: string) {
+  try {
+    const rawValue = await AsyncStorage.getItem(billingPendingStorageKey(userId));
+    if (!rawValue) return null;
+    const value = JSON.parse(rawValue) as { minimumCredits?: unknown };
+    return Number.isInteger(value.minimumCredits) &&
+      Number(value.minimumCredits) > 0 &&
+      Number(value.minimumCredits) <= 100
+      ? Number(value.minimumCredits)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function savePendingBillingMinimum(userId: string, minimumCredits: number) {
+  await AsyncStorage.setItem(
+    billingPendingStorageKey(userId),
+    JSON.stringify({ minimumCredits }),
+  );
+}
+
+async function clearPendingBillingMinimum(userId: string) {
+  await AsyncStorage.removeItem(billingPendingStorageKey(userId));
+}
+
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPolicy = [
   { id: "length", label: "8~64자", test: (value: string) => value.length >= 8 && value.length <= 64 },
-  { id: "letter", label: "영문 포함", test: (value: string) => /[A-Za-z]/.test(value) },
+  { id: "lower", label: "영문 소문자", test: (value: string) => /[a-z]/.test(value) },
+  { id: "upper", label: "영문 대문자", test: (value: string) => /[A-Z]/.test(value) },
   { id: "number", label: "숫자 포함", test: (value: string) => /\d/.test(value) },
   { id: "special", label: "특수문자 포함", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
 ];
 
-interface TesterProfile {
+interface AccountProfile {
   nickname: string;
   phone: string;
   consentVersion: string;
@@ -154,7 +203,7 @@ interface TesterProfile {
   phoneConsentedAt: string;
 }
 
-interface TesterDraft {
+interface AccountDraft {
   nickname: string;
   phone: string;
   consented: boolean;
@@ -205,7 +254,7 @@ interface AiFeedbackDraft {
 type VetDraftMap = Record<string, VetReviewDraft>;
 type AiFeedbackDraftMap = Record<string, AiFeedbackDraft>;
 
-const emptyDraft: TesterDraft = {
+const emptyDraft: AccountDraft = {
   nickname: "",
   phone: "",
   consented: false,
@@ -309,10 +358,7 @@ function mergePetHistory(
   petId: string,
 ) {
   const otherPets = current.filter((record) => record.petId !== petId);
-  const localOnly = current.filter(
-    (record) => record.petId === petId && record.result.storage !== "remote",
-  );
-  return sortHistory([...otherPets, ...remoteRecords, ...localOnly]);
+  return sortHistory([...otherPets, ...remoteRecords]);
 }
 
 function upsertHistoryRecord(current: HistoryRecord[], next: HistoryRecord) {
@@ -447,9 +493,9 @@ export default function App() {
   const [linkOauthMessage, setLinkOauthMessage] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [draft, setDraft] = useState<TesterDraft>(emptyDraft);
+  const [draft, setDraft] = useState<AccountDraft>(emptyDraft);
   const [user, setUser] = useState<User | null>(null);
-  const [testerProfile, setTesterProfile] = useState<TesterProfile | null>(null);
+  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string>();
   const [petDraft, setPetDraft] = useState<PetDraft>(emptyPetDraft);
@@ -475,6 +521,12 @@ export default function App() {
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
   const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
   const vaccinationTableAvailableRef = useRef(true);
+  const accountLoadSequenceRef = useRef(0);
+  const historyLoadSequenceRef = useRef(0);
+  const submissionAttemptRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMessage, setHistoryMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
@@ -488,6 +540,21 @@ export default function App() {
     tone: "success",
   });
   const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
+  const [billingProduct, setBillingProduct] =
+    useState<MobileBillingProduct | null>(null);
+  const [billingProductLoading, setBillingProductLoading] = useState(false);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingPurchasePending, setBillingPurchasePending] = useState(false);
+  const [billingMessage, setBillingMessage] = useState("");
+  const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [billingContext, setBillingContext] =
+    useState<MonetizationContext>("report");
+  const billingPendingMinimumCreditsRef = useRef<number | null>(null);
+  const billingOperationInFlightRef = useRef(false);
+  const pendingAiDraftRef = useRef<{
+    episodeId: string;
+    reportIds?: string[];
+  } | null>(null);
   const [accountDeletionLoading, setAccountDeletionLoading] = useState(false);
   const [accountDeletionMessage, setAccountDeletionMessage] = useState("");
   const [accountDeletionRequested, setAccountDeletionRequested] = useState(false);
@@ -508,6 +575,125 @@ export default function App() {
     tone: "success",
   });
   const [savedAiFeedbackUsageIds, setSavedAiFeedbackUsageIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    let removeBillingListener: (() => void) | null = null;
+    if (!user?.id) {
+      void resetMobileBillingCache();
+      setBillingProduct(null);
+      setBillingProductLoading(false);
+      setBillingPurchasePending(false);
+      setBillingMessage("");
+      setBillingModalOpen(false);
+      billingPendingMinimumCreditsRef.current = null;
+      pendingAiDraftRef.current = null;
+      return () => {
+        active = false;
+      };
+    }
+    if (!isMobileBillingAvailable()) {
+      setBillingProduct(null);
+      setBillingProductLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    billingPendingMinimumCreditsRef.current = null;
+    setBillingPurchasePending(false);
+    setBillingMessage("");
+    setBillingProduct(null);
+    setBillingProductLoading(true);
+    void configureMobileBilling(user.id)
+      .then(async () => {
+        const persistedMinimum = await readPendingBillingMinimum(user.id);
+        if (persistedMinimum !== null) {
+          billingPendingMinimumCreditsRef.current = persistedMinimum;
+          if (active) {
+            setBillingPurchasePending(true);
+            setBillingMessage(
+              "이전 결제 내역을 확인하고 있어요. 중복 결제 없이 반영만 진행해요.",
+            );
+          }
+        }
+
+        const applySyncedAccess = async (
+          access: AiAccessStatus | null | undefined,
+        ) => {
+          if (!access) return;
+          if (active) setAiAccess(access);
+          const minimumCredits = billingPendingMinimumCreditsRef.current;
+          if (
+            minimumCredits === null ||
+            access.availableCredits < minimumCredits
+          ) {
+            return;
+          }
+
+          billingPendingMinimumCreditsRef.current = null;
+          await clearPendingBillingMinimum(user.id).catch(() => undefined);
+          if (!active) return;
+          setBillingPurchasePending(false);
+          setBillingMessage("결제가 반영됐어요.");
+
+          const pendingDraft = pendingAiDraftRef.current;
+          pendingAiDraftRef.current = null;
+          if (pendingDraft) {
+            setBillingModalOpen(false);
+            await createVetDraft(
+              pendingDraft.episodeId,
+              pendingDraft.reportIds,
+              true,
+            );
+          }
+        };
+
+        removeBillingListener = subscribeToMobileBillingUpdates(() => {
+          void billingAccessToken()
+            .then((accessToken) =>
+              accessToken
+                ? syncBillingAccess(apiBaseUrl, accessToken)
+                : Promise.resolve(null),
+            )
+            .then((synced) => {
+              void applySyncedAccess(synced?.access);
+            })
+            .catch(() => undefined);
+        });
+
+        const productRequest = getMobileBillingProduct(user.id);
+        const purchaseRecovery = refreshAiSummaryPurchaseHistory(user.id)
+          .catch(() => undefined)
+          .then(async () => {
+            const accessToken = await billingAccessToken();
+            if (!accessToken) return;
+            const synced = await syncBillingAccess(apiBaseUrl, accessToken);
+            await applySyncedAccess(synced.access);
+          })
+          .catch(() => undefined);
+
+        const [product] = await Promise.all([productRequest, purchaseRecovery]);
+        return product;
+      })
+      .then((product) => {
+        if (active) {
+          setBillingProduct(product);
+          setBillingProductLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setBillingProduct(null);
+          setBillingProductLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+      removeBillingListener?.();
+    };
+  }, [user?.id]);
 
   const resetAiFeedbackState = useCallback(() => {
     setAiFeedbackDrafts({});
@@ -637,16 +823,16 @@ export default function App() {
     (group) => group.episode?.status === "open",
   );
 
-  const needsTesterProfile = Boolean(
+  const needsAccountProfile = Boolean(
     user &&
-      (!testerProfile ||
-        testerProfile.consentVersion !== testerConsentVersion ||
-        !normalizeKoreanMobile(testerProfile.phone)),
+      (!accountProfile ||
+        accountProfile.consentVersion !== profileConsentVersion ||
+        !normalizeKoreanMobile(accountProfile.phone)),
   );
 
   useEffect(() => {
     let active = true;
-    if (!authReady || !user || needsTesterProfile) {
+    if (!authReady || !user || needsAccountProfile) {
       return () => {
         active = false;
       };
@@ -663,7 +849,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [authReady, needsTesterProfile, user]);
+  }, [authReady, needsAccountProfile, user]);
 
   function closeQuickGuide() {
     setQuickGuideOpen(false);
@@ -680,13 +866,24 @@ export default function App() {
   }, [authReady, configured, user]);
 
   const loadAccount = useCallback(async (nextUser: User | null) => {
+    const loadSequence = ++accountLoadSequenceRef.current;
+    historyLoadSequenceRef.current += 1;
+    submissionAttemptRef.current = null;
     setUser(nextUser);
     setMessage("");
     setPetMessage("");
+    setHistory([]);
+    setEpisodes([]);
+    setPlans([]);
+    setProgress([]);
+    setVaccinations([]);
+    setLatestResult(null);
+    setLatestEpisodeId(null);
+    setEditingHealthRecord(null);
     if (!nextUser) {
       setMainSection("home");
       setQuickGuideOpen(false);
-      setTesterProfile(null);
+      setAccountProfile(null);
       setDraft(emptyDraft);
       setPets([]);
       setSelectedPetId(undefined);
@@ -749,6 +946,7 @@ export default function App() {
         .eq("user_id", nextUser.id)
         .order("created_at", { ascending: true }),
     ]);
+    if (loadSequence !== accountLoadSequenceRef.current) return;
 
     if (error) {
       setMessage("계정 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
@@ -786,7 +984,7 @@ export default function App() {
         }
       : null;
 
-    setTesterProfile(profile);
+    setAccountProfile(profile);
     const loadedPets: PetProfile[] = await Promise.all(
       effectivePetRows.map(async (pet) => {
         const photoPath =
@@ -804,10 +1002,13 @@ export default function App() {
         };
       }),
     );
+    if (loadSequence !== accountLoadSequenceRef.current) return;
     setPets(loadedPets);
     await loadVaccinationsForPets(
       loadedPets.map((pet) => pet.id).filter((id): id is string => Boolean(id)),
+      loadSequence,
     );
+    if (loadSequence !== accountLoadSequenceRef.current) return;
     setSelectedPetId((current) =>
       current && loadedPets.some((pet) => pet.id === current)
         ? current
@@ -847,17 +1048,17 @@ export default function App() {
         ? {
             nickname: profile.nickname,
             phone: formatKoreanMobile(profile.phone),
-            consented: profile.consentVersion === testerConsentVersion,
+            consented: profile.consentVersion === profileConsentVersion,
           }
         : emptyDraft,
     );
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      setAiAccess(
-        sessionData.session?.access_token
-          ? await fetchAiAccessStatus(sessionData.session.access_token)
-          : null,
-      );
+      const nextAiAccess = sessionData.session?.access_token
+        ? await fetchAiAccessStatus(sessionData.session.access_token)
+        : null;
+      if (loadSequence !== accountLoadSequenceRef.current) return;
+      setAiAccess(nextAiAccess);
     } catch {
       setAiAccess(null);
     }
@@ -867,6 +1068,7 @@ export default function App() {
   const loadPetHistory = useCallback(async (pet: PetProfile) => {
     const petId = pet.id;
     if (!petId) return;
+    const loadSequence = ++historyLoadSequenceRef.current;
     setHistoryLoading(true);
     setHistoryMessage("");
 
@@ -892,18 +1094,26 @@ export default function App() {
       const remoteRecords = (payload.reports ?? []).map((report) =>
         storedReportToHistoryRecord(report, pet),
       );
+      if (loadSequence !== historyLoadSequenceRef.current) return;
       setHistory((current) => mergePetHistory(current, remoteRecords, petId));
       setEpisodes(payload.episodes ?? []);
       setPlans(payload.plans ?? []);
       setProgress(payload.progress ?? []);
     } catch {
-      setHistoryMessage("최근 기록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
+      if (loadSequence === historyLoadSequenceRef.current) {
+        setHistoryMessage("최근 기록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
+      }
     } finally {
-      setHistoryLoading(false);
+      if (loadSequence === historyLoadSequenceRef.current) {
+        setHistoryLoading(false);
+      }
     }
   }, []);
 
-  async function loadVaccinationsForPets(petIds: string[]) {
+  async function loadVaccinationsForPets(
+    petIds: string[],
+    loadSequence = accountLoadSequenceRef.current,
+  ) {
     const supabase = getSupabaseClient();
     if (!supabase || !petIds.length) {
       setVaccinations([]);
@@ -919,6 +1129,7 @@ export default function App() {
       .in("pet_id", petIds)
       .order("due_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false });
+    if (loadSequence !== accountLoadSequenceRef.current) return;
     if (isMissingVaccinationTableError(error)) {
       vaccinationTableAvailableRef.current = false;
       setVaccinations([]);
@@ -979,18 +1190,12 @@ export default function App() {
 
   async function uploadPendingMediaFiles({
     accessToken,
-    clientId,
     files,
-    petId,
     reportId,
-    userId,
   }: {
     accessToken: string;
-    clientId: string;
     files: PendingMediaAsset[];
-    petId: string;
     reportId: string;
-    userId: string;
   }): Promise<ReportMediaAttachment[]> {
     const supabase = getSupabaseClient();
     if (!supabase || !files.length) return [];
@@ -1005,30 +1210,62 @@ export default function App() {
     }> = [];
 
     try {
-      for (const [index, item] of files.entries()) {
+      const fileBodies: ArrayBuffer[] = [];
+      const descriptors: Array<{
+        fileName: string;
+        mimeType: string;
+        sizeBytes: number;
+        kind: ReportMediaKind;
+      }> = [];
+      for (const item of files) {
         const uploadFile = new File(item.uri);
         const body = await uploadFile.arrayBuffer();
         if (body.byteLength <= 0 || body.byteLength > maxReportMediaSizeBytes) {
           throw new Error("invalid media size");
         }
-        const extension = reportMediaExtensionFromMimeType(item.mimeType);
-        const storagePath = `${userId}/${petId}/${reportId}/${Date.now()}-${index}-${createUuid()}.${extension}`;
-
-        const { error } = await supabase.storage
-          .from(reportMediaBucket)
-          .upload(storagePath, body, {
-            cacheControl: "3600",
-            contentType: item.mimeType,
-            upsert: false,
-          });
-        if (error) throw error;
-        uploadedPaths.push(storagePath);
-        registeredFiles.push({
-          storagePath,
+        fileBodies.push(body);
+        descriptors.push({
           fileName: item.fileName,
           mimeType: item.mimeType,
-          sizeBytes: body.byteLength || item.sizeBytes,
+          sizeBytes: body.byteLength,
           kind: item.kind,
+        });
+      }
+      const prepareResponse = await fetch(
+        `${apiBaseUrl}/api/reports/${reportId}/media/upload`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ files: descriptors }),
+        },
+      );
+      const prepared = (await prepareResponse.json()) as {
+        uploads?: Array<{ storagePath: string; token: string }>;
+      };
+      if (
+        !prepareResponse.ok ||
+        !prepared.uploads ||
+        prepared.uploads.length !== files.length
+      ) {
+        throw new Error("media upload authorization failed");
+      }
+
+      for (const [index, item] of files.entries()) {
+        const upload = prepared.uploads[index];
+        const { error } = await supabase.storage
+          .from(reportMediaBucket)
+          .uploadToSignedUrl(upload.storagePath, upload.token, fileBodies[index], {
+            cacheControl: "3600",
+            contentType: item.mimeType,
+          });
+        if (error) throw error;
+        uploadedPaths.push(upload.storagePath);
+        registeredFiles.push({
+          storagePath: upload.storagePath,
+          ...descriptors[index],
         });
       }
 
@@ -1038,7 +1275,7 @@ export default function App() {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ clientId, files: registeredFiles }),
+        body: JSON.stringify({ files: registeredFiles }),
       });
       const payload = (await response.json()) as {
         media?: ReportMediaAttachment[];
@@ -1055,10 +1292,8 @@ export default function App() {
 
   async function uploadPetPhoto({
     petId,
-    userId,
   }: {
     petId: string;
-    userId: string;
   }) {
     const supabase = getSupabaseClient();
     if (
@@ -1076,14 +1311,35 @@ export default function App() {
       throw new Error("invalid pet photo size");
     }
 
-    const extension = petPhotoExtensionFromMimeType(petDraft.photoMimeType);
-    const storagePath = `${userId}/${petId}/${Date.now()}-${createUuid()}.${extension}`;
+    const { data: authData } = await supabase.auth.getSession();
+    if (!authData.session) throw new Error("missing session");
+    const prepareResponse = await fetch(
+      `${apiBaseUrl}/api/pets/${petId}/photo-upload`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authData.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileName: `pet-photo-${petId}`,
+          mimeType: petDraft.photoMimeType,
+          sizeBytes: body.byteLength,
+        }),
+      },
+    );
+    const prepared = (await prepareResponse.json()) as {
+      upload?: { storagePath: string; token: string };
+    };
+    if (!prepareResponse.ok || !prepared.upload) {
+      throw new Error("pet photo upload authorization failed");
+    }
+    const storagePath = prepared.upload.storagePath;
     const { error } = await supabase.storage
       .from(petPhotoBucket)
-      .upload(storagePath, body, {
+      .uploadToSignedUrl(storagePath, prepared.upload.token, body, {
         cacheControl: "3600",
         contentType: petDraft.photoMimeType,
-        upsert: false,
       });
     if (error) throw error;
     return storagePath;
@@ -1208,7 +1464,7 @@ export default function App() {
     void loadPetHistory(selectedPet);
   }, [loadPetHistory, resetAiFeedbackState, selectedPet]);
 
-  async function saveTesterProfile(nextUser = user) {
+  async function saveAccountProfile(nextUser = user) {
     const supabase = getSupabaseClient();
     const phone = normalizeKoreanMobile(draft.phone);
     if (!supabase || !nextUser) return "로그인 상태를 다시 확인해 주세요.";
@@ -1221,7 +1477,7 @@ export default function App() {
       user_id: nextUser.id,
       nickname: draft.nickname.trim(),
       phone,
-      consent_version: testerConsentVersion,
+      consent_version: profileConsentVersion,
       consented_at: now,
       phone_consented_at: now,
       updated_at: now,
@@ -1229,10 +1485,10 @@ export default function App() {
 
     if (error) return "계정 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
 
-    setTesterProfile({
+    setAccountProfile({
       nickname: draft.nickname.trim(),
       phone,
-      consentVersion: testerConsentVersion,
+      consentVersion: profileConsentVersion,
       consentedAt: now,
       phoneConsentedAt: now,
     });
@@ -1291,7 +1547,7 @@ export default function App() {
     }
 
     if (authMode === "signup" && result.data.user) {
-      const saveMessage = await saveTesterProfile(result.data.user);
+      const saveMessage = await saveAccountProfile(result.data.user);
       setMessage(saveMessage || "가입 정보가 저장됐어요.");
     }
     setLoading(false);
@@ -1385,9 +1641,9 @@ export default function App() {
     }
   }
 
-  async function submitTesterProfile() {
+  async function submitAccountProfile() {
     setLoading(true);
-    const saveMessage = await saveTesterProfile();
+    const saveMessage = await saveAccountProfile();
     setMessage(saveMessage || "계정 정보가 저장됐어요.");
     setLoading(false);
   }
@@ -1613,6 +1869,7 @@ export default function App() {
   }
 
   function startHealthRecord(selectedDateKey?: string) {
+    submissionAttemptRef.current = null;
     if (selectedPet) {
       setHealthInput(profileToHealthInput(selectedPet));
     }
@@ -1820,7 +2077,6 @@ export default function App() {
       if (photoColumnReady && petDraft.photoLocalUri) {
         const nextPhotoPath = await uploadPetPhoto({
           petId: data.id,
-          userId: user.id,
         });
         const { error: updateError } = await supabase
           .from("pets")
@@ -1928,7 +2184,6 @@ export default function App() {
       const session = data.session;
       const accessToken = session?.access_token;
       if (!accessToken) throw new Error("missing session");
-      const clientId = createUuid();
       if (editingHealthRecord) {
         let media = editingHealthRecord.media ?? [];
         let petIdForRecord = editingHealthRecord.petId ?? petId;
@@ -1982,11 +2237,8 @@ export default function App() {
             try {
               const addedMedia = await uploadPendingMediaFiles({
                 accessToken,
-                clientId,
                 files: pendingMedia,
-                petId: petIdForRecord,
                 reportId: editingHealthRecord.result.id,
-                userId: session.user.id,
               });
               media = [...media, ...addedMedia];
               setMediaUploadMessage(
@@ -2020,12 +2272,20 @@ export default function App() {
         return;
       }
 
+      const requestFingerprint = JSON.stringify({ input, petId, recordDateKey });
+      if (submissionAttemptRef.current?.fingerprint !== requestFingerprint) {
+        submissionAttemptRef.current = {
+          fingerprint: requestFingerprint,
+          requestId: createUuid(),
+        };
+      }
+      const requestId = submissionAttemptRef.current.requestId;
       const response = await fetch(`${apiBaseUrl}/api/analyze`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
-          "x-petflow-client-id": clientId,
+          "Idempotency-Key": requestId,
           "x-petflow-pet-id": petId,
           "x-petflow-observed-date": recordDateKey,
         },
@@ -2036,6 +2296,10 @@ export default function App() {
         episodeId?: string | null;
       };
       const { episodeId, ...result } = payload;
+      if (result.storage !== "remote" || !episodeId) {
+        throw new Error("server did not confirm the saved record");
+      }
+      submissionAttemptRef.current = null;
       let media: ReportMediaAttachment[] = [];
       let mediaNotice = "";
       if (pendingMedia.length) {
@@ -2048,11 +2312,8 @@ export default function App() {
           try {
             media = await uploadPendingMediaFiles({
               accessToken,
-              clientId,
               files: pendingMedia,
-              petId,
               reportId: result.id,
-              userId: session.user.id,
             });
             mediaNotice = media.length
               ? `${formatReportMediaSummary(media)} 첨부도 함께 저장됐어요.`
@@ -2102,27 +2363,16 @@ export default function App() {
       setPendingMedia([]);
       setMediaUploadMessage(mediaNotice);
       setHealthMessage(
-        result.storage === "remote"
-          ? recordDateKey === toRecordDateKey(new Date())
-            ? "오늘 기록이 저장됐어요."
-            : "선택한 날짜에 기록을 저장했어요."
-          : "결과는 만들었지만 서버 저장은 확인하지 못했어요.",
+        recordDateKey === toRecordDateKey(new Date())
+          ? "오늘 기록이 저장됐어요."
+          : "선택한 날짜에 기록을 저장했어요.",
       );
     } catch {
       if (editingHealthRecord) {
         setHealthMessage("기록을 수정하지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.");
       } else {
-        const fallbackResult: AnalysisResult = { ...localResult, storage: "local" };
-        setLatestResult(fallbackResult);
-        setHistory((current) =>
-          upsertHistoryRecord(current, {
-            petId: selectedPet.id,
-            input,
-            result: fallbackResult,
-          }),
-        );
         setHealthMessage(
-          "서버 저장은 실패했지만, 기기에서 기본 안전 분류를 만들었어요. 네트워크를 확인한 뒤 다시 저장해 주세요.",
+          "기록을 저장하지 못했어요. 입력 내용은 그대로 두었으니 네트워크를 확인하고 다시 시도해 주세요.",
         );
       }
     } finally {
@@ -2283,14 +2533,219 @@ export default function App() {
     }
   }
 
-  async function createVetDraft(episodeId: string, reportIds?: string[]) {
-    if (!aiAccess?.enabled) {
+  async function billingAccessToken() {
+    const supabase = getSupabaseClient();
+    const { data } = supabase
+      ? await supabase.auth.getSession()
+      : { data: { session: null } };
+    return data.session?.access_token ?? null;
+  }
+
+  async function trackMonetizationEvent(
+    eventName: MonetizationEventName,
+    context: MonetizationContext,
+  ) {
+    if (Platform.OS !== "android" && Platform.OS !== "ios") return;
+    const accessToken = await billingAccessToken();
+    if (!accessToken) return;
+    await recordMobileMonetizationEvent({
+      accessToken,
+      apiBaseUrl,
+      event: {
+        eventId: createUuid(),
+        eventName,
+        context,
+        platform: Platform.OS,
+        appVersion: Application.nativeApplicationVersion,
+        appBuild: Application.nativeBuildVersion,
+      },
+    });
+  }
+
+  function openBillingForAiDraft(episodeId: string, reportIds?: string[]) {
+    pendingAiDraftRef.current = { episodeId, reportIds };
+    setBillingContext("report");
+    setBillingMessage("");
+    setBillingModalOpen(true);
+    void trackMonetizationEvent("paywall_viewed", "report");
+  }
+
+  function openBillingFromAccount() {
+    pendingAiDraftRef.current = null;
+    setBillingContext("account");
+    setBillingMessage("");
+    setBillingModalOpen(true);
+    void trackMonetizationEvent("paywall_viewed", "account");
+  }
+
+  function closeBillingModal() {
+    if (billingLoading) return;
+    setBillingModalOpen(false);
+    pendingAiDraftRef.current = null;
+    setBillingMessage("");
+    void trackMonetizationEvent("paywall_closed", billingContext);
+  }
+
+  async function purchaseAiCredit() {
+    if (
+      !user?.id ||
+      billingLoading ||
+      billingPurchasePending ||
+      billingOperationInFlightRef.current
+    ) {
+      return;
+    }
+    billingOperationInFlightRef.current = true;
+    let storePurchaseCompleted = false;
+    setBillingLoading(true);
+    setBillingMessage("");
+    try {
+      const accessToken = await billingAccessToken();
+      if (!accessToken) {
+        setBillingMessage("로그인을 다시 확인해 주세요.");
+        return;
+      }
+      const current = await syncBillingAccess(apiBaseUrl, accessToken);
+      if (current.error || !current.access) {
+        setBillingMessage(
+          current.error ?? "결제 준비 상태를 확인하지 못했어요.",
+        );
+        return;
+      }
+      setAiAccess(current.access);
+      const minimumCredits = current.access.availableCredits + 1;
+
+      void trackMonetizationEvent("purchase_started", billingContext);
+      const result = await purchaseAiSummaryCredit(user.id);
+      if (result.status === "cancelled") {
+        void trackMonetizationEvent("purchase_cancelled", billingContext);
+        return;
+      }
+      if (result.status !== "purchased") {
+        setBillingMessage(result.message);
+        void trackMonetizationEvent("purchase_failed", billingContext);
+        return;
+      }
+      storePurchaseCompleted = true;
+      billingPendingMinimumCreditsRef.current = minimumCredits;
+      await savePendingBillingMinimum(user.id, minimumCredits).catch(
+        () => undefined,
+      );
+      setBillingPurchasePending(true);
+      const synced = await syncBillingAfterPurchase(
+        () => syncBillingAccess(apiBaseUrl, accessToken),
+        minimumCredits,
+      );
+      if (synced.access) setAiAccess(synced.access);
+      if (
+        !synced.synced ||
+        (synced.access?.availableCredits ?? 0) < minimumCredits
+      ) {
+        setBillingMessage(
+          "결제는 완료됐어요. 스토어 반영이 늦어지고 있어 구매 내역에서 계속 확인할 수 있어요.",
+        );
+        void trackMonetizationEvent("purchase_sync_delayed", billingContext);
+        return;
+      }
+
+      billingPendingMinimumCreditsRef.current = null;
+      await clearPendingBillingMinimum(user.id).catch(() => undefined);
+      setBillingPurchasePending(false);
+      const pendingDraft = pendingAiDraftRef.current;
+      pendingAiDraftRef.current = null;
+      setBillingModalOpen(false);
+      setBillingMessage("");
+      if (pendingDraft) {
+        await createVetDraft(
+          pendingDraft.episodeId,
+          pendingDraft.reportIds,
+          true,
+        );
+      }
+    } catch {
+      setBillingMessage(
+        storePurchaseCompleted
+          ? "결제가 완료됐을 수 있어요. 구매 내역 확인을 눌러 반영해 주세요."
+          : "결제 준비 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      );
+      void trackMonetizationEvent("purchase_failed", billingContext);
+    } finally {
+      billingOperationInFlightRef.current = false;
+      setBillingLoading(false);
+    }
+  }
+
+  async function refreshAiCredits() {
+    if (!user?.id || billingOperationInFlightRef.current) return;
+    billingOperationInFlightRef.current = true;
+    setBillingLoading(true);
+    setBillingMessage("");
+    try {
+      const refreshed = await refreshAiSummaryPurchaseHistory(user.id);
+      if (!refreshed.refreshed) {
+        setBillingMessage(refreshed.message);
+        return;
+      }
+      const accessToken = await billingAccessToken();
+      if (!accessToken) {
+        setBillingMessage("로그인을 다시 확인해 주세요.");
+        return;
+      }
+      const synced = await syncBillingAccess(apiBaseUrl, accessToken);
+      if (synced.access) setAiAccess(synced.access);
+      void trackMonetizationEvent("purchase_history_checked", billingContext);
+
+      const pendingMinimum = billingPendingMinimumCreditsRef.current;
+      if (
+        pendingMinimum !== null &&
+        (synced.access?.availableCredits ?? 0) >= pendingMinimum
+      ) {
+        billingPendingMinimumCreditsRef.current = null;
+        await clearPendingBillingMinimum(user.id).catch(() => undefined);
+        setBillingPurchasePending(false);
+        setBillingMessage("");
+        setBillingModalOpen(false);
+        const pendingDraft = pendingAiDraftRef.current;
+        pendingAiDraftRef.current = null;
+        if (pendingDraft) {
+          await createVetDraft(
+            pendingDraft.episodeId,
+            pendingDraft.reportIds,
+            true,
+          );
+        }
+        return;
+      }
+
+      setBillingMessage(
+        synced.error ??
+          (synced.access?.availableCredits
+            ? `AI 요약 ${synced.access.availableCredits}회를 확인했어요.`
+            : "추가로 확인된 AI 요약 이용권이 없어요."),
+      );
+    } catch {
+      setBillingMessage(
+        "구매 내역을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      );
+    } finally {
+      billingOperationInFlightRef.current = false;
+      setBillingLoading(false);
+    }
+  }
+
+  async function createVetDraft(
+    episodeId: string,
+    reportIds?: string[],
+    accessConfirmed = false,
+  ) {
+    if (!accessConfirmed && !aiAccess?.enabled) {
+      if (aiAccess?.reason === "no_credits") {
+        openBillingForAiDraft(episodeId, reportIds);
+        return false;
+      }
       setVetDraftNotice({
         episodeId,
-        text:
-          aiAccess?.reason === "monthly_limit"
-            ? "이번 달 AI 요약 사용량을 모두 사용했어요."
-            : "AI 요약 사용량을 확인하지 못했어요.",
+        text: "AI 요약 이용 가능 여부를 확인하지 못했어요.",
         tone: "error",
       });
       return false;
@@ -2354,7 +2809,12 @@ export default function App() {
 
   async function shareVetDraft(episodeId: string, draft: VetReviewDraft) {
     try {
-      await Share.share({ title: draft.title, message: draft.copyText });
+      const result = await Share.share({
+        title: draft.title,
+        message: draft.copyText,
+      });
+      if (result.action !== Share.sharedAction) return;
+      void trackMonetizationEvent("ai_summary_shared", "report");
       setVetDraftNotice({
         episodeId,
         text: "AI 요약을 공유했어요.",
@@ -2407,7 +2867,6 @@ export default function App() {
         },
         body: JSON.stringify({
           usageId,
-          episodeId,
           usefulnessScore: feedback.usefulnessScore,
           comment: feedback.comment.trim() || undefined,
         } satisfies AiReportFeedbackInput),
@@ -2436,16 +2895,20 @@ export default function App() {
   const appDescription = user
     ? "닉네임과 연락처를 한 번 확인하면 바로 기록할 수 있어요."
     : "기록과 사진을 안전하게 이어서 관리하려면 계정으로 시작해요.";
-  const showPageIntro = !configured || !authReady || !user || needsTesterProfile;
+  const showPageIntro = !configured || !authReady || !user || needsAccountProfile;
 
   const accountCard = user ? (
     <AccountCard
       aiAccess={aiAccess}
+      billingProduct={billingProduct}
+      billingLoading={billingLoading}
+      billingPurchasePending={billingPurchasePending}
+      billingMessage={billingMessage}
       accountDeletionLoading={accountDeletionLoading}
       accountDeletionMessage={accountDeletionMessage}
       accountDeletionRequested={accountDeletionRequested}
       user={user}
-      testerProfile={testerProfile}
+      accountProfile={accountProfile}
       linkOauthLoading={linkOauthLoading}
       linkOauthMessage={linkOauthMessage}
       enabledOAuthProviders={enabledOAuthProviders}
@@ -2453,7 +2916,9 @@ export default function App() {
       onLinkOAuth={linkOAuthIdentity}
       onRequestAccountDeletion={requestAccountDeletion}
       onOpenGuide={() => setQuickGuideOpen(true)}
-      disabled={loading}
+      onPurchaseAiCredit={openBillingFromAccount}
+      onRefreshAiCredits={refreshAiCredits}
+      disabled={loading || billingLoading}
     />
   ) : null;
 
@@ -2502,15 +2967,15 @@ export default function App() {
             <LoadingCard />
           ) : user ? (
             <>
-              {needsTesterProfile ? (
+              {needsAccountProfile ? (
                 <>
                   {accountCard}
-                  <TesterProfileForm
+                  <AccountProfileForm
                     draft={draft}
                     setDraft={setDraft}
                     loading={loading}
                     message={message}
-                    onSubmit={submitTesterProfile}
+                    onSubmit={submitAccountProfile}
                   />
                 </>
               ) : (
@@ -2671,6 +3136,19 @@ export default function App() {
         </ScrollView>
       </KeyboardAvoidingView>
       <QuickGuideModal open={quickGuideOpen} onClose={closeQuickGuide} />
+      <AiBillingModal
+        access={aiAccess}
+        context={billingContext}
+        loading={billingLoading}
+        message={billingMessage}
+        open={billingModalOpen}
+        product={billingProduct}
+        productLoading={billingProductLoading}
+        purchasePending={billingPurchasePending}
+        onClose={closeBillingModal}
+        onPurchase={purchaseAiCredit}
+        onRefresh={refreshAiCredits}
+      />
     </SafeAreaView>
   );
 }
@@ -2985,8 +3463,8 @@ function AuthForm({
   setEmail: (email: string) => void;
   password: string;
   setPassword: (password: string) => void;
-  draft: TesterDraft;
-  setDraft: (draft: TesterDraft) => void;
+  draft: AccountDraft;
+  setDraft: (draft: AccountDraft) => void;
   loading: boolean;
   message: string;
   enabledOAuthProviders: Record<OAuthProvider, boolean>;
@@ -3101,7 +3579,7 @@ function AuthForm({
             autoCorrect={false}
             keyboardType="email-address"
             onChangeText={setEmail}
-            placeholder="test@example.com"
+            placeholder="name@example.com"
             placeholderTextColor={colors.placeholder}
             style={styles.input}
             textContentType="emailAddress"
@@ -3118,7 +3596,7 @@ function AuthForm({
             autoCapitalize="none"
             maxLength={64}
             onChangeText={setPassword}
-            placeholder={mode === "signup" ? "8자 이상, 영문·숫자·특수문자" : "비밀번호"}
+            placeholder={mode === "signup" ? "8자 이상, 대·소문자·숫자·특수문자" : "비밀번호"}
             placeholderTextColor={colors.placeholder}
             secureTextEntry
             style={styles.input}
@@ -3127,7 +3605,7 @@ function AuthForm({
           />
           {mode === "signup" ? <PasswordChecklist password={password} /> : null}
 
-          {mode === "signup" && <TesterFields draft={draft} setDraft={setDraft} />}
+          {mode === "signup" && <AccountFields draft={draft} setDraft={setDraft} />}
 
           <PrimaryButton
             disabled={authBusy}
@@ -3140,15 +3618,15 @@ function AuthForm({
   );
 }
 
-function TesterProfileForm({
+function AccountProfileForm({
   draft,
   setDraft,
   loading,
   message,
   onSubmit,
 }: {
-  draft: TesterDraft;
-  setDraft: (draft: TesterDraft) => void;
+  draft: AccountDraft;
+  setDraft: (draft: AccountDraft) => void;
   loading: boolean;
   message: string;
   onSubmit: () => Promise<void>;
@@ -3159,7 +3637,7 @@ function TesterProfileForm({
       <Text style={styles.cardText}>
         닉네임과 연락용 010 번호를 저장해요. 인증번호는 보내지 않아요.
       </Text>
-      <TesterFields draft={draft} setDraft={setDraft} />
+      <AccountFields draft={draft} setDraft={setDraft} />
       <Message text={message} />
       <PrimaryButton
         disabled={loading}
@@ -3170,12 +3648,12 @@ function TesterProfileForm({
   );
 }
 
-function TesterFields({
+function AccountFields({
   draft,
   setDraft,
 }: {
-  draft: TesterDraft;
-  setDraft: (draft: TesterDraft) => void;
+  draft: AccountDraft;
+  setDraft: (draft: AccountDraft) => void;
 }) {
   return (
     <View style={styles.formBlock}>
@@ -3202,9 +3680,9 @@ function TesterFields({
 
       <View style={styles.privacyBox}>
         <Text style={styles.privacyTitle}>수집 정보와 이용 안내</Text>
-        <InfoRow label="필수" value={testerPrivacySummary.required} />
-        <InfoRow label="목적" value={testerPrivacySummary.purpose} />
-        <InfoRow label="보관" value={testerPrivacySummary.retention} />
+        <InfoRow label="필수" value={profilePrivacySummary.required} />
+        <InfoRow label="목적" value={profilePrivacySummary.purpose} />
+        <InfoRow label="보관" value={profilePrivacySummary.retention} />
         <Text style={styles.privacyText}>
           전화번호는 본인 인증, 광고나 마케팅에 사용하지 않습니다.
         </Text>
@@ -3227,11 +3705,15 @@ function TesterFields({
 
 function AccountCard({
   aiAccess,
+  billingProduct,
+  billingLoading,
+  billingPurchasePending,
+  billingMessage,
   accountDeletionLoading,
   accountDeletionMessage,
   accountDeletionRequested,
   user,
-  testerProfile,
+  accountProfile,
   linkOauthLoading,
   linkOauthMessage,
   enabledOAuthProviders,
@@ -3239,14 +3721,20 @@ function AccountCard({
   onLinkOAuth,
   onRequestAccountDeletion,
   onOpenGuide,
+  onPurchaseAiCredit,
+  onRefreshAiCredits,
   onSignOut,
 }: {
   aiAccess: AiAccessStatus | null;
+  billingProduct: MobileBillingProduct | null;
+  billingLoading: boolean;
+  billingPurchasePending: boolean;
+  billingMessage: string;
   accountDeletionLoading: boolean;
   accountDeletionMessage: string;
   accountDeletionRequested: boolean;
   user: User;
-  testerProfile: TesterProfile | null;
+  accountProfile: AccountProfile | null;
   linkOauthLoading: OAuthProvider | null;
   linkOauthMessage: string;
   enabledOAuthProviders: Record<OAuthProvider, boolean>;
@@ -3254,22 +3742,32 @@ function AccountCard({
   onLinkOAuth: (provider: OAuthProvider) => Promise<void>;
   onRequestAccountDeletion: () => Promise<void>;
   onOpenGuide: () => void;
+  onPurchaseAiCredit: () => void;
+  onRefreshAiCredits: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }) {
   const googleLinked = hasLinkedProvider(user, "google");
   const appleLinked = hasLinkedProvider(user, "apple");
   const appleEnabled = enabledOAuthProviders.apple || appleLinked;
   const linkDisabled = disabled || linkOauthLoading !== null;
+  const complimentarySummaryAvailable =
+    (aiAccess?.complimentaryCredits ?? 0) > 0;
+  const canOfferPurchase = Boolean(
+    billingProduct &&
+      aiAccess &&
+      aiAccess.reason !== "unavailable" &&
+      !complimentarySummaryAvailable,
+  );
 
   return (
     <View style={styles.card}>
       <Text style={styles.cardEyebrow}>SIGNED IN</Text>
       <Text style={styles.cardTitle}>
-        {testerProfile?.nickname || user.email || "사용자"}
+        {accountProfile?.nickname || user.email || "사용자"}
       </Text>
       <Text style={styles.cardText}>{user.email}</Text>
-      {testerProfile?.phone ? (
-        <Text style={styles.cardText}>{formatKoreanMobile(testerProfile.phone)}</Text>
+      {accountProfile?.phone ? (
+        <Text style={styles.cardText}>{formatKoreanMobile(accountProfile.phone)}</Text>
       ) : null}
 
       <View style={styles.identityLinkBox}>
@@ -3376,9 +3874,9 @@ function AccountCard({
             {!aiAccess
               ? "확인 중"
               : aiAccess.enabled
-                ? "사용 가능"
-                : aiAccess.reason === "monthly_limit"
-                  ? "이번 달 완료"
+                ? `${aiAccess.availableCredits}회`
+                : aiAccess.reason === "no_credits"
+                  ? "이용권 없음"
                   : "확인 필요"}
           </Text>
         </View>
@@ -3386,21 +3884,55 @@ function AccountCard({
         {aiAccess && aiAccess.reason !== "unavailable" ? (
           <View style={styles.aiUsageRow}>
             <View style={styles.aiUsageItem}>
-              <Text style={styles.aiUsageLabel}>이번 달</Text>
-              <Text style={styles.aiUsageValue}>
-                {aiAccess.usedThisMonth}/{aiAccess.monthlyReportLimit}회
-              </Text>
-            </View>
-            <View style={styles.aiUsageItem}>
               <Text style={styles.aiUsageLabel}>남은 요약</Text>
-              <Text style={styles.aiUsageValue}>{aiAccess.remainingThisMonth}회</Text>
+              <Text style={styles.aiUsageValue}>{aiAccess.availableCredits}회</Text>
             </View>
             <View style={styles.aiUsageItem}>
-              <Text style={styles.aiUsageLabel}>이용 방식</Text>
-              <Text style={styles.aiUsageValue}>모든 회원 무료</Text>
+              <Text style={styles.aiUsageLabel}>완료한 요약</Text>
+              <Text style={styles.aiUsageValue}>{aiAccess.usedTotal}회</Text>
             </View>
           </View>
         ) : null}
+
+        {complimentarySummaryAvailable ? (
+          <Text style={styles.aiTrialHint}>
+            첫 요약은 무료예요. 기록을 고른 뒤 AI 병원 요약을 만들어 보세요.
+          </Text>
+        ) : null}
+
+        {canOfferPurchase && billingProduct ? (
+          <View style={styles.aiBillingActions}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={billingLoading}
+              onPress={onPurchaseAiCredit}
+              style={[
+                styles.aiBillingPrimary,
+                billingLoading && styles.buttonDisabled,
+              ]}
+            >
+              <Text style={styles.aiBillingPrimaryText}>
+                {billingPurchasePending
+                  ? "결제 반영 확인"
+                  : `${billingProduct.priceLabel} · 1회 추가`}
+              </Text>
+            </TouchableOpacity>
+            {!billingPurchasePending ? (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                disabled={billingLoading}
+                onPress={() => void onRefreshAiCredits()}
+                style={styles.aiBillingRestore}
+              >
+                <Text style={styles.aiBillingRestoreText}>구매 내역 확인</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
+        <Message
+          text={billingMessage}
+          tone={billingMessageTone(billingMessage)}
+        />
       </View>
 
       <TouchableOpacity
@@ -3457,6 +3989,131 @@ function AccountCard({
       </TouchableOpacity>
       <AppBuildInfo />
     </View>
+  );
+}
+
+function AiBillingModal({
+  access,
+  context,
+  loading,
+  message,
+  open,
+  product,
+  productLoading,
+  purchasePending,
+  onClose,
+  onPurchase,
+  onRefresh,
+}: {
+  access: AiAccessStatus | null;
+  context: MonetizationContext;
+  loading: boolean;
+  message: string;
+  open: boolean;
+  product: MobileBillingProduct | null;
+  productLoading: boolean;
+  purchasePending: boolean;
+  onClose: () => void;
+  onPurchase: () => Promise<void>;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <Modal
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      transparent
+      visible={open}
+    >
+      <View style={styles.quickGuideBackdrop}>
+        <View
+          accessibilityLabel="AI 병원 요약 1회 이용권"
+          accessibilityViewIsModal
+          style={styles.billingDialog}
+        >
+          <Text style={styles.quickGuideEyebrow}>AI 병원 요약 · 1회 이용권</Text>
+          <Text style={styles.quickGuideTitle}>
+            {context === "report"
+              ? `지금 고른 기록을\n병원용 요약으로`
+              : `필요한 순간에\n병원용 요약 한 번`}
+          </Text>
+          <Text style={styles.billingDescription}>
+            날짜별 변화와 보호자 관찰을 짧게 정리해요. 1회 결제이며 자동 갱신은
+            없어요.
+          </Text>
+
+          {access?.availableCredits ? (
+            <View style={styles.billingBalance}>
+              <Text style={styles.billingBalanceLabel}>현재 이용 가능</Text>
+              <Text style={styles.billingBalanceValue}>
+                {access.availableCredits}회
+              </Text>
+            </View>
+          ) : null}
+
+          <TouchableOpacity
+            activeOpacity={0.86}
+            accessibilityRole="button"
+            disabled={
+              loading || (!purchasePending && (productLoading || !product))
+            }
+            onPress={() =>
+              void (purchasePending ? onRefresh() : onPurchase())
+            }
+            style={[
+              styles.quickGuideClose,
+              (loading ||
+                (!purchasePending && (productLoading || !product))) &&
+                styles.buttonDisabled,
+            ]}
+          >
+            {loading ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <Text style={styles.quickGuideCloseText}>
+                {purchasePending
+                  ? "결제 반영 확인"
+                  : product
+                  ? `${product.priceLabel} · 1회 추가`
+                  : productLoading
+                    ? "상품 확인 중"
+                    : "결제를 준비 중이에요"}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          <Text style={styles.billingFootnote}>
+            {purchasePending
+              ? "결제는 끝났어요. 중복 결제 없이 이용권 반영만 확인해요."
+              : "결제 후 바로 요약을 이어서 만들어요. 진단이나 처방은 만들지 않아요."}
+          </Text>
+
+          {!purchasePending ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              disabled={loading}
+              onPress={() => void onRefresh()}
+              style={styles.billingSecondaryButton}
+            >
+              <Text style={styles.billingSecondaryText}>구매 내역 확인</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <Message text={message} tone={billingMessageTone(message)} />
+
+          <TouchableOpacity
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            disabled={loading}
+            onPress={onClose}
+            style={styles.billingLaterButton}
+          >
+            <Text style={styles.billingLaterText}>나중에</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -4317,6 +4974,8 @@ function ResultVetDraftBox({
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
 }) {
   const canUseAiDraft = Boolean(aiAccess?.enabled);
+  const canStartAiDraft =
+    canUseAiDraft || aiAccess?.reason === "no_credits";
   return (
     <View style={styles.resultVetDraftBox}>
       <View style={styles.planHeader}>
@@ -4334,9 +4993,9 @@ function ResultVetDraftBox({
           ]}
         >
           {canUseAiDraft
-            ? `${aiAccess?.remainingThisMonth ?? 0}회 남음`
-            : aiAccess?.reason === "monthly_limit"
-              ? "이번 달 완료"
+            ? `${aiAccess?.availableCredits ?? 0}회`
+            : aiAccess?.reason === "no_credits"
+              ? "1회 추가"
               : "확인 필요"}
         </Text>
       </View>
@@ -4345,7 +5004,7 @@ function ResultVetDraftBox({
         <Text style={styles.planEmptyText}>
           서버에 저장되고 같은 건강 흐름에 연결된 기록에서 만들 수 있어요.
         </Text>
-      ) : !canUseAiDraft ? (
+      ) : !canStartAiDraft ? (
         <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
       ) : (
         <>
@@ -4360,11 +5019,7 @@ function ResultVetDraftBox({
               ]}
             >
               <Text style={styles.vetDraftPrimaryButtonText}>
-                {vetDraftLoading
-                  ? "초안 만드는 중"
-                  : vetDraft
-                    ? "AI 요약 다시 만들기"
-                    : "AI 요약 만들기"}
+                {aiDraftActionLabel(vetDraftLoading, Boolean(vetDraft))}
               </Text>
             </TouchableOpacity>
             {vetDraft ? (
@@ -4685,7 +5340,6 @@ function HealthHistoryCard({
           onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
           onChangePlanDraft={onChangePlanDraft}
           onCreateVetDraft={createSelectedVetDraft}
-          onGoRecord={() => onGoRecord()}
           onSaveAiFeedback={onSaveAiFeedback}
           onSavePlan={onSavePlan}
           onShareReport={onShareReport}
@@ -4888,7 +5542,6 @@ function EpisodeReportItem({
   onChangeAiFeedbackDraft,
   onChangePlanDraft,
   onCreateVetDraft,
-  onGoRecord,
   onSaveAiFeedback,
   onSavePlan,
   onShareReport,
@@ -4917,7 +5570,6 @@ function EpisodeReportItem({
   ) => void;
   onChangePlanDraft: (value: string) => void;
   onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
-  onGoRecord: () => void;
   onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
@@ -4930,7 +5582,6 @@ function EpisodeReportItem({
   ) => Promise<void>;
 }) {
   const episodeId = group.episode?.id;
-  const isOpen = group.episode?.status === "open";
   const mediaSummary = group.report.mediaCount
     ? `${group.report.mediaCount}개 첨부`
     : "첨부 없음";
@@ -4949,13 +5600,6 @@ function EpisodeReportItem({
   const completedFollowUps = group.report.followUpCheckpoints.filter(
     (checkpoint) => checkpoint.recordedAt,
   );
-  const lastCompletedFollowUpIndex = group.report.followUpCheckpoints.reduce(
-    (lastIndex, checkpoint, index) => checkpoint.recordedAt ? index : lastIndex,
-    -1,
-  );
-  const nextFollowUp = isOpen
-    ? group.report.followUpCheckpoints[lastCompletedFollowUpIndex + 1]
-    : undefined;
   const canUseAiDraft = Boolean(aiAccess?.enabled);
   const isCreatingVetDraft = Boolean(
     episodeId && vetDraftLoadingEpisodeId === episodeId,
@@ -4989,7 +5633,7 @@ function EpisodeReportItem({
       <>
           <View style={styles.episodeExpandedActions}>
             <Text style={styles.episodeExpandedMeta} numberOfLines={1}>
-              {planSummary} · 자동 경과 {completedFollowUps.length}회 · {mediaSummary}
+              {planSummary} · 연결 기록 {completedFollowUps.length}회 · {mediaSummary}
             </Text>
             <TouchableOpacity
               activeOpacity={0.85}
@@ -5108,63 +5752,6 @@ function EpisodeReportItem({
       ) : null}
 
       {episodeId ? (
-        <View style={styles.progressBox}>
-          <View style={styles.planHeader}>
-            <View style={styles.cardHeaderText}>
-              <Text style={styles.planTitle}>경과 흐름</Text>
-              <Text style={styles.planSubtitle}>
-                건강 기록을 남기면 같은 흐름에 자동으로 이어져요.
-              </Text>
-            </View>
-            <Text style={styles.progressBadge}>자동 연결</Text>
-          </View>
-
-          <View style={styles.followUpSummary}>
-            <View style={styles.followUpStatusRow}>
-              <Text style={styles.followUpStatusTitle}>
-                연결된 기록 {group.records.length}회
-              </Text>
-              <Text style={styles.followUpStatusMeta}>
-                자동 정리 {completedFollowUps.length}회
-              </Text>
-            </View>
-            {completedFollowUps.length ? (
-              <View style={styles.followUpChipRow}>
-                {completedFollowUps.map((checkpoint) => (
-                  <View key={checkpoint.followUpDay} style={styles.followUpChip}>
-                    <Text style={styles.followUpChipText}>
-                      ✓ {checkpoint.followUpDay}일 전후
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <Text style={styles.followUpEmpty}>
-                첫 기록을 기준으로 다음 기록부터 자동 연결돼요.
-              </Text>
-            )}
-            {nextFollowUp ? (
-              <View style={styles.followUpNext}>
-                <Text style={styles.followUpNextLabel}>다음 확인</Text>
-                <Text style={styles.followUpNextValue}>
-                  {nextFollowUp.followUpDay}일 전후 · {formatFollowUpTarget(nextFollowUp.targetAt)}
-                </Text>
-              </View>
-            ) : null}
-            {isOpen ? (
-              <TouchableOpacity
-                activeOpacity={0.86}
-                onPress={onGoRecord}
-                style={styles.progressContinueButton}
-              >
-                <Text style={styles.progressContinueButtonText}>+ 기록 이어가기</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
-      ) : null}
-
-      {episodeId ? (
         <View style={styles.vetDraftBox}>
           <View style={styles.planHeader}>
             <View style={styles.cardHeaderText}>
@@ -5178,13 +5765,13 @@ function EpisodeReportItem({
             <Text
               style={[
                 styles.vetDraftBadge,
-                canUseAiDraft && styles.vetDraftBadgeEnabled,
+            canUseAiDraft && styles.vetDraftBadgeEnabled,
               ]}
             >
               {canUseAiDraft
-                ? `${aiAccess?.remainingThisMonth ?? 0}회 남음`
-                : aiAccess?.reason === "monthly_limit"
-                  ? "이번 달 완료"
+                ? `${aiAccess?.availableCredits ?? 0}회`
+                : aiAccess?.reason === "no_credits"
+                  ? "1회 추가"
                   : "확인 필요"}
             </Text>
           </View>
@@ -5192,11 +5779,11 @@ function EpisodeReportItem({
           <View style={styles.vetDraftIncludes}>
             <Text style={styles.vetDraftInclude}>관찰 {group.report.recordCount}회</Text>
             <Text style={styles.vetDraftInclude}>계획 {completedTasks}/{planTasks.length}</Text>
-            <Text style={styles.vetDraftInclude}>자동 경과 {completedFollowUps.length}회</Text>
+            <Text style={styles.vetDraftInclude}>연결 기록 {completedFollowUps.length}회</Text>
             <Text style={styles.vetDraftInclude}>첨부 {group.report.mediaCount}개</Text>
           </View>
 
-          {!canUseAiDraft ? (
+          {!canUseAiDraft && aiAccess?.reason !== "no_credits" ? (
             <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
           ) : (
             <>
@@ -5216,11 +5803,10 @@ function EpisodeReportItem({
                   ]}
                 >
                   <Text style={styles.vetDraftPrimaryButtonText}>
-                    {isCreatingVetDraft
-                      ? "초안 만드는 중"
-                      : vetDraft
-                        ? "AI 요약 다시 만들기"
-                        : "AI 요약 만들기"}
+                    {aiDraftActionLabel(
+                      isCreatingVetDraft,
+                      Boolean(vetDraft),
+                    )}
                   </Text>
                 </TouchableOpacity>
                 {vetDraft ? (
@@ -5480,15 +6066,6 @@ function optionLabel<T extends string>(options: Array<{ id: T; label: string }>,
   return options.find((option) => option.id === id)?.label ?? id;
 }
 
-function formatFollowUpTarget(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "날짜 확인 전";
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "long",
-    day: "numeric",
-  }).format(date);
-}
-
 function buildBirthDateShortcuts() {
   return [
     { id: "", label: "나중에" },
@@ -5515,15 +6092,26 @@ function formatIsoDate(date: Date) {
 
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access) {
-    return "AI 요약 사용량을 확인하고 있어요.";
+    return "AI 요약 이용 가능 횟수를 확인하고 있어요.";
   }
   if (access.reason === "unavailable") {
-    return "사용량을 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
+    return "이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
-  if (access.reason === "monthly_limit") {
-    return "이번 달 제공량을 모두 사용했어요. 다음 달 자동으로 다시 이용할 수 있어요.";
+  if (access.reason === "no_credits") {
+    return "필요할 때 AI 병원 요약 1회를 추가해 바로 만들 수 있어요.";
   }
-  return "기록을 수의사가 보기 좋은 병원용 요약으로 정리해요.";
+  return `AI 병원 요약 ${access.availableCredits}회를 이용할 수 있어요.`;
+}
+
+function billingMessageTone(message: string): "success" | "error" {
+  const failed = /못했|오류|실패|다시 확인/.test(message);
+  const completed = /완료됐어요|확인했어요|반영됐어요/.test(message);
+  return completed && !failed ? "success" : "error";
+}
+
+function aiDraftActionLabel(loading: boolean, hasDraft: boolean) {
+  if (loading) return "초안 만드는 중";
+  return hasDraft ? "다시 만들기 · 1회" : "AI 요약 만들기 · 1회";
 }
 
 function recordSymptomText(record: HistoryRecord) {
@@ -5648,7 +6236,6 @@ const colors = {
   card: "#ffffff",
   green: "#1f936f",
   greenSoft: "#e3f5ec",
-  cream: "#fff8df",
   ink: "#11352d",
   muted: "#6a7d75",
   placeholder: "#94a39c",
@@ -6400,6 +6987,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
   },
+  aiBillingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+  },
+  aiTrialHint: {
+    marginTop: 12,
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 18,
+  },
+  aiBillingPrimary: {
+    flex: 1,
+    alignItems: "center",
+    borderRadius: 15,
+    backgroundColor: colors.green,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  aiBillingPrimaryText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  aiBillingRestore: {
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  aiBillingRestoreText: {
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
   quickGuideEntry: {
     flexDirection: "row",
     alignItems: "center",
@@ -6445,6 +7072,75 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     backgroundColor: "#ffffff",
     padding: 24,
+  },
+  billingDialog: {
+    width: "100%",
+    maxWidth: 430,
+    borderWidth: 1,
+    borderColor: "#cbe5d9",
+    borderRadius: 28,
+    backgroundColor: "#ffffff",
+    padding: 24,
+  },
+  billingDescription: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  billingFootnote: {
+    marginTop: 12,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
+  },
+  billingBalance: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginVertical: 18,
+    borderRadius: 17,
+    backgroundColor: "#f3faf6",
+    paddingHorizontal: 15,
+    paddingVertical: 13,
+  },
+  billingBalanceLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  billingBalanceValue: {
+    color: colors.green,
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  billingSecondaryButton: {
+    alignItems: "center",
+    marginTop: 9,
+    borderWidth: 1,
+    borderColor: "#d7e4de",
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  billingSecondaryText: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  billingLaterButton: {
+    alignItems: "center",
+    marginTop: 4,
+    paddingVertical: 10,
+  },
+  billingLaterText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
   },
   quickGuideEyebrow: {
     color: colors.green,
@@ -7554,108 +8250,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
-  progressBox: {
-    marginTop: 13,
-    borderWidth: 1,
-    borderColor: "#c8e1d6",
-    borderRadius: 18,
-    backgroundColor: "#f4fbf7",
-    padding: 13,
-  },
-  progressBadge: {
-    overflow: "hidden",
-    borderRadius: 999,
-    backgroundColor: colors.greenSoft,
-    color: colors.green,
-    fontSize: 11,
-    fontWeight: "900",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  followUpSummary: {
-    gap: 10,
-    marginTop: 11,
-  },
-  followUpStatusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 14,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-  },
-  followUpStatusTitle: {
-    color: colors.ink,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  followUpStatusMeta: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  followUpChipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: 7,
-  },
-  followUpChip: {
-    borderRadius: 999,
-    backgroundColor: colors.greenSoft,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-  },
-  followUpChipText: {
-    color: colors.green,
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  followUpEmpty: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-    lineHeight: 16,
-  },
-  followUpNext: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    borderWidth: 1,
-    borderColor: "#c8e1d6",
-    borderRadius: 14,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-  },
-  followUpNextLabel: {
-    color: colors.green,
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  followUpNextValue: {
-    flex: 1,
-    color: colors.ink,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  progressContinueButton: {
-    alignSelf: "flex-start",
-    alignItems: "center",
-    borderRadius: 14,
-    backgroundColor: colors.green,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-  },
-  progressContinueButtonText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "900",
-  },
   vetDraftBox: {
     marginTop: 13,
     borderWidth: 1,
@@ -7980,13 +8574,6 @@ const styles = StyleSheet.create({
   },
   historyActionDanger: {
     color: colors.danger,
-  },
-  emptyText: {
-    marginTop: 10,
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "700",
-    lineHeight: 19,
   },
   notice: {
     marginTop: 18,

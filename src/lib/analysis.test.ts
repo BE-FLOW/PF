@@ -3,6 +3,7 @@ import {
   analyzeLocally,
   hasDailyObservation,
   deriveAgeGroup,
+  isHealthCheckInput,
   profileToHealthInput,
   toggleDailyObservation,
 } from "./analysis";
@@ -71,5 +72,15 @@ describe("analyzeLocally", () => {
     expect(toggleDailyObservation(withSkinChange, "itching").symptoms).not.toContain(
       "itching",
     );
+  });
+
+  it("rejects unknown or duplicated observation values", () => {
+    expect(isHealthCheckInput({ ...base, symptoms: ["vomiting", "vomiting"] })).toBe(false);
+    expect(isHealthCheckInput({ ...base, redFlags: ["unknown"] })).toBe(false);
+  });
+
+  it("rejects malformed profile and oversized note fields", () => {
+    expect(isHealthCheckInput({ ...base, birthDate: "2026-02-31" })).toBe(false);
+    expect(isHealthCheckInput({ ...base, note: "가".repeat(1001) })).toBe(false);
   });
 });

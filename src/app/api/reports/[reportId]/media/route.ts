@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { accessTokenFromRequest } from "@/lib/api-auth";
+import { readJsonBody } from "@/lib/api-request";
+import { isUuid } from "@/lib/report-storage";
 import {
   registerHealthReportMedia,
   type ReportMediaRegistrationInput,
@@ -8,16 +10,13 @@ import {
 export const runtime = "nodejs";
 
 function isMediaRegistrationInput(value: unknown): value is {
-  clientId: string;
   files: ReportMediaRegistrationInput[];
 } {
   if (!value || typeof value !== "object") return false;
   const body = value as {
-    clientId?: unknown;
     files?: unknown;
   };
   return (
-    typeof body.clientId === "string" &&
     Array.isArray(body.files) &&
     body.files.every((file) => {
       const item = file as Partial<ReportMediaRegistrationInput>;
@@ -38,17 +37,25 @@ export async function POST(
   context: { params: Promise<{ reportId: string }> },
 ) {
   const { reportId } = await context.params;
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  const accessToken = accessTokenFromRequest(request);
+  if (!accessToken) {
+    return NextResponse.json({ error: "로그인이 필요해요." }, { status: 401 });
+  }
+  if (!isUuid(reportId)) {
     return NextResponse.json(
-      { error: "첨부 자료 요청 형식을 확인해 주세요." },
+      { error: "기록 정보를 다시 확인해 주세요." },
       { status: 400 },
     );
   }
+  const parsed = await readJsonBody(request, 12 * 1024);
+  if (!parsed.ok) {
+    return NextResponse.json(
+      { error: parsed.error },
+      { status: parsed.status },
+    );
+  }
 
-  if (!isMediaRegistrationInput(body)) {
+  if (!isMediaRegistrationInput(parsed.value)) {
     return NextResponse.json(
       { error: "사진·영상 정보를 다시 확인해 주세요." },
       { status: 400 },
@@ -56,10 +63,9 @@ export async function POST(
   }
 
   const media = await registerHealthReportMedia(
-    accessTokenFromRequest(request),
+    accessToken,
     reportId,
-    body.clientId,
-    body.files,
+    parsed.value.files,
   );
 
   if (!media) {

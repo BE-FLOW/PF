@@ -110,9 +110,9 @@ describe("buildVetReviewDraft", () => {
     );
 
     expect(draft.planAndProgress.join("\n")).toContain("보호자 기록 병원 계획");
-    expect(draft.planAndProgress.join("\n")).toContain("3일 경과");
+    expect(draft.planAndProgress.join("\n")).toContain("3일 전후 관찰");
     expect(draft.planAndProgress.join("\n")).toContain("확인 전");
-    expect(draft.copyText).toContain("[병원 계획과 경과 기록]");
+    expect(draft.copyText).toContain("[병원 계획과 이어진 기록]");
     expect(draft.copyText).toContain("[다른 병원 첫 설명]");
     expect(draft.handoffNote).toContain("다른 병원");
   });
