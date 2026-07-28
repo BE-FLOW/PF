@@ -125,6 +125,6 @@ console.log(JSON.stringify(result, null, 2));
 
 if (!matchesCurrentMain) {
   throw new Error(
-    `출시 중단: App Store 빌드 ${storeBuild.attributes.version}은 현재 main에서 만든 빌드가 아닙니다.`,
+    `출시 중단: App Store 빌드 번호 ${storeBuild.attributes.version}는 현재 main에서 만든 빌드가 아닙니다.`,
   );
 }
