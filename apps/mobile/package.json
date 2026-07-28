@@ -25,6 +25,7 @@
     "submit:ios:latest": "npx eas-cli submit --platform ios --profile production --latest --non-interactive --wait",
     "submit:ios:testflight-external": "node scripts/distribute-ios-testflight.mjs",
     "status:ios": "node scripts/ios-store-status.mjs",
+    "verify:ios:release-build": "node scripts/verify-ios-release-build.mjs",
     "status:ios:iap": "node scripts/ios-iap-status.mjs",
     "configure:ios:iap": "node scripts/configure-ios-iap.mjs",
     "status:android:iap": "node scripts/android-iap-status.mjs",

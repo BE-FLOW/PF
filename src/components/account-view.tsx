@@ -10,21 +10,13 @@ import {
   hasLinkedProvider,
   type OAuthProvider,
 } from "@/lib/auth-identities";
-import { formatKoreanMobile, normalizeKoreanMobile } from "@/lib/phone";
-import { profileConsentVersion, profilePrivacySummary } from "@/lib/privacy";
 import type { WebBillingProduct } from "@/lib/billing-web";
 import type { AiAccessStatus, PetProfile, AccountProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
 type AuthMode = "login" | "signup";
-type AccountDraft = Pick<AccountProfile, "nickname" | "phone">;
 type DeploymentHealth = {
   version?: string;
-};
-
-const emptyAccountDraft: AccountDraft = {
-  nickname: "",
-  phone: "",
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -71,61 +63,6 @@ function PasswordChecklist({ password }: { password: string }) {
   );
 }
 
-function AccountFields({
-  draft,
-  setDraft,
-}: {
-  draft: AccountDraft;
-  setDraft: (draft: AccountDraft) => void;
-}) {
-  return (
-    <div className="account-fields">
-      <div className="field">
-        <label htmlFor="accountNickname">닉네임</label>
-        <input
-          id="accountNickname"
-          maxLength={30}
-          value={draft.nickname}
-          onChange={(event) => setDraft({ ...draft, nickname: event.target.value })}
-          placeholder="예: 보리보호자"
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="accountPhone">휴대전화번호 (연락용)</label>
-        <input
-          id="accountPhone"
-          type="tel"
-          inputMode="tel"
-          autoComplete="tel"
-          value={formatKoreanMobile(draft.phone)}
-          onChange={(event) =>
-            setDraft({ ...draft, phone: formatKoreanMobile(event.target.value) })
-          }
-          placeholder="010-1234-5678"
-        />
-        <small className="field-help">
-          인증번호는 보내지 않고 서비스 안내와 요청·장애 대응에만 사용합니다.
-        </small>
-      </div>
-    </div>
-  );
-}
-
-function PrivacyNotice() {
-  return (
-    <details className="privacy-notice">
-      <summary>수집 정보와 이용 안내</summary>
-      <dl>
-        <div><dt>필수</dt><dd>{profilePrivacySummary.required}</dd></div>
-        <div><dt>목적</dt><dd>{profilePrivacySummary.purpose}</dd></div>
-        <div><dt>보관</dt><dd>{profilePrivacySummary.retention}</dd></div>
-      </dl>
-      <p>전화번호는 본인 인증, 광고나 마케팅에 사용하지 않습니다. 주소, 위치, 실명 확인 정보는 받지 않습니다.</p>
-      <a href="/privacy" target="_blank" rel="noreferrer">전체 개인정보 안내 보기</a>
-    </details>
-  );
-}
-
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access) {
     return "AI 요약 이용 가능 횟수를 확인하고 있어요.";
@@ -151,11 +88,13 @@ export function AccountView({
   selectedPetId,
   authReady,
   initialMode = "login",
+  passwordRecoveryMode,
   onBack,
   onAuth,
+  onRequestPasswordReset,
+  onCompletePasswordRecovery,
   onOAuth,
   onLinkOAuth,
-  onSaveAccountProfile,
   onRequestAccountDeletion,
   onPurchaseAiCredit,
   onRefreshAiCredits,
@@ -176,17 +115,17 @@ export function AccountView({
   selectedPetId?: string;
   authReady: boolean;
   initialMode?: AuthMode;
+  passwordRecoveryMode: boolean;
   onBack: () => void;
   onAuth: (
     mode: AuthMode,
     email: string,
     password: string,
-    profile: AccountDraft,
-    consented: boolean,
   ) => Promise<string>;
+  onRequestPasswordReset: (email: string) => Promise<string>;
+  onCompletePasswordRecovery: (password: string) => Promise<string>;
   onOAuth: (provider: OAuthProvider) => Promise<string>;
   onLinkOAuth: (provider: OAuthProvider) => Promise<string>;
-  onSaveAccountProfile: (profile: AccountDraft, consented: boolean) => Promise<string>;
   onRequestAccountDeletion: () => Promise<string>;
   onPurchaseAiCredit: () => Promise<{
     purchased: boolean;
@@ -202,19 +141,10 @@ export function AccountView({
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [draft, setDraft] = useState<AccountDraft>(() =>
-    accountProfile
-      ? {
-          nickname: accountProfile.nickname,
-          phone: formatKoreanMobile(accountProfile.phone),
-        }
-      : emptyAccountDraft,
-  );
-  const [consented, setConsented] = useState(
-    accountProfile?.consentVersion === profileConsentVersion,
-  );
-  const [editingAccount, setEditingAccount] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState("");
   const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
   const [linkLoading, setLinkLoading] = useState<OAuthProvider | null>(null);
   const [message, setMessage] = useState("");
@@ -226,13 +156,6 @@ export function AccountView({
   const [deletionMessage, setDeletionMessage] = useState("");
   const [deletionRequested, setDeletionRequested] = useState(false);
 
-  const needsAccountProfile = Boolean(
-    user &&
-      (!accountProfile ||
-        !normalizeKoreanMobile(accountProfile.phone) ||
-        accountProfile.consentVersion !== profileConsentVersion),
-  );
-  const showAccountForm = needsAccountProfile || editingAccount;
   const googleLinked = hasLinkedProvider(user, "google");
   const appleLinked = hasLinkedProvider(user, "apple");
   const appleEnabled = enabledOAuthProviders.apple || appleLinked;
@@ -273,15 +196,8 @@ export function AccountView({
       setMessage("비밀번호 조건을 모두 충족해 주세요.");
       return;
     }
-    if (
-      mode === "signup" &&
-      (!draft.nickname.trim() || !normalizeKoreanMobile(draft.phone) || !consented)
-    ) {
-      setMessage("닉네임, 010 휴대전화번호와 필수 동의를 확인해 주세요.");
-      return;
-    }
     setLoading(true);
-    setMessage(await onAuth(mode, email.trim(), password, draft, consented));
+    setMessage(await onAuth(mode, email.trim(), password));
     setLoading(false);
   }
 
@@ -297,23 +213,26 @@ export function AccountView({
     setLinkLoading(null);
   }
 
-  async function saveAccountInfo() {
-    if (!draft.nickname.trim() || !normalizeKoreanMobile(draft.phone) || !consented) {
-      setMessage("닉네임, 010 휴대전화번호와 필수 동의를 확인해 주세요.");
+  async function requestPasswordReset() {
+    if (!emailPattern.test(email.trim())) {
+      setMessage("재설정 메일을 받을 이메일을 입력해 주세요.");
       return;
     }
     setLoading(true);
-    const result = await onSaveAccountProfile(draft, consented);
-    setMessage(result);
+    setMessage(await onRequestPasswordReset(email.trim()));
     setLoading(false);
-    if (!result) setEditingAccount(false);
   }
 
-  function startEditingAccount() {
-    setDraft(accountProfile ?? emptyAccountDraft);
-    setConsented(accountProfile?.consentVersion === profileConsentVersion);
-    setMessage("");
-    setEditingAccount(true);
+  async function completePasswordRecovery() {
+    if (!isStrongPassword(recoveryPassword)) {
+      setRecoveryMessage("비밀번호 조건을 모두 충족해 주세요.");
+      return;
+    }
+    setRecoveryLoading(true);
+    const result = await onCompletePasswordRecovery(recoveryPassword);
+    setRecoveryLoading(false);
+    setRecoveryMessage(result || "새 비밀번호를 저장했어요.");
+    if (!result) setRecoveryPassword("");
   }
 
   async function requestDeletion() {
@@ -350,6 +269,44 @@ export function AccountView({
         <div className="panel account-loading">계정 확인 중...</div>
       ) : user ? (
         <div className="account-stack">
+          {passwordRecoveryMode && (
+            <section className="panel account-recovery-panel" aria-live="polite">
+              <div>
+                <h3>새 비밀번호 설정</h3>
+                <p>이메일 로그인에 사용할 새 비밀번호를 입력해 주세요.</p>
+              </div>
+              <div className="field">
+                <label htmlFor="recoveryPassword">새 비밀번호</label>
+                <input
+                  id="recoveryPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={64}
+                  value={recoveryPassword}
+                  onChange={(event) => setRecoveryPassword(event.target.value)}
+                  placeholder="8자 이상, 대·소문자·숫자·특수문자"
+                />
+                <PasswordChecklist password={recoveryPassword} />
+              </div>
+              <button
+                className="primary-button compact"
+                type="button"
+                disabled={recoveryLoading}
+                onClick={() => void completePasswordRecovery()}
+              >
+                {recoveryLoading ? "저장 중..." : "새 비밀번호 저장"}
+              </button>
+              {recoveryMessage && (
+                <p
+                  className={recoveryMessage.includes("저장했어요") ? "form-success" : "form-error"}
+                  role="status"
+                >
+                  {recoveryMessage}
+                </p>
+              )}
+            </section>
+          )}
           <section className="panel account-summary">
             <div>
               <small>사용자 계정</small>
@@ -357,7 +314,6 @@ export function AccountView({
               {accountProfile && <span>{user.email}</span>}
             </div>
             <div className="account-actions">
-              {accountProfile && <button className="text-button" onClick={startEditingAccount}>정보 수정</button>}
               <button
                 className="text-button muted"
                 disabled={billingLoading}
@@ -556,24 +512,7 @@ export function AccountView({
             )}
           </section>
 
-          {showAccountForm && (
-            <section className="form-panel auth-panel">
-              <h2>{needsAccountProfile ? "필수 계정 정보를 알려주세요" : "계정 정보 수정"}</h2>
-              <AccountFields draft={draft} setDraft={setDraft} />
-              <PrivacyNotice />
-              <label className="consent-check">
-                <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
-                <span>휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.</span>
-              </label>
-              {message && <div className="form-error" role="alert">{message}</div>}
-              <button className="primary-button auth-submit" onClick={saveAccountInfo} disabled={loading}>
-                {loading ? "저장 중..." : "저장"}
-              </button>
-            </section>
-          )}
-
-          {!needsAccountProfile && (
-            <section className="panel">
+          <section className="panel">
               <div className="panel-head">
                 <h3>함께하는 아이들</h3>
                 <button className="text-button" onClick={onAddPet}>+ 추가</button>
@@ -600,8 +539,7 @@ export function AccountView({
                   <button className="primary-button" onClick={onAddPet}><Icon name="plus" size={17} /> 첫 아이 등록</button>
                 </div>
               )}
-            </section>
-          )}
+          </section>
         </div>
       ) : (
         <section className="form-panel auth-panel">
@@ -681,19 +619,19 @@ export function AccountView({
               <input id="authPassword" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "signup" ? 8 : undefined} maxLength={64} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "8자 이상, 대·소문자·숫자·특수문자" : "비밀번호"} onKeyDown={(event) => { if (event.key === "Enter") void submitAuth(); }} />
               {mode === "signup" && <PasswordChecklist password={password} />}
             </div>
-            {mode === "signup" && (
-              <>
-                <AccountFields draft={draft} setDraft={setDraft} />
-                <PrivacyNotice />
-                <label className="consent-check">
-                  <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
-                  <span>휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.</span>
-                </label>
-              </>
-            )}
             <button className="primary-button auth-submit" onClick={submitAuth} disabled={loading || oauthLoading !== null}>
               {loading ? "확인 중..." : mode === "login" ? "로그인" : "회원가입"}
             </button>
+            {mode === "login" && (
+              <button
+                className="text-button muted auth-recovery-button"
+                type="button"
+                disabled={loading || oauthLoading !== null}
+                onClick={() => void requestPasswordReset()}
+              >
+                비밀번호 재설정 메일 받기
+              </button>
+            )}
           </details>
         </section>
       )}

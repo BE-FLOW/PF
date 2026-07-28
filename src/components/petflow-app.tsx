@@ -40,7 +40,6 @@ import {
   passwordAuthErrorMessage,
   type OAuthProvider,
 } from "@/lib/auth-identities";
-import { normalizeKoreanMobile } from "@/lib/phone";
 import {
   storedReportToHistoryRecord,
   type DisplayHealthReport,
@@ -60,7 +59,6 @@ import {
   petPhotoAccept,
   petPhotoBucket,
 } from "@/lib/pet-photo";
-import { profileConsentVersion } from "@/lib/privacy";
 import {
   getWebBillingProduct,
   isWebBillingAvailable,
@@ -754,13 +752,12 @@ function HomeSetup({
   onLogin,
   onSignup,
 }: {
-  stage: "login" | "account" | "pet";
+  stage: "login" | "pet";
   onAction: () => void;
   onLogin: () => void;
   onSignup: () => void;
 }) {
   const loginStage = stage === "login";
-  const accountStage = stage === "account";
   const currentStep: HomeStage = stage === "pet" ? "pet" : "account";
   return (
     <div className="content-wrap home-setup-wrap">
@@ -769,9 +766,7 @@ function HomeSetup({
         <h1>
           {loginStage
             ? "건강 기록을 이어서 관리해요"
-            : accountStage
-              ? "계정 준비를 마무리해요"
-              : "함께 기록할 아이를 알려주세요"}
+            : "함께 기록할 아이를 알려주세요"}
         </h1>
       </header>
       <HomeSteps current={currentStep} />
@@ -780,23 +775,17 @@ function HomeSetup({
           <span className="home-stage-label">
             {loginStage
               ? "1단계 · 계정"
-              : accountStage
-                ? "로그인 완료 · 정보 확인"
-                : "2단계 · 아이 등록"}
+              : "2단계 · 아이 등록"}
           </span>
           <h2>
             {loginStage
               ? "계정으로 시작해 주세요"
-              : accountStage
-                ? "필수 정보를 한 번만 확인해요"
-                : "이름과 종류부터 시작해요"}
+              : "이름과 종류부터 시작해요"}
           </h2>
           <p>
             {loginStage
               ? "기존 계정은 로그인, 처음이라면 회원가입을 선택해요."
-              : accountStage
-                ? "닉네임과 연락처를 확인하면 다음 단계로 이어져요."
-                : "기본 정보만 등록하면 바로 건강 기록을 남길 수 있어요."}
+              : "기본 정보만 등록하면 바로 건강 기록을 남길 수 있어요."}
           </p>
           {loginStage ? (
             <div className="home-auth-actions">
@@ -809,13 +798,12 @@ function HomeSetup({
             </div>
           ) : (
             <button className="primary-button" type="button" onClick={onAction}>
-              <Icon name={accountStage ? "user" : "paw"} size={18} />
-              {accountStage ? "정보 확인하기" : "첫 아이 등록"}
+              <Icon name="paw" size={18} /> 첫 아이 등록
             </button>
           )}
         </div>
         <span className="home-setup-symbol" aria-hidden="true">
-          <Icon name={loginStage || accountStage ? "shield" : "paw"} size={38} />
+          <Icon name={loginStage ? "shield" : "paw"} size={38} />
         </span>
       </section>
     </div>
@@ -825,7 +813,6 @@ function HomeSetup({
 function HomeView({
   authReady,
   signedIn,
-  accountComplete,
   profile,
   history,
   onStart,
@@ -841,7 +828,6 @@ function HomeView({
 }: {
   authReady: boolean;
   signedIn: boolean;
-  accountComplete: boolean;
   profile: PetProfile;
   history: HistoryRecord[];
   onStart: () => void;
@@ -895,16 +881,6 @@ function HomeView({
     return (
       <HomeSetup
         stage="login"
-        onAction={onAccount}
-        onLogin={onLogin}
-        onSignup={onSignup}
-      />
-    );
-  }
-  if (!accountComplete) {
-    return (
-      <HomeSetup
-        stage="account"
         onAction={onAccount}
         onLogin={onLogin}
         onSignup={onSignup}
@@ -1011,11 +987,13 @@ function ProfileView({
   profile,
   vaccinations,
   onCancel,
+  onDelete,
   onSave,
 }: {
   profile: PetProfile;
   vaccinations: VaccinationRecord[];
   onCancel: () => void;
+  onDelete: (petId: string) => Promise<string | null>;
   onSave: (
     profile: PetProfile,
     photo: PetPhotoChange,
@@ -1162,6 +1140,19 @@ function ProfileView({
     }, vaccinationDraft);
     setSaving(false);
     if (saveError) setError(saveError);
+  }
+
+  async function remove() {
+    if (!draft.id) return;
+    const confirmed = window.confirm(
+      `${draft.name || "이 아이"}의 건강 기록과 사진·영상을 함께 삭제할까요?`,
+    );
+    if (!confirmed) return;
+
+    setSaving(true);
+    const deleteError = await onDelete(draft.id);
+    setSaving(false);
+    if (deleteError) setError(deleteError);
   }
 
   return (
@@ -1485,6 +1476,16 @@ function ProfileView({
           </div>
         )}
         <div className="form-footer">
+          {draft.id && (
+            <button
+              className="text-button danger-button"
+              type="button"
+              onClick={remove}
+              disabled={saving}
+            >
+              반려동물 삭제
+            </button>
+          )}
           <button className="secondary-button" onClick={onCancel}>
             취소
           </button>
@@ -1506,6 +1507,7 @@ function CheckView({
   existingMedia,
   mediaFiles,
   setMediaFiles,
+  onRemoveExistingMedia,
   mediaEnabled,
   mediaError,
   setMediaError,
@@ -1523,6 +1525,7 @@ function CheckView({
   existingMedia: ReportMediaAttachment[];
   mediaFiles: PendingMediaFile[];
   setMediaFiles: (files: PendingMediaFile[]) => void;
+  onRemoveExistingMedia: (item: ReportMediaAttachment) => void;
   mediaEnabled: boolean;
   mediaError: string;
   setMediaError: (message: string) => void;
@@ -1661,29 +1664,33 @@ function CheckView({
               <span>{totalMediaCount}/{maxReportMediaFiles}</span>
             </div>
             {!mediaEnabled && <p className="media-helper">로그인 후 사진·영상을 함께 저장할 수 있어요.</p>}
-            {isEditing && mediaEnabled && <p className="media-helper">기존 첨부는 유지되고 새 파일만 추가돼요.</p>}
+            {isEditing && mediaEnabled && <p className="media-helper">저장된 첨부도 여기서 확인하거나 삭제할 수 있어요.</p>}
             {(existingMedia.length > 0 || mediaFiles.length > 0) && (
               <div className="media-preview-grid composer-preview-grid">
                 {existingMedia.map((item) => (
-                  <a
-                    className="media-preview-card existing"
-                    href={item.signedUrl}
-                    key={item.id}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <div className="media-preview-thumb">
-                      <MediaThumbnail
-                        kind={item.kind}
-                        label={`${item.fileName} 미리보기`}
-                        src={item.signedUrl ?? ""}
-                      />
-                    </div>
-                    <span>
-                      <strong>{item.fileName}</strong>
-                      <small>저장됨 · 눌러서 보기</small>
-                    </span>
-                  </a>
+                  <div className="media-preview-card existing" key={item.id}>
+                    <a
+                      className="media-preview-open"
+                      href={item.signedUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <div className="media-preview-thumb">
+                        <MediaThumbnail
+                          kind={item.kind}
+                          label={`${item.fileName} 미리보기`}
+                          src={item.signedUrl ?? ""}
+                        />
+                      </div>
+                      <span>
+                        <strong>{item.fileName}</strong>
+                        <small>저장됨 · 눌러서 보기</small>
+                      </span>
+                    </a>
+                    <button type="button" onClick={() => onRemoveExistingMedia(item)}>
+                      삭제
+                    </button>
+                  </div>
                 ))}
                 {mediaFiles.map((item) => (
                   <div className="media-preview-card" key={item.id}>
@@ -3040,6 +3047,7 @@ export function PetFlowApp() {
   const billingPendingMinimumCreditsRef = useRef<number | null>(null);
   const billingOperationInFlightRef = useRef(false);
   const [authReady, setAuthReady] = useState(false);
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [authEntryMode, setAuthEntryMode] = useState<"login" | "signup">("login");
   const [input, setInput] = useState<HealthCheckInput>(initialInput);
@@ -3347,7 +3355,7 @@ export function PetFlowApp() {
           .order("created_at", { ascending: true }),
         supabase
           .from("tester_profiles")
-          .select("nickname,phone,consent_version,consented_at,phone_consented_at")
+          .select("nickname")
           .maybeSingle(),
       ]);
       if (loadSequence !== accountLoadSequenceRef.current) return;
@@ -3398,10 +3406,6 @@ export function PetFlowApp() {
         profileRow
           ? {
               nickname: profileRow.nickname,
-              phone: profileRow.phone ?? "",
-              consentVersion: profileRow.consent_version,
-              consentedAt: profileRow.consented_at,
-              phoneConsentedAt: profileRow.phone_consented_at ?? "",
             }
           : null,
       );
@@ -3440,11 +3444,15 @@ export function PetFlowApp() {
     }
 
     void supabase.auth.getUser().then(({ data }) => loadAccount(data.user));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setPasswordRecoveryMode(true);
+        setView("account", { history: "replace" });
+      }
       void loadAccount(session?.user ?? null);
     });
     return () => listener.subscription.unsubscribe();
-  }, [clearPendingMedia]);
+  }, [clearPendingMedia, setView]);
 
   function persist(records: HistoryRecord[]) {
     setHistory(records);
@@ -3711,12 +3719,17 @@ export function PetFlowApp() {
       const previousPhotoPath = photoPath;
 
       if (photoColumnReady && photo.remove && previousPhotoPath) {
+        const { error: storageRemoveError } = await supabase.storage
+          .from(petPhotoBucket)
+          .remove([previousPhotoPath]);
+        if (storageRemoveError) {
+          return "사진 파일을 지우지 못했어요. 잠시 후 다시 시도해 주세요.";
+        }
         const { error: photoUpdateError } = await supabase
           .from("pets")
           .update({ photo_path: null, updated_at: new Date().toISOString() })
           .eq("id", data.id);
         if (photoUpdateError) return "사진을 지우지 못했어요. 잠시 후 다시 시도해 주세요.";
-        await supabase.storage.from(petPhotoBucket).remove([previousPhotoPath]);
         photoPath = "";
         photoUrl = "";
       }
@@ -3825,12 +3838,50 @@ export function PetFlowApp() {
     setView(profileReturnView, { history: "replace" });
     return null;
   }
+
+  async function deleteProfile(petId: string): Promise<string | null> {
+    const supabase = getSupabaseBrowserClient();
+    if (!user || !supabase) return "다시 로그인한 뒤 삭제해 주세요.";
+
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) return "다시 로그인한 뒤 삭제해 주세요.";
+    const response = await fetch(`/api/pets/${petId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${data.session.access_token}` },
+    });
+    if (!response.ok) return "반려동물을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.";
+
+    const remainingPets = pets.filter((pet) => pet.id !== petId);
+    const nextPet = remainingPets[0];
+    setPets(remainingPets);
+    setVaccinations((current) => current.filter((item) => item.petId !== petId));
+    setHistory((current) => current.filter((item) => item.petId !== petId));
+    setEpisodes((current) => current.filter((item) => item.petId !== petId));
+    setPlans((current) => current.filter((item) => item.petId !== petId));
+    setProgress((current) => current.filter((item) => item.petId !== petId));
+    setSelectedEpisodeReport(null);
+    clearPendingMedia();
+
+    if (nextPet) {
+      setProfile(nextPet);
+      setSelectedPetId(nextPet.id);
+      setInput(profileToHealthInput(nextPet));
+      void loadPetHistory(nextPet);
+    } else {
+      setProfile(initialProfile);
+      setSelectedPetId(undefined);
+      setInput(initialInput);
+    }
+    setEditingProfile(initialProfile);
+    setView(profileReturnView === "account" ? "account" : "home", {
+      history: "replace",
+    });
+    return null;
+  }
   async function handleAuth(
     mode: "login" | "signup",
     email: string,
     password: string,
-    profile: Pick<AccountProfile, "nickname" | "phone">,
-    consented: boolean,
   ) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return "로그인 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.";
@@ -3848,10 +3899,27 @@ export function PetFlowApp() {
     if (mode === "signup" && !result.data.session) {
       return "가입 확인 메일을 보냈어요. 확인 후 로그인해 주세요.";
     }
-    if (mode === "signup" && result.data.user && consented) {
-      const profileResult = await saveAccountProfile(profile, consented, result.data.user.id);
-      if (profileResult) return profileResult;
+    return "";
+  }
+
+  async function requestPasswordReset(email: string) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || typeof window === "undefined") {
+      return "비밀번호 재설정 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.";
     }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    if (error) return "재설정 메일을 보내지 못했어요. 잠시 후 다시 시도해 주세요.";
+    return "입력한 이메일로 비밀번호 재설정 안내를 보냈어요.";
+  }
+
+  async function completePasswordRecovery(nextPassword: string) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return "비밀번호를 저장하지 못했어요. 다시 시도해 주세요.";
+    const { error } = await supabase.auth.updateUser({ password: nextPassword });
+    if (error) return "비밀번호를 저장하지 못했어요. 재설정 메일부터 다시 시작해 주세요.";
+    setPasswordRecoveryMode(false);
     return "";
   }
 
@@ -3893,37 +3961,6 @@ export function PetFlowApp() {
     return "";
   }
 
-  async function saveAccountProfile(
-    profile: Pick<AccountProfile, "nickname" | "phone">,
-    consented: boolean,
-    userId = user?.id,
-  ) {
-    const supabase = getSupabaseBrowserClient();
-    const phone = normalizeKoreanMobile(profile.phone);
-    if (!supabase || !userId || !consented || !profile.nickname.trim() || !phone) {
-      return "필수 정보를 다시 확인해 주세요.";
-    }
-    const consentedAt = new Date().toISOString();
-    const { error: profileError } = await supabase.from("tester_profiles").upsert({
-      user_id: userId,
-      nickname: profile.nickname.trim(),
-      phone,
-      consent_version: profileConsentVersion,
-      consented_at: consentedAt,
-      phone_consented_at: consentedAt,
-      updated_at: consentedAt,
-    });
-    if (profileError) return "계정 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
-    setAccountProfile({
-      ...profile,
-      nickname: profile.nickname.trim(),
-      phone,
-      consentVersion: profileConsentVersion,
-      consentedAt,
-      phoneConsentedAt: consentedAt,
-    });
-    return "";
-  }
   async function logout() {
     const supabase = getSupabaseBrowserClient();
     try {
@@ -3948,6 +3985,7 @@ export function PetFlowApp() {
     setBillingProduct(null);
     setBillingPurchasePending(false);
     setBillingMessage("");
+    setPasswordRecoveryMode(false);
     billingPendingMinimumCreditsRef.current = null;
     setQuickGuideOpen(false);
     setSelectedEpisodeReport(null);
@@ -3963,10 +4001,6 @@ export function PetFlowApp() {
     submissionAttemptRef.current = null;
     if (!authReady || !user) {
       openAuth("login", "push");
-      return;
-    }
-    if (!accountProfile) {
-      setView("account");
       return;
     }
     if (!profile.name.trim()) {
@@ -4050,6 +4084,58 @@ export function PetFlowApp() {
         tone: "error",
         text: "기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.",
       });
+    }
+  }
+  async function deleteExistingMedia(item: ReportMediaAttachment) {
+    const recordId = editingRecord?.result.id;
+    if (!recordId || editingRecord?.result.storage !== "remote") return;
+    const confirmed = window.confirm(
+      "이 첨부 자료를 삭제할까요?\n기록과 병원 요약에서도 함께 빠져요.",
+    );
+    if (!confirmed) return;
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      if (!data.session) throw new Error("missing session");
+      const response = await fetch(
+        `/api/reports/${recordId}/media/${item.id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
+        },
+      );
+      if (!response.ok) throw new Error("delete failed");
+
+      const removeAttachment = (record: HistoryRecord) => ({
+        ...record,
+        media: (record.media ?? []).filter((media) => media.id !== item.id),
+      });
+      const nextHistory = history.map((record) =>
+        record.result.id === recordId ? removeAttachment(record) : record,
+      );
+      persist(nextHistory);
+      setEditingRecord((current) =>
+        current?.result.id === recordId ? removeAttachment(current) : current,
+      );
+      setSelected((current) =>
+        current?.result.id === recordId ? removeAttachment(current) : current,
+      );
+      setSelectedEpisodeReport((current) =>
+        current
+          ? {
+              ...current,
+              records: current.records.map((record) =>
+                record.result.id === recordId ? removeAttachment(record) : record,
+              ),
+            }
+          : current,
+      );
+      setMediaError("첨부 자료를 삭제했어요.");
+    } catch {
+      setMediaError("첨부 자료를 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
   }
   async function submit(overrideInput?: HealthCheckInput) {
@@ -4672,7 +4758,7 @@ export function PetFlowApp() {
         }
         authReady={authReady}
         signedIn={Boolean(user)}
-        canUseApp={Boolean(user && accountProfile)}
+        canUseApp={Boolean(user)}
       />
       <header className="mobile-header">
         <Brand small onClick={() => setView("home", { history: "replace" })} />
@@ -4703,7 +4789,6 @@ export function PetFlowApp() {
           <HomeView
             authReady={authReady}
             signedIn={Boolean(user)}
-            accountComplete={Boolean(accountProfile)}
             profile={profile}
             history={visibleHistory}
             onStart={startNew}
@@ -4728,12 +4813,13 @@ export function PetFlowApp() {
             profile={editingProfile}
             vaccinations={editingProfileVaccinations}
             onCancel={() => setView(profileReturnView, { history: "replace" })}
+            onDelete={deleteProfile}
             onSave={saveProfile}
           />
         )}{" "}
         {currentView === "account" && (
           <AccountView
-            key={`${user?.id ?? "guest"}:${accountProfile?.consentVersion ?? "none"}:${accountProfile?.phone ?? "none"}:${authEntryMode}`}
+            key={`${user?.id ?? "guest"}:${authEntryMode}`}
             user={user}
             accountProfile={accountProfile}
             aiAccess={aiAccess}
@@ -4745,11 +4831,13 @@ export function PetFlowApp() {
             selectedPetId={selectedPetId}
             authReady={authReady}
             initialMode={authEntryMode}
+            passwordRecoveryMode={passwordRecoveryMode}
             onBack={() => setView("home", { history: "replace" })}
             onAuth={handleAuth}
+            onRequestPasswordReset={requestPasswordReset}
+            onCompletePasswordRecovery={completePasswordRecovery}
             onOAuth={handleOAuth}
             onLinkOAuth={handleLinkOAuth}
-            onSaveAccountProfile={saveAccountProfile}
             onRequestAccountDeletion={requestAccountDeletion}
             onPurchaseAiCredit={() => purchaseAiCredit("account")}
             onRefreshAiCredits={refreshAiCreditPurchases}
@@ -4773,6 +4861,7 @@ export function PetFlowApp() {
             existingMedia={editingRecord?.media ?? []}
             mediaFiles={pendingMedia}
             setMediaFiles={setPendingMedia}
+            onRemoveExistingMedia={(item) => void deleteExistingMedia(item)}
             mediaEnabled={Boolean(
               user &&
                 selectedPetId &&

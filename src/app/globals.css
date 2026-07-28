@@ -1474,9 +1474,23 @@ p {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .media-preview-card.existing {
-  grid-template-columns: 58px 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
   color: inherit;
   text-decoration: none;
+}
+.media-preview-open {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+}
+.media-preview-open > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 .composer-section-heading {
   display: flex;
@@ -1800,6 +1814,21 @@ p {
 .account-stack {
   display: grid;
   gap: 16px;
+}
+.account-recovery-panel {
+  display: grid;
+  gap: 14px;
+  border-color: #a9dbc4;
+  background: #f4fbf7;
+}
+.account-recovery-panel h3,
+.account-recovery-panel p {
+  margin: 0;
+}
+.account-recovery-panel p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .account-loading {
   text-align: center;
@@ -2186,62 +2215,6 @@ p {
   font-size: 12px;
   line-height: 1.6;
 }
-.account-fields {
-  display: grid;
-  gap: 16px;
-}
-.privacy-notice {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #f8faf9;
-  padding: 12px 14px;
-  color: #5f716b;
-  font-size: 11px;
-}
-.privacy-notice summary {
-  color: var(--ink);
-  cursor: pointer;
-  font-weight: 900;
-}
-.privacy-notice dl {
-  display: grid;
-  gap: 7px;
-  margin: 12px 0 8px;
-}
-.privacy-notice dl div {
-  display: grid;
-  grid-template-columns: 42px 1fr;
-  gap: 8px;
-}
-.privacy-notice dt {
-  font-weight: 900;
-}
-.privacy-notice dd,
-.privacy-notice p {
-  margin: 0;
-  line-height: 1.55;
-}
-.privacy-notice a {
-  display: inline-block;
-  margin-top: 9px;
-  color: var(--mint-dark);
-  font-weight: 900;
-}
-.consent-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  color: #52635e;
-  font-size: 11px;
-  font-weight: 800;
-  cursor: pointer;
-}
-.consent-check input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--mint-dark);
-}
 .auth-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2315,6 +2288,10 @@ p {
 .auth-submit {
   width: 100%;
   margin-top: 0;
+}
+.auth-recovery-button {
+  width: 100%;
+  justify-content: center;
 }
 .auth-note {
   margin: 0;

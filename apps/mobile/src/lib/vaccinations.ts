@@ -21,7 +21,7 @@ export interface VaccinationRow {
 }
 
 export interface MobileVaccinationReminder {
-  tone: "upcoming" | "due" | "overdue";
+  tone: "none" | "upcoming" | "due" | "overdue";
   label: string;
   title: string;
   description: string;
@@ -95,7 +95,19 @@ export function vaccinationReminder(
   today = new Date(),
 ): MobileVaccinationReminder | null {
   const next = nextVaccination(records, today);
-  if (!next) return null;
+  if (!next) {
+    const latestDone = records
+      .filter((record) => record.status === "done")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    return latestDone
+      ? {
+          tone: "none",
+          label: "접종 기록 있음",
+          title: `${latestDone.name} 접종 기록이 있어요`,
+          description: "다음 예정일을 알게 되면 같은 곳에 추가해 주세요.",
+        }
+      : null;
+  }
   if (next.daysUntil < 0) {
     return {
       tone: "overdue",
@@ -121,7 +133,7 @@ export function vaccinationReminder(
     };
   }
   return {
-    tone: "upcoming",
+    tone: next.daysUntil <= 14 ? "upcoming" : "none",
     label: `D-${next.daysUntil}`,
     title: `${next.record.name} 예정`,
     description: "가까워지면 다시 알려드릴게요.",
@@ -131,7 +143,12 @@ export function vaccinationReminder(
 export function vaccinationDraftFromRecords(
   records: VaccinationRecord[],
 ): VaccinationDraft {
-  const record = nextVaccination(records)?.record ?? records[0];
+  const record =
+    nextVaccination(records)?.record ??
+    records
+      .filter((item) => item.status === "done")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ??
+    records[0];
   return {
     id: record?.id,
     name: record?.name ?? "",

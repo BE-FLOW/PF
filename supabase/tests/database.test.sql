@@ -222,17 +222,17 @@ select has_column(
   'phone_consented_at',
   'phone consent timestamp exists'
 );
-select col_not_null(
+select col_is_null(
   'public',
   'tester_profiles',
   'phone',
-  'tester phone is required'
+  'legacy tester phone is optional'
 );
-select col_not_null(
+select col_is_null(
   'public',
   'tester_profiles',
   'phone_consented_at',
-  'phone consent timestamp is required'
+  'legacy phone consent timestamp is optional'
 );
 select has_check(
   'public',

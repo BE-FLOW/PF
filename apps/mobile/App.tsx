@@ -21,13 +21,11 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  Switch,
   Text as NativeText,
   TextInput as NativeTextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import { profileConsentVersion, profilePrivacySummary } from "./src/lib/privacy";
 import {
   defaultOAuthProviderStatus,
   fetchOAuthProviderStatus,
@@ -41,7 +39,6 @@ import {
   passwordAuthErrorMessage,
   type OAuthProvider,
 } from "./src/lib/auth";
-import { formatKoreanMobile, normalizeKoreanMobile } from "./src/lib/phone";
 import {
   configureMobileBilling,
   getMobileBillingProduct,
@@ -209,16 +206,6 @@ const passwordPolicy = [
 
 interface AccountProfile {
   nickname: string;
-  phone: string;
-  consentVersion: string;
-  consentedAt: string;
-  phoneConsentedAt: string;
-}
-
-interface AccountDraft {
-  nickname: string;
-  phone: string;
-  consented: boolean;
 }
 
 interface PetDraft extends Omit<PetProfile, "id"> {
@@ -265,12 +252,6 @@ interface AiFeedbackDraft {
 
 type VetDraftMap = Record<string, VetReviewDraft>;
 type AiFeedbackDraftMap = Record<string, AiFeedbackDraft>;
-
-const emptyDraft: AccountDraft = {
-  nickname: "",
-  phone: "",
-  consented: false,
-};
 
 const emptyVaccinationDraft: VaccinationDraft = {
   name: "",
@@ -493,6 +474,7 @@ export default function App() {
   const processedOAuthUrlsRef = useRef<Set<string>>(new Set());
 
   const [authReady, setAuthReady] = useState(storePreviewEnabled);
+  const [passwordRecoveryOpen, setPasswordRecoveryOpen] = useState(false);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [mainSection, setMainSection] = useState<MainSection>("home");
@@ -505,7 +487,6 @@ export default function App() {
   const [linkOauthMessage, setLinkOauthMessage] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [draft, setDraft] = useState<AccountDraft>(emptyDraft);
   const [user, setUser] = useState<User | null>(
     storePreviewEnabled ? storePreviewUser : null,
   );
@@ -513,10 +494,6 @@ export default function App() {
     storePreviewEnabled
       ? {
           nickname: "보리 보호자",
-          phone: "01000000000",
-          consentVersion: profileConsentVersion,
-          consentedAt: "2026-07-01T00:00:00.000Z",
-          phoneConsentedAt: "2026-07-01T00:00:00.000Z",
         }
       : null,
   );
@@ -870,13 +847,6 @@ export default function App() {
     (group) => group.episode?.status === "open",
   );
 
-  const needsAccountProfile = Boolean(
-    user &&
-      (!accountProfile ||
-        accountProfile.consentVersion !== profileConsentVersion ||
-        !normalizeKoreanMobile(accountProfile.phone)),
-  );
-
   useEffect(() => {
     let active = true;
     if (storePreviewEnabled) {
@@ -884,7 +854,7 @@ export default function App() {
         active = false;
       };
     }
-    if (!authReady || !user || needsAccountProfile) {
+    if (!authReady || !user) {
       return () => {
         active = false;
       };
@@ -901,7 +871,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [authReady, needsAccountProfile, user]);
+  }, [authReady, user]);
 
   function closeQuickGuide() {
     setQuickGuideOpen(false);
@@ -914,7 +884,7 @@ export default function App() {
     if (!configured) return "앱 환경을 먼저 연결해요";
     if (!authReady) return "계정 확인 중";
     if (!user) return "계정으로 이어서 관리";
-    return "필수 계정 정보를 확인해요";
+    return "펫플로우";
   }, [authReady, configured, user]);
 
   const loadAccount = useCallback(async (nextUser: User | null) => {
@@ -936,7 +906,6 @@ export default function App() {
       setMainSection("home");
       setQuickGuideOpen(false);
       setAccountProfile(null);
-      setDraft(emptyDraft);
       setPets([]);
       setSelectedPetId(undefined);
       setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
@@ -987,9 +956,7 @@ export default function App() {
     const [{ data, error }, { data: petRows, error: petsError }] = await Promise.all([
       supabase
         .from("tester_profiles")
-        .select(
-          "nickname,phone,consent_version,consented_at,phone_consented_at",
-        )
+        .select("nickname")
         .eq("user_id", nextUser.id)
         .maybeSingle(),
       supabase
@@ -1029,10 +996,6 @@ export default function App() {
     const profile = data
       ? {
           nickname: data.nickname ?? "",
-          phone: data.phone ?? "",
-          consentVersion: data.consent_version ?? "",
-          consentedAt: data.consented_at ?? "",
-          phoneConsentedAt: data.phone_consented_at ?? "",
         }
       : null;
 
@@ -1095,15 +1058,6 @@ export default function App() {
       setMediaMessage("");
       setMediaUploadMessage("");
     }
-    setDraft(
-      profile
-        ? {
-            nickname: profile.nickname,
-            phone: formatKoreanMobile(profile.phone),
-            consented: profile.consentVersion === profileConsentVersion,
-          }
-        : emptyDraft,
-    );
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const nextAiAccess = sessionData.session?.access_token
@@ -1455,7 +1409,8 @@ export default function App() {
     }
 
     void supabase.auth.getUser().then(({ data }) => loadAccount(data.user));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") setPasswordRecoveryOpen(true);
       void loadAccount(session?.user ?? null);
     });
     return () => listener.subscription.unsubscribe();
@@ -1520,37 +1475,6 @@ export default function App() {
     void loadPetHistory(selectedPet);
   }, [loadPetHistory, resetAiFeedbackState, selectedPet]);
 
-  async function saveAccountProfile(nextUser = user) {
-    const supabase = getSupabaseClient();
-    const phone = normalizeKoreanMobile(draft.phone);
-    if (!supabase || !nextUser) return "로그인 상태를 다시 확인해 주세요.";
-    if (!draft.nickname.trim() || !phone || !draft.consented) {
-      return "닉네임, 010 휴대전화번호와 필수 동의를 확인해 주세요.";
-    }
-
-    const now = new Date().toISOString();
-    const { error } = await supabase.from("tester_profiles").upsert({
-      user_id: nextUser.id,
-      nickname: draft.nickname.trim(),
-      phone,
-      consent_version: profileConsentVersion,
-      consented_at: now,
-      phone_consented_at: now,
-      updated_at: now,
-    });
-
-    if (error) return "계정 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
-
-    setAccountProfile({
-      nickname: draft.nickname.trim(),
-      phone,
-      consentVersion: profileConsentVersion,
-      consentedAt: now,
-      phoneConsentedAt: now,
-    });
-    return "";
-  }
-
   async function submitAuth() {
     const supabase = getSupabaseClient();
     if (!supabase) {
@@ -1569,14 +1493,6 @@ export default function App() {
       setMessage("비밀번호 조건을 모두 충족해 주세요.");
       return;
     }
-    if (
-      authMode === "signup" &&
-      (!draft.nickname.trim() || !normalizeKoreanMobile(draft.phone) || !draft.consented)
-    ) {
-      setMessage("닉네임, 010 휴대전화번호와 필수 동의를 확인해 주세요.");
-      return;
-    }
-
     setLoading(true);
     setMessage("");
     const result =
@@ -1602,11 +1518,40 @@ export default function App() {
       return;
     }
 
-    if (authMode === "signup" && result.data.user) {
-      const saveMessage = await saveAccountProfile(result.data.user);
-      setMessage(saveMessage || "가입 정보가 저장됐어요.");
-    }
     setLoading(false);
+  }
+
+  async function requestPasswordReset() {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setMessage("비밀번호 재설정 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    if (!emailPattern.test(email.trim())) {
+      setMessage("재설정 메일을 받을 이메일을 입력해 주세요.");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: oauthRedirectTo,
+    });
+    setLoading(false);
+    setMessage(
+      error
+        ? "재설정 메일을 보내지 못했어요. 잠시 후 다시 시도해 주세요."
+        : "입력한 이메일로 비밀번호 재설정 안내를 보냈어요.",
+    );
+  }
+
+  async function completePasswordRecovery(nextPassword: string) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return "비밀번호를 저장하지 못했어요. 다시 시도해 주세요.";
+    const { error } = await supabase.auth.updateUser({ password: nextPassword });
+    if (error) return "비밀번호를 저장하지 못했어요. 재설정 메일부터 다시 시작해 주세요.";
+    setPasswordRecoveryOpen(false);
+    Alert.alert("비밀번호 변경 완료", "새 비밀번호로 로그인할 수 있어요.");
+    return "";
   }
 
   async function submitOAuth(provider: OAuthProvider) {
@@ -1697,19 +1642,13 @@ export default function App() {
     }
   }
 
-  async function submitAccountProfile() {
-    setLoading(true);
-    const saveMessage = await saveAccountProfile();
-    setMessage(saveMessage || "계정 정보가 저장됐어요.");
-    setLoading(false);
-  }
-
   async function signOut() {
     const supabase = getSupabaseClient();
     setLoading(true);
     try {
       await supabase?.auth.signOut();
     } finally {
+      setPasswordRecoveryOpen(false);
       await loadAccount(null);
       setLoading(false);
     }
@@ -1924,6 +1863,62 @@ export default function App() {
     setMediaMessage("");
   }
 
+  async function deleteExistingMedia(item: ReportMediaAttachment) {
+    const recordId = editingHealthRecord?.result.id;
+    if (!recordId || editingHealthRecord?.result.storage !== "remote") return;
+
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(
+        `${apiBaseUrl}/api/reports/${recordId}/media/${item.id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
+      if (!response.ok) throw new Error("delete failed");
+
+      const withoutMedia = (media: ReportMediaAttachment[] = []) =>
+        media.filter((attachment) => attachment.id !== item.id);
+      setEditingHealthRecord((current) =>
+        current
+          ? { ...current, media: withoutMedia(current.media) }
+          : current,
+      );
+      setHistory((current) =>
+        current.map((record) =>
+          record.result.id === recordId
+            ? { ...record, media: withoutMedia(record.media) }
+            : record,
+        ),
+      );
+      setMediaMessage("첨부 자료를 삭제했어요.");
+    } catch {
+      setMediaMessage("첨부 자료를 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    }
+  }
+
+  function confirmDeleteExistingMedia(item: ReportMediaAttachment) {
+    Alert.alert(
+      "첨부 자료를 삭제할까요?",
+      "이 기록과 병원 요약에서 함께 빠져요.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: () => void deleteExistingMedia(item),
+        },
+      ],
+    );
+  }
+
   function startHealthRecord(selectedDateKey?: string) {
     submissionAttemptRef.current = null;
     if (selectedPet) {
@@ -2120,12 +2115,15 @@ export default function App() {
     const previousPhotoPath = photoPath;
     try {
       if (photoColumnReady && petDraft.photoRemoved && previousPhotoPath) {
+        const { error: removeError } = await supabase.storage
+          .from(petPhotoBucket)
+          .remove([previousPhotoPath]);
+        if (removeError) throw removeError;
         const { error: updateError } = await supabase
           .from("pets")
           .update({ photo_path: null, updated_at: new Date().toISOString() })
           .eq("id", data.id);
         if (updateError) throw updateError;
-        await supabase.storage.from(petPhotoBucket).remove([previousPhotoPath]);
         photoPath = "";
         photoUrl = "";
       }
@@ -2199,6 +2197,54 @@ export default function App() {
     setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
     setPetFormExpanded(false);
     setPetMessage("반려동물 정보가 저장됐어요.");
+  }
+
+  async function deletePetProfile() {
+    if (!editingPetId || !user) return;
+    setPetLoading(true);
+    setPetMessage("");
+
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("missing session");
+
+      const response = await fetch(`${apiBaseUrl}/api/pets/${editingPetId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error("delete failed");
+
+      setPetFormExpanded(false);
+      setEditingPetId(null);
+      setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
+      await loadAccount(user);
+      setPetMessage("반려동물과 연결된 기록을 삭제했어요.");
+    } catch {
+      setPetMessage("반려동물을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setPetLoading(false);
+    }
+  }
+
+  function confirmDeletePetProfile() {
+    if (!editingPetId) return;
+    const petName = pets.find((pet) => pet.id === editingPetId)?.name ?? "이 아이";
+    Alert.alert(
+      `${petName}의 정보를 삭제할까요?`,
+      "건강 기록, 사진·영상과 병원 요약에 연결된 내용도 함께 삭제돼요.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: () => void deletePetProfile(),
+        },
+      ],
+    );
   }
 
   async function submitHealthCheck(overrideInput?: HealthCheckInput) {
@@ -2949,9 +2995,9 @@ export default function App() {
   }
 
   const appDescription = user
-    ? "닉네임과 연락처를 한 번 확인하면 바로 기록할 수 있어요."
+    ? "기록, 사진과 병원 요약을 한곳에서 이어서 관리해요."
     : "기록과 사진을 안전하게 이어서 관리하려면 계정으로 시작해요.";
-  const showPageIntro = !configured || !authReady || !user || needsAccountProfile;
+  const showPageIntro = !configured || !authReady || !user;
 
   const accountCard = user ? (
     <AccountCard
@@ -3023,20 +3069,7 @@ export default function App() {
             <LoadingCard />
           ) : user ? (
             <>
-              {needsAccountProfile ? (
-                <>
-                  {accountCard}
-                  <AccountProfileForm
-                    draft={draft}
-                    setDraft={setDraft}
-                    loading={loading}
-                    message={message}
-                    onSubmit={submitAccountProfile}
-                  />
-                </>
-              ) : (
-                <>
-                  <MainSectionTabs value={mainSection} onChange={changeMainSection} />
+              <MainSectionTabs value={mainSection} onChange={changeMainSection} />
                   {mainSection === "home" ? (
                     <HomeDashboard
                       flow={healthFlow}
@@ -3073,6 +3106,7 @@ export default function App() {
                         setDraft={setPetDraft}
                         onCancelForm={closePetForm}
                         onEdit={startEditingPet}
+                        onDelete={confirmDeletePetProfile}
                         onNew={startNewPet}
                         onSave={savePetProfile}
                         onSelect={setSelectedPetId}
@@ -3110,6 +3144,7 @@ export default function App() {
                               : null
                           }
                           onPickMedia={pickMedia}
+                          onRemoveExistingMedia={confirmDeleteExistingMedia}
                           onRemoveMedia={removePendingMedia}
                           onStartNew={() => startHealthRecord()}
                           setInput={setHealthInput}
@@ -3163,9 +3198,7 @@ export default function App() {
                       <ReportsEmptyState onGoRecord={startHealthRecord} />
                     )
                   ) : null}
-                  {mainSection === "account" ? accountCard : null}
-                </>
-              )}
+              {mainSection === "account" ? accountCard : null}
             </>
           ) : (
             <AuthForm
@@ -3175,13 +3208,12 @@ export default function App() {
               setEmail={setEmail}
               password={password}
               setPassword={setPassword}
-              draft={draft}
-              setDraft={setDraft}
               loading={loading}
               message={message}
               enabledOAuthProviders={enabledOAuthProviders}
               oauthLoading={oauthLoading}
               onOAuth={submitOAuth}
+              onRequestPasswordReset={requestPasswordReset}
               onSubmit={submitAuth}
             />
           )}
@@ -3192,6 +3224,11 @@ export default function App() {
         </ScrollView>
       </KeyboardAvoidingView>
       <QuickGuideModal open={quickGuideOpen} onClose={closeQuickGuide} />
+      <PasswordRecoveryModal
+        open={passwordRecoveryOpen}
+        onClose={() => setPasswordRecoveryOpen(false)}
+        onComplete={completePasswordRecovery}
+      />
       <AiBillingModal
         access={aiAccess}
         context={billingContext}
@@ -3504,13 +3541,12 @@ function AuthForm({
   setEmail,
   password,
   setPassword,
-  draft,
-  setDraft,
   loading,
   message,
   enabledOAuthProviders,
   oauthLoading,
   onOAuth,
+  onRequestPasswordReset,
   onSubmit,
 }: {
   mode: AuthMode;
@@ -3519,13 +3555,12 @@ function AuthForm({
   setEmail: (email: string) => void;
   password: string;
   setPassword: (password: string) => void;
-  draft: AccountDraft;
-  setDraft: (draft: AccountDraft) => void;
   loading: boolean;
   message: string;
   enabledOAuthProviders: Record<OAuthProvider, boolean>;
   oauthLoading: OAuthProvider | null;
   onOAuth: (provider: OAuthProvider) => Promise<void>;
+  onRequestPasswordReset: () => Promise<void>;
   onSubmit: () => Promise<void>;
 }) {
   const authBusy = loading || oauthLoading !== null;
@@ -3661,101 +3696,109 @@ function AuthForm({
           />
           {mode === "signup" ? <PasswordChecklist password={password} /> : null}
 
-          {mode === "signup" && <AccountFields draft={draft} setDraft={setDraft} />}
-
           <PrimaryButton
             disabled={authBusy}
             label={loading ? "확인 중..." : mode === "login" ? "로그인" : "회원가입"}
             onPress={onSubmit}
           />
+          {mode === "login" ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              disabled={authBusy}
+              onPress={() => void onRequestPasswordReset()}
+              style={styles.passwordRecoveryLink}
+            >
+              <Text style={styles.passwordRecoveryLinkText}>
+                비밀번호 재설정 메일 받기
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : null}
     </View>
   );
 }
 
-function AccountProfileForm({
-  draft,
-  setDraft,
-  loading,
-  message,
-  onSubmit,
+function PasswordRecoveryModal({
+  open,
+  onClose,
+  onComplete,
 }: {
-  draft: AccountDraft;
-  setDraft: (draft: AccountDraft) => void;
-  loading: boolean;
-  message: string;
-  onSubmit: () => Promise<void>;
+  open: boolean;
+  onClose: () => void;
+  onComplete: (password: string) => Promise<string>;
 }) {
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!open) {
+      setPassword("");
+      setMessage("");
+      setLoading(false);
+    }
+  }, [open]);
+
+  async function save() {
+    if (!isStrongPassword(password)) {
+      setMessage("비밀번호 조건을 모두 충족해 주세요.");
+      return;
+    }
+    setLoading(true);
+    const result = await onComplete(password);
+    setLoading(false);
+    setMessage(result);
+  }
+
   return (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>필수 계정 정보</Text>
-      <Text style={styles.cardText}>
-        닉네임과 연락용 010 번호를 저장해요. 인증번호는 보내지 않아요.
-      </Text>
-      <AccountFields draft={draft} setDraft={setDraft} />
-      <Message text={message} />
-      <PrimaryButton
-        disabled={loading}
-        label={loading ? "저장 중..." : "계정 정보 저장"}
-        onPress={onSubmit}
-      />
-    </View>
-  );
-}
-
-function AccountFields({
-  draft,
-  setDraft,
-}: {
-  draft: AccountDraft;
-  setDraft: (draft: AccountDraft) => void;
-}) {
-  return (
-    <View style={styles.formBlock}>
-      <FieldLabel label="닉네임" />
-      <TextInput
-        maxLength={30}
-        onChangeText={(nickname) => setDraft({ ...draft, nickname })}
-        placeholder="예: 보리보호자"
-        placeholderTextColor={colors.placeholder}
-        style={styles.input}
-        value={draft.nickname}
-      />
-
-      <FieldLabel label="휴대전화번호 (연락용)" />
-      <TextInput
-        keyboardType="phone-pad"
-        onChangeText={(phone) => setDraft({ ...draft, phone: formatKoreanMobile(phone) })}
-        placeholder="010-1234-5678"
-        placeholderTextColor={colors.placeholder}
-        style={styles.input}
-        textContentType="telephoneNumber"
-        value={draft.phone}
-      />
-
-      <View style={styles.privacyBox}>
-        <Text style={styles.privacyTitle}>수집 정보와 이용 안내</Text>
-        <InfoRow label="필수" value={profilePrivacySummary.required} />
-        <InfoRow label="목적" value={profilePrivacySummary.purpose} />
-        <InfoRow label="보관" value={profilePrivacySummary.retention} />
-        <Text style={styles.privacyText}>
-          전화번호는 본인 인증, 광고나 마케팅에 사용하지 않습니다.
-        </Text>
+    <Modal
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      transparent
+      visible={open}
+    >
+      <View style={styles.quickGuideBackdrop}>
+        <View
+          accessibilityLabel="새 비밀번호 설정"
+          accessibilityViewIsModal
+          style={styles.passwordRecoveryDialog}
+        >
+          <Text style={styles.quickGuideEyebrow}>계정 복구</Text>
+          <Text style={styles.quickGuideTitle}>새 비밀번호 설정</Text>
+          <Text style={styles.cardText}>
+            이메일 로그인에 사용할 새 비밀번호를 입력해 주세요.
+          </Text>
+          <TextInput
+            autoCapitalize="none"
+            maxLength={64}
+            onChangeText={setPassword}
+            placeholder="8자 이상, 대·소문자·숫자·특수문자"
+            placeholderTextColor={colors.placeholder}
+            secureTextEntry
+            style={styles.input}
+            textContentType="newPassword"
+            value={password}
+          />
+          <PasswordChecklist password={password} />
+          <PrimaryButton
+            disabled={loading}
+            label={loading ? "저장 중..." : "새 비밀번호 저장"}
+            onPress={save}
+          />
+          <Message text={message} />
+          <TouchableOpacity
+            activeOpacity={0.8}
+            disabled={loading}
+            onPress={onClose}
+            style={styles.billingLaterButton}
+          >
+            <Text style={styles.billingLaterText}>나중에</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-
-      <View style={styles.consentRow}>
-        <Switch
-          onValueChange={(consented) => setDraft({ ...draft, consented })}
-          thumbColor="#ffffff"
-          trackColor={{ false: "#d8e6df", true: colors.green }}
-          value={draft.consented}
-        />
-        <Text style={styles.consentText}>
-          휴대전화번호를 포함한 필수 개인정보 수집·이용에 동의합니다.
-        </Text>
-      </View>
-    </View>
+    </Modal>
   );
 }
 
@@ -3822,9 +3865,6 @@ function AccountCard({
         {accountProfile?.nickname || user.email || "사용자"}
       </Text>
       <Text style={styles.cardText}>{user.email}</Text>
-      {accountProfile?.phone ? (
-        <Text style={styles.cardText}>{formatKoreanMobile(accountProfile.phone)}</Text>
-      ) : null}
 
       <View style={styles.identityLinkBox}>
         <View style={styles.identityLinkHeader}>
@@ -4257,6 +4297,7 @@ function PetManager({
   selectedPetId,
   setDraft,
   onCancelForm,
+  onDelete,
   onEdit,
   onNew,
   onSave,
@@ -4273,6 +4314,7 @@ function PetManager({
   selectedPetId?: string;
   setDraft: (draft: PetDraft) => void;
   onCancelForm: () => void;
+  onDelete: () => void;
   onEdit: (pet: PetProfile) => void;
   onNew: () => void;
   onSave: () => Promise<void>;
@@ -4369,6 +4411,7 @@ function PetManager({
           onRemovePhoto={onRemovePhoto}
           setDraft={setDraft}
           onCancel={pets.length ? onCancelForm : undefined}
+          onDelete={editingPetId ? onDelete : undefined}
           onSave={onSave}
         />
       ) : null}
@@ -4385,6 +4428,7 @@ function PetForm({
   onRemovePhoto,
   setDraft,
   onCancel,
+  onDelete,
   onSave,
 }: {
   draft: PetDraft;
@@ -4394,6 +4438,7 @@ function PetForm({
   onRemovePhoto: () => void;
   setDraft: (draft: PetDraft) => void;
   onCancel?: () => void;
+  onDelete?: () => void;
   onSave: () => Promise<void>;
 }) {
   const breedSuggestions = breedOptions[draft.species];
@@ -4609,6 +4654,16 @@ function PetForm({
         label={loading ? "저장 중..." : editing ? "수정 저장" : "등록하고 선택"}
         onPress={onSave}
       />
+      {onDelete ? (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          disabled={loading}
+          onPress={onDelete}
+          style={styles.petDeleteButton}
+        >
+          <Text style={styles.petDeleteButtonText}>반려동물 삭제</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -4658,6 +4713,7 @@ function HealthRecorder({
   vetDraftLoading,
   vetDraftNotice,
   onPickMedia,
+  onRemoveExistingMedia,
   onRemoveMedia,
   onStartNew,
   setInput,
@@ -4682,6 +4738,7 @@ function HealthRecorder({
   vetDraftLoading: boolean;
   vetDraftNotice: EpisodeNotice | null;
   onPickMedia: (source: "camera" | "library") => Promise<void>;
+  onRemoveExistingMedia: (item: ReportMediaAttachment) => void;
   onRemoveMedia: (id: string) => void;
   onStartNew: () => void;
   setInput: (input: HealthCheckInput) => void;
@@ -4756,6 +4813,7 @@ function HealthRecorder({
           existingMedia={existingMedia}
           mediaMessage={mediaMessage}
           onPickMedia={onPickMedia}
+          onRemoveExistingMedia={onRemoveExistingMedia}
           onRemoveMedia={onRemoveMedia}
           pendingMedia={pendingMedia}
         />
@@ -4854,6 +4912,7 @@ function MediaPickerSection({
   existingMedia,
   mediaMessage,
   onPickMedia,
+  onRemoveExistingMedia,
   onRemoveMedia,
   pendingMedia,
 }: {
@@ -4861,6 +4920,7 @@ function MediaPickerSection({
   existingMedia: ReportMediaAttachment[];
   mediaMessage: string;
   onPickMedia: (source: "camera" | "library") => Promise<void>;
+  onRemoveExistingMedia: (item: ReportMediaAttachment) => void;
   onRemoveMedia: (id: string) => void;
   pendingMedia: PendingMediaAsset[];
 }) {
@@ -4897,27 +4957,35 @@ function MediaPickerSection({
       {existingMedia.length || pendingMedia.length ? (
         <View style={styles.mediaList}>
           {existingMedia.map((item) => (
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={!item.signedUrl}
-              key={item.id}
-              onPress={() => item.signedUrl && void Linking.openURL(item.signedUrl)}
-              style={styles.mediaItem}
-            >
-              {item.kind === "image" && item.signedUrl ? (
-                <Image source={{ uri: item.signedUrl }} style={styles.mediaThumb} />
-              ) : (
-                <View style={[styles.mediaThumb, styles.videoThumb]}>
-                  <Text style={styles.videoThumbText}>영상</Text>
+            <View key={item.id} style={styles.mediaItem}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={!item.signedUrl}
+                onPress={() => item.signedUrl && void Linking.openURL(item.signedUrl)}
+                style={styles.mediaOpenArea}
+              >
+                {item.kind === "image" && item.signedUrl ? (
+                  <Image source={{ uri: item.signedUrl }} style={styles.mediaThumb} />
+                ) : (
+                  <View style={[styles.mediaThumb, styles.videoThumb]}>
+                    <Text style={styles.videoThumbText}>영상</Text>
+                  </View>
+                )}
+                <View style={styles.mediaItemText}>
+                  <Text numberOfLines={1} style={styles.mediaFileName}>
+                    {item.fileName}
+                  </Text>
+                  <Text style={styles.mediaFileMeta}>저장됨 · 눌러서 보기</Text>
                 </View>
-              )}
-              <View style={styles.mediaItemText}>
-                <Text numberOfLines={1} style={styles.mediaFileName}>
-                  {item.fileName}
-                </Text>
-                <Text style={styles.mediaFileMeta}>저장됨 · 눌러서 보기</Text>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => onRemoveExistingMedia(item)}
+                style={styles.mediaRemoveButton}
+              >
+                <Text style={styles.mediaRemoveButtonText}>삭제</Text>
+              </TouchableOpacity>
+            </View>
           ))}
           {pendingMedia.map((item) => (
             <View key={item.id} style={styles.mediaItem}>
@@ -6234,15 +6302,6 @@ function FieldLabel({ label }: { label: string }) {
   return <Text style={styles.label}>{label}</Text>;
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
-    </View>
-  );
-}
-
 function Message({
   text,
   tone = "error",
@@ -6751,6 +6810,15 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 14,
   },
+  passwordRecoveryLink: {
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  passwordRecoveryLinkText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
+  },
   authDivider: {
     flexDirection: "row",
     alignItems: "center",
@@ -6766,9 +6834,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     fontWeight: "800",
-  },
-  formBlock: {
-    marginTop: 4,
   },
   label: {
     marginBottom: 7,
@@ -6839,54 +6904,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "900",
     lineHeight: 17,
-  },
-  privacyBox: {
-    gap: 7,
-    marginTop: 16,
-    borderRadius: 18,
-    backgroundColor: "#f5fbf7",
-    padding: 14,
-  },
-  privacyTitle: {
-    color: colors.ink,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  privacyText: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "600",
-    lineHeight: 18,
-  },
-  infoRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  infoLabel: {
-    width: 34,
-    color: colors.green,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  infoValue: {
-    flex: 1,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
-  },
-  consentRow: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-    marginTop: 14,
-  },
-  consentText: {
-    flex: 1,
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "800",
-    lineHeight: 19,
   },
   identityLinkBox: {
     marginTop: 16,
@@ -7123,6 +7140,16 @@ const styles = StyleSheet.create({
   quickGuideDialog: {
     width: "100%",
     maxWidth: 430,
+    borderWidth: 1,
+    borderColor: "#cbe5d9",
+    borderRadius: 28,
+    backgroundColor: "#ffffff",
+    padding: 24,
+  },
+  passwordRecoveryDialog: {
+    width: "100%",
+    maxWidth: 430,
+    gap: 12,
     borderWidth: 1,
     borderColor: "#cbe5d9",
     borderRadius: 28,
@@ -7538,6 +7565,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
   },
+  petDeleteButton: {
+    alignItems: "center",
+    marginTop: 12,
+    paddingVertical: 10,
+  },
+  petDeleteButtonText: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: "900",
+  },
   vaccinationInline: {
     marginTop: 16,
     borderWidth: 1,
@@ -7749,6 +7786,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: "#ffffff",
     padding: 9,
+  },
+  mediaOpenArea: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   mediaThumb: {
     width: 48,

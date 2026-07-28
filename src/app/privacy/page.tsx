@@ -7,7 +7,7 @@ export default function PrivacyPage() {
       <div className="privacy-sheet">
         <p className="eyebrow">PETFLOW PRIVACY</p>
         <h1>개인정보 안내</h1>
-        <p>시행일: 2026년 7월 23일</p>
+        <p>시행일: 2026년 7월 28일</p>
 
         <section>
           <h2>수집 정보</h2>
@@ -18,12 +18,11 @@ export default function PrivacyPage() {
           <h2>이용 목적과 기간</h2>
           <p>목적: {profilePrivacySummary.purpose}</p>
           <p>보관: {profilePrivacySummary.retention}</p>
-          <p>휴대전화번호는 본인 인증, 광고나 마케팅에 사용하지 않고 서비스 안내와 요청 대응에만 사용합니다.</p>
         </section>
         <section>
           <h2>선택과 삭제</h2>
           <p>
-            주소, 위치, 실명 확인 정보는 받지 않습니다. 앱 또는 웹의 계정 화면에서
+            전화번호, 주소, 위치, 실명 확인 정보는 받지 않습니다. 앱 또는 웹의 계정 화면에서
             직접 계정을 탈퇴하고 연결된 데이터를 삭제할 수 있습니다.
           </p>
           <p>
@@ -48,7 +47,7 @@ export default function PrivacyPage() {
           <p>
             구매 화면 진입, 결제 시도·취소·실패, AI 요약 공유 여부는 유료 기능
             개선을 위한 최소 지표로 계정에 연결해 저장합니다. 건강 기록 원문,
-            사진·영상, 이메일과 전화번호는 이 지표에 복사하지 않으며 광고나
+            사진·영상과 이메일은 이 지표에 복사하지 않으며 광고나
             외부 추적에 사용하지 않습니다.
           </p>
         </section>

@@ -1,7 +1,5 @@
-export const profileConsentVersion = "2026-06-15-v2";
-
 export const profilePrivacySummary = {
-  required: "이메일, 닉네임, 휴대전화번호, 동의 시각",
-  purpose: "계정 운영, 서비스 안내, 요청·장애 대응",
-  retention: "서비스 종료 또는 계정 삭제 시까지",
+  required: "로그인 계정 식별자와 이메일",
+  purpose: "로그인, 기록 동기화와 계정 복구",
+  retention: "계정 삭제 시까지",
 } as const;

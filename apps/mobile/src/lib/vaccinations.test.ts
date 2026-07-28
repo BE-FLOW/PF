@@ -20,8 +20,20 @@ function vaccination(
 }
 
 describe("mobile vaccination helpers", () => {
-  it("returns no reminder when there is no scheduled vaccination", () => {
-    expect(vaccinationReminder([vaccination(null, "done")])).toBeNull();
+  it("keeps the latest completed vaccination visible", () => {
+    const reminder = vaccinationReminder([vaccination(null, "done")]);
+
+    expect(reminder?.tone).toBe("none");
+    expect(reminder?.label).toBe("접종 기록 있음");
+  });
+
+  it("keeps distant schedules visually quiet", () => {
+    const reminder = vaccinationReminder(
+      [vaccination("2026-09-01")],
+      new Date("2026-07-14T12:00:00"),
+    );
+
+    expect(reminder?.tone).toBe("none");
   });
 
   it("marks a scheduled vaccination due within a week as due", () => {

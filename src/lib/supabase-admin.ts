@@ -39,6 +39,8 @@ import { analyzeLocally, deriveAgeGroup } from "./analysis";
 import type { MonetizationEventInput } from "./monetization";
 
 const requestTimeoutMs = 3500;
+const supabasePageSize = 500;
+const maxTimelineRows = 5000;
 
 let adminClient: SupabaseClient | null | undefined;
 
@@ -194,6 +196,28 @@ async function supabaseRequest(
     cache: "no-store",
     signal: AbortSignal.timeout(requestTimeoutMs),
   });
+}
+
+async function fetchAllSupabaseRows<T>(
+  path: string,
+  maxRows = maxTimelineRows,
+): Promise<T[] | null> {
+  const rows: T[] = [];
+
+  for (let offset = 0; offset < maxRows; offset += supabasePageSize) {
+    const separator = path.includes("?") ? "&" : "?";
+    const response = await supabaseRequest(
+      `${path}${separator}limit=${supabasePageSize}&offset=${offset}`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+
+    const page = (await response.json()) as T[];
+    rows.push(...page);
+    if (page.length < supabasePageSize) return rows;
+  }
+
+  return null;
 }
 
 function appVersion() {
@@ -462,6 +486,46 @@ async function removeStorageFiles(
   }
 }
 
+async function listStorageFiles(
+  bucket: string,
+  rootPath: string,
+): Promise<string[] | null> {
+  const client = getAdminClient();
+  if (!client || !rootPath.trim()) return null;
+  const storage = client.storage.from(bucket);
+  const paths: string[] = [];
+  const pageSize = 100;
+  const maxFiles = 5_000;
+
+  async function walk(folder: string): Promise<boolean> {
+    let offset = 0;
+    while (paths.length <= maxFiles) {
+      const { data, error } = await storage.list(folder, {
+        limit: pageSize,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      });
+      if (error || !data) return false;
+
+      for (const item of data) {
+        const itemPath = `${folder}/${item.name}`;
+        if (item.id) {
+          paths.push(itemPath);
+          if (paths.length > maxFiles) return false;
+        } else if (!(await walk(itemPath))) {
+          return false;
+        }
+      }
+
+      if (data.length < pageSize) return true;
+      offset += pageSize;
+    }
+    return false;
+  }
+
+  return (await walk(rootPath)) ? paths : null;
+}
+
 export async function deleteAccount(
   accessToken: string | null,
 ): Promise<{ deletedAt: string } | null> {
@@ -470,7 +534,7 @@ export async function deleteAccount(
   if (!user || !client) return null;
 
   try {
-    const [mediaResponse, petResponse] = await Promise.all([
+    const [mediaResponse, petResponse, mediaFiles, petPhotoFiles] = await Promise.all([
       supabaseRequest(
         `health_report_media?user_id=eq.${user.id}&select=storage_path`,
         { method: "GET" },
@@ -478,22 +542,33 @@ export async function deleteAccount(
       supabaseRequest(`pets?user_id=eq.${user.id}&select=photo_path`, {
         method: "GET",
       }),
+      listStorageFiles(reportMediaBucket, user.id),
+      listStorageFiles(petPhotoBucket, user.id),
     ]);
-    const mediaRows = mediaResponse?.ok
-      ? ((await mediaResponse.json()) as Array<{ storage_path: string | null }>)
-      : [];
-    const petRows = petResponse?.ok
-      ? ((await petResponse.json()) as Array<{ photo_path: string | null }>)
-      : [];
+    if (
+      !mediaResponse?.ok ||
+      !petResponse?.ok ||
+      !mediaFiles ||
+      !petPhotoFiles
+    ) {
+      return null;
+    }
+
+    const mediaRows = (await mediaResponse.json()) as Array<{
+      storage_path: string | null;
+    }>;
+    const petRows = (await petResponse.json()) as Array<{
+      photo_path: string | null;
+    }>;
 
     const storageRemoved = await Promise.all([
       removeStorageFiles(
         reportMediaBucket,
-        mediaRows.map((row) => row.storage_path),
+        [...mediaRows.map((row) => row.storage_path), ...mediaFiles],
       ),
       removeStorageFiles(
         petPhotoBucket,
-        petRows.map((row) => row.photo_path),
+        [...petRows.map((row) => row.photo_path), ...petPhotoFiles],
       ),
     ]);
     if (storageRemoved.some((removed) => !removed)) return null;
@@ -1089,30 +1164,112 @@ export async function deleteHealthReport(
   if (!userId) return false;
 
   try {
+    const reportResponse = await supabaseRequest(
+      `health_reports?id=eq.${reportId}&user_id=eq.${userId}&select=id,pet_id&limit=1`,
+      { method: "GET" },
+    );
+    if (!reportResponse?.ok) return false;
+    const reports = (await reportResponse.json()) as Array<{
+      id: string;
+      pet_id: string;
+    }>;
+    const report = reports[0];
+    if (report?.id !== reportId || !isUuid(report.pet_id)) return false;
+
     const mediaResponse = await supabaseRequest(
       `health_report_media?user_id=eq.${userId}&report_id=eq.${reportId}&select=storage_path`,
       { method: "GET" },
     );
-    const mediaRows = mediaResponse?.ok
-      ? ((await mediaResponse.json()) as Array<{ storage_path: string }>)
-      : [];
+    if (!mediaResponse?.ok) return false;
+    const mediaRows = (await mediaResponse.json()) as Array<{
+      storage_path: string;
+    }>;
+    const reportFiles = await listStorageFiles(
+      reportMediaBucket,
+      `${userId}/${report.pet_id}/${reportId}`,
+    );
+    if (!reportFiles) return false;
+
+    const storageRemoved = await removeStorageFiles(
+      reportMediaBucket,
+      [...mediaRows.map((row) => row.storage_path), ...reportFiles],
+    );
+    if (!storageRemoved) return false;
 
     const response = await supabaseRequest(
-      `health_reports?id=eq.${reportId}&user_id=eq.${userId}`,
-      { method: "DELETE" },
+      `health_reports?id=eq.${reportId}&user_id=eq.${userId}&select=id`,
+      {
+        method: "DELETE",
+        headers: { Prefer: "return=representation" },
+      },
     );
     if (!response?.ok) return false;
+    const deleted = (await response.json()) as Array<{ id: string }>;
+    return deleted[0]?.id === reportId;
+  } catch {
+    return false;
+  }
+}
 
-    const paths = mediaRows.map((row) => row.storage_path).filter(Boolean);
-    const client = getAdminClient();
-    if (client && paths.length) {
-      try {
-        await client.storage.from(reportMediaBucket).remove(paths);
-      } catch {
-        /* Storage cleanup is best-effort after the report row is deleted. */
-      }
+export async function deletePet(
+  accessToken: string | null,
+  petId: string | null,
+): Promise<boolean> {
+  if (!isUuid(petId)) return false;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return false;
+
+  try {
+    const [petResponse, mediaResponse, reportFiles, petPhotoFiles] = await Promise.all([
+      supabaseRequest(
+        `pets?id=eq.${petId}&user_id=eq.${userId}&select=id,photo_path&limit=1`,
+        { method: "GET" },
+      ),
+      supabaseRequest(
+        `health_report_media?pet_id=eq.${petId}&user_id=eq.${userId}&select=storage_path`,
+        { method: "GET" },
+      ),
+      listStorageFiles(reportMediaBucket, `${userId}/${petId}`),
+      listStorageFiles(petPhotoBucket, `${userId}/${petId}`),
+    ]);
+    if (
+      !petResponse?.ok ||
+      !mediaResponse?.ok ||
+      !reportFiles ||
+      !petPhotoFiles
+    ) {
+      return false;
     }
-    return true;
+
+    const pets = (await petResponse.json()) as Array<{
+      id: string;
+      photo_path: string | null;
+    }>;
+    const pet = pets[0];
+    if (pet?.id !== petId) return false;
+    const mediaRows = (await mediaResponse.json()) as Array<{
+      storage_path: string | null;
+    }>;
+
+    const storageRemoved = await Promise.all([
+      removeStorageFiles(
+        reportMediaBucket,
+        [...mediaRows.map((row) => row.storage_path), ...reportFiles],
+      ),
+      removeStorageFiles(petPhotoBucket, [pet.photo_path, ...petPhotoFiles]),
+    ]);
+    if (storageRemoved.some((removed) => !removed)) return false;
+
+    const response = await supabaseRequest(
+      `pets?id=eq.${petId}&user_id=eq.${userId}&select=id`,
+      {
+        method: "DELETE",
+        headers: { Prefer: "return=representation" },
+      },
+    );
+    if (!response?.ok) return false;
+    const deleted = (await response.json()) as Array<{ id: string }>;
+    return deleted[0]?.id === petId;
   } catch {
     return false;
   }
@@ -1338,6 +1495,51 @@ export async function registerHealthReportMedia(
   }
 }
 
+export async function deleteHealthReportMedia(
+  accessToken: string | null,
+  reportId: string | null,
+  mediaId: string | null,
+): Promise<boolean> {
+  if (!isUuid(reportId) || !isUuid(mediaId)) return false;
+  const userId = await getAuthenticatedUserId(accessToken);
+  if (!userId) return false;
+
+  try {
+    const report = await getOwnedMediaReport(userId, reportId);
+    if (!report) return false;
+
+    const mediaResponse = await supabaseRequest(
+      `health_report_media?id=eq.${mediaId}&report_id=eq.${report.id}&user_id=eq.${userId}&select=id,storage_path&limit=1`,
+      { method: "GET" },
+    );
+    if (!mediaResponse?.ok) return false;
+    const mediaRows = (await mediaResponse.json()) as Array<{
+      id: string;
+      storage_path: string;
+    }>;
+    const media = mediaRows[0];
+    if (media?.id !== mediaId) return false;
+
+    const storageRemoved = await removeStorageFiles(reportMediaBucket, [
+      media.storage_path,
+    ]);
+    if (!storageRemoved) return false;
+
+    const response = await supabaseRequest(
+      `health_report_media?id=eq.${mediaId}&report_id=eq.${report.id}&user_id=eq.${userId}&select=id`,
+      {
+        method: "DELETE",
+        headers: { Prefer: "return=representation" },
+      },
+    );
+    if (!response?.ok) return false;
+    const deleted = (await response.json()) as Array<{ id: string }>;
+    return deleted[0]?.id === mediaId;
+  } catch {
+    return false;
+  }
+}
+
 export async function listPetHealthReports(
   accessToken: string | null,
   petId: string | null,
@@ -1345,18 +1547,14 @@ export async function listPetHealthReports(
   const owner = await getReportOwner(accessToken, petId);
   if (!owner) return null;
   try {
-    const response = await supabaseRequest(
-      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc&limit=60`,
-      { method: "GET" },
+    const reports = await fetchAllSupabaseRows<DisplayHealthReport>(
+      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc`,
     );
-    if (!response?.ok) return null;
-    const reports = (await response.json()) as DisplayHealthReport[];
-    const mediaResponse = await supabaseRequest(
+    if (!reports) return null;
+    const mediaRows = await fetchAllSupabaseRows<ReportMediaRow>(
       `health_report_media?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=${reportMediaSelect}&order=created_at.asc`,
-      { method: "GET" },
     );
-    if (!mediaResponse?.ok) return reports.map((report) => ({ ...report, media: [] }));
-    const mediaRows = (await mediaResponse.json()) as ReportMediaRow[];
+    if (!mediaRows) return null;
     const mediaByReport = groupMediaByReport(await signReportMediaRows(mediaRows));
     return reports.map((report) => ({
       ...report,
@@ -1374,19 +1572,17 @@ export async function listPetEpisodes(
   const owner = await getReportOwner(accessToken, petId);
   if (!owner) return null;
   try {
-    const response = await supabaseRequest(
-      `episodes?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&order=last_activity_at.desc&limit=60`,
-      { method: "GET" },
-    );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Array<{
+    const rows = await fetchAllSupabaseRows<{
       id: string;
       pet_id: string;
       status: PetEpisode["status"];
       started_at: string;
       last_activity_at: string;
       closed_at: string | null;
-    }>;
+    }>(
+      `episodes?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&order=last_activity_at.desc`,
+    );
+    if (!rows) return null;
     return rows.map(toPetEpisode);
   } catch {
     return null;
@@ -1400,12 +1596,12 @@ export async function listPetEpisodePlans(
   const owner = await getReportOwner(accessToken, petId);
   if (!owner) return null;
   try {
-    const response = await supabaseRequest(
+    const rows = await fetchAllSupabaseRows<
+      Parameters<typeof toEpisodePlan>[0]
+    >(
       `episode_plans?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,episode_id,pet_id,source_type,review_status,reported_at,plan_tasks(id,task_text,position,completed_at)&order=reported_at.desc`,
-      { method: "GET" },
     );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Parameters<typeof toEpisodePlan>[0][];
+    if (!rows) return null;
     return rows.map(toEpisodePlan);
   } catch {
     return null;
@@ -1419,12 +1615,12 @@ export async function listPetEpisodeProgress(
   const owner = await getReportOwner(accessToken, petId);
   if (!owner) return null;
   try {
-    const response = await supabaseRequest(
+    const rows = await fetchAllSupabaseRows<
+      Parameters<typeof toEpisodeProgress>[0]
+    >(
       `episode_progress_logs?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,episode_id,pet_id,follow_up_day,condition_change,appetite,energy,source_type,review_status,recorded_at&order=follow_up_day.asc`,
-      { method: "GET" },
     );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Parameters<typeof toEpisodeProgress>[0][];
+    if (!rows) return null;
     return rows.map(toEpisodeProgress);
   } catch {
     return null;
@@ -1459,8 +1655,8 @@ export async function getEpisodeVetReviewBundle(
 
     const [
       petResponse,
-      reportsResponse,
-      mediaResponse,
+      reports,
+      mediaRows,
       plansResponse,
       progressResponse,
     ] =
@@ -1469,13 +1665,11 @@ export async function getEpisodeVetReviewBundle(
           `pets?id=eq.${episode.petId}&user_id=eq.${userId}&select=id,name,species,breed,birth_date,sex,weight&limit=1`,
           { method: "GET" },
         ),
-        supabaseRequest(
-          `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc&limit=60`,
-          { method: "GET" },
+        fetchAllSupabaseRows<DisplayHealthReport>(
+          `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc`,
         ),
-        supabaseRequest(
+        fetchAllSupabaseRows<ReportMediaRow>(
           `health_report_media?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=${reportMediaSelect}&order=created_at.asc`,
-          { method: "GET" },
         ),
         supabaseRequest(
           `episode_plans?user_id=eq.${userId}&episode_id=eq.${episode.id}&select=id,episode_id,pet_id,source_type,review_status,reported_at,plan_tasks(id,task_text,position,completed_at)&order=reported_at.desc&limit=1`,
@@ -1489,7 +1683,8 @@ export async function getEpisodeVetReviewBundle(
 
     if (
       !petResponse?.ok ||
-      !reportsResponse?.ok ||
+      !reports ||
+      !mediaRows ||
       !plansResponse?.ok ||
       !progressResponse?.ok
     ) {
@@ -1499,10 +1694,6 @@ export async function getEpisodeVetReviewBundle(
     const petRows = (await petResponse.json()) as Parameters<
       typeof toPetProfile
     >[0][];
-    const reports = (await reportsResponse.json()) as DisplayHealthReport[];
-    const mediaRows = mediaResponse?.ok
-      ? ((await mediaResponse.json()) as ReportMediaRow[])
-      : [];
     const mediaByReport = groupMediaByReport(await signReportMediaRows(mediaRows));
     const planRows = (await plansResponse.json()) as Parameters<
       typeof toEpisodePlan

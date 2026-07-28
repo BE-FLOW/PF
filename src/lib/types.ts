@@ -49,10 +49,6 @@ export interface VaccinationRecord {
 
 export interface AccountProfile {
   nickname: string;
-  phone: string;
-  consentVersion: string;
-  consentedAt: string;
-  phoneConsentedAt: string;
 }
 
 export interface AiAccessStatus {
