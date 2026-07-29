@@ -1,13 +1,13 @@
-.git/
-.github/
-.next/
-node_modules/
-coverage/
-docs/
-public/
-scripts/
-src/
-supabase/
+/.git/
+/.github/
+/.next/
+/node_modules/
+/coverage/
+/docs/
+/public/
+/scripts/
+/src/
+/supabase/
 
 .env*
 *.log
@@ -18,16 +18,16 @@ supabase/
 *.jks
 *.keystore
 
-AGENTS.md
-README.md
-eslint.config.mjs
-next.config.ts
-package-lock.json
-package.json
-postcss.config.mjs
-tsconfig.json
-vercel.json
-vitest.config.ts
+/AGENTS.md
+/README.md
+/eslint.config.mjs
+/next.config.ts
+/package-lock.json
+/package.json
+/postcss.config.mjs
+/tsconfig.json
+/vercel.json
+/vitest.config.ts
 
 apps/mobile/node_modules/
 apps/mobile/.expo/
