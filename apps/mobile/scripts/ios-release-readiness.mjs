@@ -106,6 +106,9 @@ await check("현재 빌드 스크린샷", () => {
     }
   }
   const iapReviewFile = path.join(mobileRoot, IOS_IAP_REVIEW_SCREENSHOT);
+  if (!fs.existsSync(iapReviewFile)) {
+    throw new Error("Capture the current-build iOS purchase screen before release.");
+  }
   if (manifest.iapReviewScreenshot.sha256 !== sha256File(iapReviewFile)) {
     throw new Error("The iOS purchase review image does not match its stamped hash.");
   }
@@ -203,6 +206,9 @@ await check("iOS 인앱결제 상품", async () => {
     throw new Error("In-app purchase review screenshot is not complete.");
   }
   const iapReviewFile = path.join(mobileRoot, IOS_IAP_REVIEW_SCREENSHOT);
+  if (!fs.existsSync(iapReviewFile)) {
+    throw new Error("Current-build in-app purchase review screenshot is missing.");
+  }
   if (reviewScreenshot.data.attributes.sourceFileChecksum !== md5File(iapReviewFile)) {
     throw new Error("The remote purchase review screenshot is not from this build.");
   }

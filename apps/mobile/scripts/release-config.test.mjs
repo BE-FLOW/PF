@@ -107,6 +107,14 @@ describe("mobile release configuration", () => {
         changedPaths: ["apps/mobile/App.tsx"],
       }),
     ).toThrow("Runtime changed");
+    expect(() =>
+      assertRuntimeCoveredByBuild({
+        buildCommit: "build",
+        currentCommit: "head",
+        buildIsAncestor: true,
+        changedPaths: Array.from({ length: 12 }, (_, index) => `file-${index}.ts`),
+      }),
+    ).toThrow("and 4 more");
   });
 
   it("requires screenshots to be stamped to the exact build and commit", () => {

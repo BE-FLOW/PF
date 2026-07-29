@@ -187,8 +187,10 @@ export function assertRuntimeCoveredByBuild({
   }
   const runtimeChanges = changedPaths.filter((file) => !isStoreReleaseArtifact(file));
   if (runtimeChanges.length) {
+    const visible = runtimeChanges.slice(0, 8);
+    const remainder = runtimeChanges.length - visible.length;
     throw new Error(
-      `Runtime changed after the selected EAS build: ${runtimeChanges.join(", ")}.`,
+      `Runtime changed after the selected EAS build (${runtimeChanges.length} files): ${visible.join(", ")}${remainder ? `, and ${remainder} more` : ""}.`,
     );
   }
   return { releaseArtifactOnly: true };
