@@ -12,12 +12,13 @@ module.exports = {
     slug: "petflow-mobile",
     description:
       "보호자 관찰을 병원에 전달하기 좋은 흐름으로 정리하는 PetFlow 모바일 앱입니다.",
+    platforms: ["ios", "android"],
     scheme: "petflow",
     version: "1.0",
     icon: "./assets/icon.png",
     userInterfaceStyle: "light",
     splash: {
-      image: "./assets/splash-icon.png",
+      image: "./assets/brand-icon.png",
       resizeMode: "contain",
       backgroundColor: "#f2faeb",
     },

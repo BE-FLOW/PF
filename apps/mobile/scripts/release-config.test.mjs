@@ -28,6 +28,14 @@ describe("mobile release configuration", () => {
     expect(appConfig.expo.ios.bundleIdentifier).toBe("com.beflow.petflow");
   });
 
+  it("keeps local credentials out of EAS build archives", () => {
+    const easIgnore = fs.readFileSync(path.join(mobileRoot, ".easignore"), "utf8");
+    expect(easIgnore).toContain("credentials.json");
+    expect(easIgnore).toContain("credentials/");
+    expect(easIgnore).toContain("*.p8");
+    expect(easIgnore).toContain(".env*");
+  });
+
   it("separates Android closed testing from production", () => {
     expect(easJson.submit.closed.android.track).toBe("alpha");
     expect(easJson.submit.production.android.track).toBe("production");

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultOAuthProviderStatus,
+  isOAuthCallbackUrl,
   oauthCallbackCode,
   oauthCallbackErrorMessage,
   oauthCallbackUrlErrorMessage,
@@ -8,6 +10,17 @@ import {
 } from "./auth";
 
 describe("mobile auth helpers", () => {
+  it("keeps primary social login visible during a temporary settings failure", () => {
+    expect(defaultOAuthProviderStatus).toEqual({ google: true, apple: true });
+  });
+
+  it("accepts only PetFlow auth callback paths", () => {
+    expect(isOAuthCallbackUrl("petflow://auth-callback?code=ok")).toBe(true);
+    expect(isOAuthCallbackUrl("petflow:///auth-callback?code=ok")).toBe(true);
+    expect(isOAuthCallbackUrl("petflow://auth-callback.example.com?code=bad")).toBe(false);
+    expect(isOAuthCallbackUrl("https://example.com/auth-callback?code=bad")).toBe(false);
+  });
+
   it("keeps existing email signup errors actionable", () => {
     expect(
       passwordAuthErrorMessage("signup", { code: "user_already_exists" }),

@@ -30,6 +30,7 @@ import {
   defaultOAuthProviderStatus,
   fetchOAuthProviderStatus,
   hasLinkedProvider,
+  isOAuthCallbackUrl,
   oauthCallbackCode,
   oauthCallbackErrorMessage,
   oauthCallbackUrlErrorMessage,
@@ -67,7 +68,6 @@ import {
 } from "./src/lib/record-calendar";
 import { getSupabaseClient, isSupabaseConfigured } from "./src/lib/supabase";
 import {
-  analyzeLocally,
   buildEpisodeReport,
   createUuid,
   dailyObservationOptions,
@@ -87,14 +87,12 @@ import {
   reportMediaExtensionFromMimeType,
   reportMediaKindFromMimeType,
   riskLabels,
-  storedReportToHistoryRecord,
   symptomOptions,
   summarizeHealthFlow,
   toggleDailyObservation,
   type AiAccessStatus,
   type AiReportFeedbackInput,
   type AnalysisResult,
-  type DisplayHealthReport,
   type EpisodePlan,
   type EpisodeProgress,
   type EpisodeReport,
@@ -121,32 +119,12 @@ import {
   type VaccinationDraft,
   type VaccinationRow,
 } from "./src/lib/vaccinations";
-import {
-  storePreviewAiAccess,
-  storePreviewEnabled,
-  storePreviewEpisodes,
-  storePreviewHistory,
-  storePreviewInput,
-  storePreviewPet,
-  storePreviewPlans,
-  storePreviewUser,
-  storePreviewVaccinations,
-  storePreviewVetDrafts,
-} from "./src/lib/store-preview";
-
 WebBrowser.maybeCompleteAuthSession();
 
 const oauthRedirectTo = AuthSession.makeRedirectUri({
   scheme: "petflow",
   path: "auth-callback",
 });
-const oauthCallbackPrefixes = Array.from(
-  new Set([oauthRedirectTo, "petflow://auth-callback", "petflow:///auth-callback"]),
-);
-
-function isOAuthCallbackUrl(url: string | null): url is string {
-  return typeof url === "string" && oauthCallbackPrefixes.some((prefix) => url.startsWith(prefix));
-}
 
 type AuthMode = "login" | "signup";
 type MainSection = "home" | "record" | "reports" | "account";
@@ -196,6 +174,8 @@ async function clearPendingBillingMinimum(userId: string) {
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const iosPasswordRules =
+  "minlength: 8; maxlength: 64; required: lower; required: upper; required: digit; required: special;";
 const passwordPolicy = [
   { id: "length", label: "8~64자", test: (value: string) => value.length >= 8 && value.length <= 64 },
   { id: "lower", label: "영문 소문자", test: (value: string) => /[a-z]/.test(value) },
@@ -423,16 +403,12 @@ const petFlowFontAssets = {
   "Pretendard-Regular": require("./assets/fonts/Pretendard-Regular.otf"),
   "Pretendard-SemiBold": require("./assets/fonts/Pretendard-SemiBold.otf"),
   "Pretendard-Bold": require("./assets/fonts/Pretendard-Bold.otf"),
-  "Pretendard-ExtraBold": require("./assets/fonts/Pretendard-ExtraBold.otf"),
-  "Pretendard-Black": require("./assets/fonts/Pretendard-Black.otf"),
 };
 
 const petFlowFontFamilies = {
   regular: "Pretendard-Regular",
   semibold: "Pretendard-SemiBold",
   bold: "Pretendard-Bold",
-  extrabold: "Pretendard-ExtraBold",
-  black: "Pretendard-Black",
 };
 
 let petFlowFontsReady = false;
@@ -446,8 +422,6 @@ function fontWeightValue(fontWeight: TextStyle["fontWeight"]) {
 function fontFamilyForStyle(style: TextProps["style"] | TextInputProps["style"]) {
   const flattened = StyleSheet.flatten(style) as TextStyle | undefined;
   const weight = fontWeightValue(flattened?.fontWeight);
-  if (weight >= 900) return petFlowFontFamilies.black;
-  if (weight >= 800) return petFlowFontFamilies.extrabold;
   if (weight >= 700) return petFlowFontFamilies.bold;
   if (weight >= 600) return petFlowFontFamilies.semibold;
   return petFlowFontFamilies.regular;
@@ -473,7 +447,7 @@ export default function App() {
   petFlowFontsReady = fontsLoaded && !fontLoadError;
   const processedOAuthUrlsRef = useRef<Set<string>>(new Set());
 
-  const [authReady, setAuthReady] = useState(storePreviewEnabled);
+  const [authReady, setAuthReady] = useState(false);
   const [passwordRecoveryOpen, setPasswordRecoveryOpen] = useState(false);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -487,22 +461,10 @@ export default function App() {
   const [linkOauthMessage, setLinkOauthMessage] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [user, setUser] = useState<User | null>(
-    storePreviewEnabled ? storePreviewUser : null,
-  );
-  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(
-    storePreviewEnabled
-      ? {
-          nickname: "보리 보호자",
-        }
-      : null,
-  );
-  const [pets, setPets] = useState<PetProfile[]>(
-    storePreviewEnabled ? [storePreviewPet] : [],
-  );
-  const [selectedPetId, setSelectedPetId] = useState<string | undefined>(
-    storePreviewEnabled ? storePreviewPet.id : undefined,
-  );
+  const [user, setUser] = useState<User | null>(null);
+  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
+  const [pets, setPets] = useState<PetProfile[]>([]);
+  const [selectedPetId, setSelectedPetId] = useState<string | undefined>();
   const [petDraft, setPetDraft] = useState<PetDraft>(emptyPetDraft);
   const [petFormExpanded, setPetFormExpanded] = useState(false);
   const [editingPetId, setEditingPetId] = useState<string | null>(null);
@@ -510,9 +472,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [petLoading, setPetLoading] = useState(false);
   const [petMessage, setPetMessage] = useState("");
-  const [healthInput, setHealthInput] = useState<HealthCheckInput | null>(
-    storePreviewEnabled ? storePreviewInput : null,
-  );
+  const [healthInput, setHealthInput] = useState<HealthCheckInput | null>(null);
   const [recordDateKey, setRecordDateKey] = useState(() =>
     toRecordDateKey(new Date()),
   );
@@ -522,19 +482,11 @@ export default function App() {
   const [latestEpisodeId, setLatestEpisodeId] = useState<string | null>(null);
   const [editingHealthRecord, setEditingHealthRecord] =
     useState<HistoryRecord | null>(null);
-  const [history, setHistory] = useState<HistoryRecord[]>(
-    storePreviewEnabled ? storePreviewHistory : [],
-  );
-  const [episodes, setEpisodes] = useState<PetEpisode[]>(
-    storePreviewEnabled ? storePreviewEpisodes : [],
-  );
-  const [plans, setPlans] = useState<EpisodePlan[]>(
-    storePreviewEnabled ? storePreviewPlans : [],
-  );
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [episodes, setEpisodes] = useState<PetEpisode[]>([]);
+  const [plans, setPlans] = useState<EpisodePlan[]>([]);
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
-  const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>(
-    storePreviewEnabled ? storePreviewVaccinations : [],
-  );
+  const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
   const vaccinationTableAvailableRef = useRef(true);
   const accountLoadSequenceRef = useRef(0);
   const historyLoadSequenceRef = useRef(0);
@@ -554,9 +506,7 @@ export default function App() {
     text: "",
     tone: "success",
   });
-  const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(
-    storePreviewEnabled ? storePreviewAiAccess : null,
-  );
+  const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
   const [billingProduct, setBillingProduct] =
     useState<MobileBillingProduct | null>(null);
   const [billingProductLoading, setBillingProductLoading] = useState(false);
@@ -575,9 +525,7 @@ export default function App() {
   const [accountDeletionLoading, setAccountDeletionLoading] = useState(false);
   const [accountDeletionMessage, setAccountDeletionMessage] = useState("");
   const [accountDeletionRequested, setAccountDeletionRequested] = useState(false);
-  const [vetDrafts, setVetDrafts] = useState<VetDraftMap>(
-    storePreviewEnabled ? storePreviewVetDrafts : {},
-  );
+  const [vetDrafts, setVetDrafts] = useState<VetDraftMap>({});
   const [vetDraftLoadingEpisodeId, setVetDraftLoadingEpisodeId] =
     useState<string | null>(null);
   const [vetDraftNotice, setVetDraftNotice] = useState<EpisodeNotice>({
@@ -598,11 +546,6 @@ export default function App() {
   useEffect(() => {
     let active = true;
     let removeBillingListener: (() => void) | null = null;
-    if (storePreviewEnabled) {
-      return () => {
-        active = false;
-      };
-    }
     if (!user?.id) {
       void resetMobileBillingCache();
       setBillingProduct(null);
@@ -849,11 +792,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    if (storePreviewEnabled) {
-      return () => {
-        active = false;
-      };
-    }
     if (!authReady || !user) {
       return () => {
         active = false;
@@ -1095,11 +1033,9 @@ export default function App() {
         episodes?: PetEpisode[];
         plans?: EpisodePlan[];
         progress?: EpisodeProgress[];
-        reports?: DisplayHealthReport[];
+        records?: HistoryRecord[];
       };
-      const remoteRecords = (payload.reports ?? []).map((report) =>
-        storedReportToHistoryRecord(report, pet),
-      );
+      const remoteRecords = payload.records ?? [];
       if (loadSequence !== historyLoadSequenceRef.current) return;
       setHistory((current) => mergePetHistory(current, remoteRecords, petId));
       setEpisodes(payload.episodes ?? []);
@@ -1368,7 +1304,7 @@ export default function App() {
       const supabase = getSupabaseClient();
       if (!supabase) {
         processedOAuthUrlsRef.current.delete(url);
-        setErrorMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
+        setErrorMessage("서비스 연결이 준비되지 않았어요. 잠시 후 다시 시도해 주세요.");
         return "failed";
       }
 
@@ -1401,7 +1337,6 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (storePreviewEnabled) return;
     const supabase = getSupabaseClient();
     if (!supabase) {
       setAuthReady(true);
@@ -1417,7 +1352,6 @@ export default function App() {
   }, [loadAccount]);
 
   useEffect(() => {
-    if (storePreviewEnabled) return;
     let active = true;
     void fetchOAuthProviderStatus(
       process.env.EXPO_PUBLIC_SUPABASE_URL,
@@ -1432,7 +1366,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (storePreviewEnabled) return undefined;
     const supabase = getSupabaseClient();
     if (!supabase) return undefined;
 
@@ -1449,7 +1382,6 @@ export default function App() {
   }, [finishOAuthRedirect]);
 
   useEffect(() => {
-    if (storePreviewEnabled) return;
     if (!selectedPet) return;
     setHealthInput(profileToHealthInput(selectedPet));
     setHealthMessage("");
@@ -1478,7 +1410,7 @@ export default function App() {
   async function submitAuth() {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
+      setMessage("서비스 연결이 준비되지 않았어요. 잠시 후 다시 시도해 주세요.");
       return;
     }
     if (!emailPattern.test(email.trim())) {
@@ -1557,7 +1489,7 @@ export default function App() {
   async function submitOAuth(provider: OAuthProvider) {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
+      setMessage("서비스 연결이 준비되지 않았어요. 잠시 후 다시 시도해 주세요.");
       return;
     }
 
@@ -1601,7 +1533,7 @@ export default function App() {
   async function linkOAuthIdentity(provider: OAuthProvider) {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setLinkOauthMessage("Supabase 공개 환경변수를 먼저 설정해 주세요.");
+      setLinkOauthMessage("서비스 연결이 준비되지 않았어요. 잠시 후 다시 시도해 주세요.");
       return;
     }
 
@@ -1673,6 +1605,12 @@ export default function App() {
 
       setAccountDeletionRequested(true);
       setAccountDeletionMessage("계정 탈퇴가 완료됐어요. 현재 기기에서 로그아웃합니다.");
+      if (user?.id) {
+        await Promise.allSettled([
+          AsyncStorage.removeItem(quickGuideStorageKey(user.id)),
+          clearPendingBillingMinimum(user.id),
+        ]);
+      }
       await supabase?.auth.signOut();
       await loadAccount(null);
       setMessage("계정 탈퇴가 완료됐어요.");
@@ -1811,7 +1749,7 @@ export default function App() {
     const remaining = maxReportMediaFiles - existingMediaCount - pendingMedia.length;
     const result = source === "camera"
       ? await ImagePicker.launchCameraAsync({
-          mediaTypes: ["images", "videos"],
+          mediaTypes: ["images"],
           quality: 0.8,
         })
       : await ImagePicker.launchImageLibraryAsync({
@@ -2269,10 +2207,6 @@ export default function App() {
       setHealthMessage("기록 날짜를 다시 확인해 주세요.");
       return;
     }
-    const analyzed = analyzeLocally(input);
-    const localResult = observedAt
-      ? { ...analyzed, createdAt: observedAt }
-      : analyzed;
     setHealthLoading(true);
     setHealthMessage("");
     setMediaUploadMessage("");
@@ -2292,67 +2226,50 @@ export default function App() {
         let episodeId = editingHealthRecord.episodeId;
         let result: AnalysisResult;
 
-        if (editingHealthRecord.result.storage === "remote") {
-          const response = await fetch(
-            `${apiBaseUrl}/api/reports/${editingHealthRecord.result.id}`,
-            {
-              method: "PATCH",
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(input),
-            },
-          );
-          if (!response.ok) throw new Error("update failed");
-          const payload = (await response.json()) as AnalysisResult & {
-            episodeId?: string | null;
-            media?: ReportMediaAttachment[];
-            petId?: string | null;
-          };
-          const {
-            episodeId: savedEpisodeId,
-            media: savedMedia,
-            petId: savedPetId,
-            ...updatedResult
-          } = payload;
-          result = updatedResult;
-          media = savedMedia ?? media;
-          petIdForRecord = savedPetId ?? petIdForRecord;
-          episodeId = savedEpisodeId ?? undefined;
-        } else {
-          result = {
-            ...localResult,
-            id: editingHealthRecord.result.id,
-            createdAt: editingHealthRecord.result.createdAt,
-            storage: editingHealthRecord.result.storage ?? "local",
-          };
+        if (editingHealthRecord.result.storage !== "remote") {
+          throw new Error("record is not stored remotely");
         }
+        const response = await fetch(
+          `${apiBaseUrl}/api/reports/${editingHealthRecord.result.id}`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(input),
+          },
+        );
+        if (!response.ok) throw new Error("update failed");
+        const payload = (await response.json()) as AnalysisResult & {
+          episodeId?: string | null;
+          media?: ReportMediaAttachment[];
+          petId?: string | null;
+        };
+        const {
+          episodeId: savedEpisodeId,
+          media: savedMedia,
+          petId: savedPetId,
+          ...updatedResult
+        } = payload;
+        result = updatedResult;
+        media = savedMedia ?? media;
+        petIdForRecord = savedPetId ?? petIdForRecord;
+        episodeId = savedEpisodeId ?? undefined;
 
         if (pendingMedia.length) {
-          if (
-            editingHealthRecord.result.storage === "remote" &&
-            episodeId &&
-            petIdForRecord &&
-            session.user.id
-          ) {
-            try {
-              const addedMedia = await uploadPendingMediaFiles({
-                accessToken,
-                files: pendingMedia,
-                reportId: editingHealthRecord.result.id,
-              });
-              media = [...media, ...addedMedia];
-              setMediaUploadMessage(
-                media.length ? `${formatReportMediaSummary(media)} 저장됐어요.` : "",
-              );
-            } catch {
-              setMediaUploadMessage("기록은 수정됐지만 새 사진·영상은 저장하지 못했어요.");
-            }
-          } else {
+          try {
+            const addedMedia = await uploadPendingMediaFiles({
+              accessToken,
+              files: pendingMedia,
+              reportId: editingHealthRecord.result.id,
+            });
+            media = [...media, ...addedMedia];
             setMediaUploadMessage(
-              "새 사진·영상은 계정에 연결된 서버 기록에만 추가할 수 있어요.",
+              media.length ? `${formatReportMediaSummary(media)} 저장됐어요.` : "",
             );
+          } catch {
+            setMediaUploadMessage("기록은 수정됐지만 새 사진·영상은 저장하지 못했어요.");
           }
         }
 
@@ -2405,28 +2322,18 @@ export default function App() {
       let media: ReportMediaAttachment[] = [];
       let mediaNotice = "";
       if (pendingMedia.length) {
-        if (
-          result.storage === "remote" &&
-          episodeId &&
-          session.user.id &&
-          petId
-        ) {
-          try {
-            media = await uploadPendingMediaFiles({
-              accessToken,
-              files: pendingMedia,
-              reportId: result.id,
-            });
-            mediaNotice = media.length
-              ? `${formatReportMediaSummary(media)} 첨부도 함께 저장됐어요.`
-              : "";
-          } catch {
-            mediaNotice =
-              "기록은 저장됐지만 사진·영상 첨부는 저장하지 못했어요. 필요하면 새 기록에서 다시 첨부해 주세요.";
-          }
-        } else {
+        try {
+          media = await uploadPendingMediaFiles({
+            accessToken,
+            files: pendingMedia,
+            reportId: result.id,
+          });
+          mediaNotice = media.length
+            ? `${formatReportMediaSummary(media)} 첨부도 함께 저장됐어요.`
+            : "";
+        } catch {
           mediaNotice =
-            "기록은 저장됐지만 사진·영상은 계정에 연결된 서버 기록에서만 저장할 수 있어요.";
+            "기록은 저장됐지만 사진·영상 첨부는 저장하지 못했어요. 필요하면 새 기록에서 다시 첨부해 주세요.";
         }
       }
       const record: HistoryRecord = {
@@ -3218,9 +3125,6 @@ export default function App() {
             />
           )}
 
-          <Text style={styles.notice}>
-            AI 요약과 비밀키는 앱이 아니라 서버에서만 관리합니다.
-          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
       <QuickGuideModal open={quickGuideOpen} onClose={closeQuickGuide} />
@@ -3263,11 +3167,9 @@ function isDateInput(value: string) {
 function ConfigurationCard() {
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>환경변수가 필요해요</Text>
+      <Text style={styles.cardTitle}>서비스 연결을 준비하고 있어요</Text>
       <Text style={styles.cardText}>
-        `apps/mobile/.env`에 `EXPO_PUBLIC_SUPABASE_URL`과
-        `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 넣으면 모바일 로그인을
-        시작할 수 있어요.
+        잠시 후 다시 시도해 주세요. 계속 보이면 앱을 최신 버전으로 업데이트해 주세요.
       </Text>
     </View>
   );
@@ -3689,6 +3591,7 @@ function AuthForm({
             onChangeText={setPassword}
             placeholder={mode === "signup" ? "8자 이상, 대·소문자·숫자·특수문자" : "비밀번호"}
             placeholderTextColor={colors.placeholder}
+            passwordRules={mode === "signup" ? iosPasswordRules : undefined}
             secureTextEntry
             style={styles.input}
             textContentType={mode === "login" ? "password" : "newPassword"}
@@ -3759,45 +3662,51 @@ function PasswordRecoveryModal({
       transparent
       visible={open}
     >
-      <View style={styles.quickGuideBackdrop}>
-        <View
-          accessibilityLabel="새 비밀번호 설정"
-          accessibilityViewIsModal
-          style={styles.passwordRecoveryDialog}
-        >
-          <Text style={styles.quickGuideEyebrow}>계정 복구</Text>
-          <Text style={styles.quickGuideTitle}>새 비밀번호 설정</Text>
-          <Text style={styles.cardText}>
-            이메일 로그인에 사용할 새 비밀번호를 입력해 주세요.
-          </Text>
-          <TextInput
-            autoCapitalize="none"
-            maxLength={64}
-            onChangeText={setPassword}
-            placeholder="8자 이상, 대·소문자·숫자·특수문자"
-            placeholderTextColor={colors.placeholder}
-            secureTextEntry
-            style={styles.input}
-            textContentType="newPassword"
-            value={password}
-          />
-          <PasswordChecklist password={password} />
-          <PrimaryButton
-            disabled={loading}
-            label={loading ? "저장 중..." : "새 비밀번호 저장"}
-            onPress={save}
-          />
-          <Message text={message} />
-          <TouchableOpacity
-            activeOpacity={0.8}
-            disabled={loading}
-            onPress={onClose}
-            style={styles.billingLaterButton}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.modalKeyboard}
+      >
+        <View style={styles.quickGuideBackdrop}>
+          <View
+            accessibilityLabel="새 비밀번호 설정"
+            accessibilityViewIsModal
+            style={styles.passwordRecoveryDialog}
           >
-            <Text style={styles.billingLaterText}>나중에</Text>
-          </TouchableOpacity>
+            <Text style={styles.quickGuideEyebrow}>계정 복구</Text>
+            <Text style={styles.quickGuideTitle}>새 비밀번호 설정</Text>
+            <Text style={styles.cardText}>
+              이메일 로그인에 사용할 새 비밀번호를 입력해 주세요.
+            </Text>
+            <TextInput
+              autoCapitalize="none"
+              maxLength={64}
+              onChangeText={setPassword}
+              placeholder="8자 이상, 대·소문자·숫자·특수문자"
+              placeholderTextColor={colors.placeholder}
+              passwordRules={iosPasswordRules}
+              secureTextEntry
+              style={styles.input}
+              textContentType="newPassword"
+              value={password}
+            />
+            <PasswordChecklist password={password} />
+            <PrimaryButton
+              disabled={loading}
+              label={loading ? "저장 중..." : "새 비밀번호 저장"}
+              onPress={save}
+            />
+            <Message text={message} />
+            <TouchableOpacity
+              activeOpacity={0.8}
+              disabled={loading}
+              onPress={onClose}
+              style={styles.billingLaterButton}
+            >
+              <Text style={styles.billingLaterText}>나중에</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -4940,7 +4849,7 @@ function MediaPickerSection({
           onPress={() => void onPickMedia("camera")}
           style={[styles.mediaAddButton, disabled && styles.buttonDisabled]}
         >
-          <Text style={styles.mediaAddButtonText}>카메라</Text>
+          <Text style={styles.mediaAddButtonText}>사진 촬영</Text>
         </TouchableOpacity>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -5016,7 +4925,9 @@ function MediaPickerSection({
           ))}
         </View>
       ) : (
-        <Text style={styles.mediaEmptyText}>촬영하거나 앨범에서 바로 추가하세요.</Text>
+        <Text style={styles.mediaEmptyText}>
+          사진을 찍거나 앨범에서 사진·영상을 추가하세요.
+        </Text>
       )}
       <Message text={mediaMessage} />
     </View>
@@ -5054,12 +4965,7 @@ function HealthResultCard({
       </View>
       <Text style={styles.resultTitle}>{result.headline}</Text>
       <Text style={styles.resultSummary}>{result.summary}</Text>
-      <Text style={styles.resultMeta}>
-        {recordDateLabel(result.createdAt)} ·{" "}
-        {result.storage === "remote" ? "서버 저장 완료" : "기기 내 결과"} ·{" "}
-        {result.source === "openai" ? "AI 정리 포함" : "기본 안전 규칙"}
-        {episodeId ? ` · 사건 연결됨` : ""}
-      </Text>
+      <Text style={styles.resultMeta}>{recordDateLabel(result.createdAt)}</Text>
 
       <ResultList title="지금 할 수 있는 일" items={result.actions} />
       <View style={styles.vetBriefBox}>
@@ -5107,7 +5013,7 @@ function ResultVetDraftBox({
           <Text style={styles.vetDraftEyebrow}>AI DRAFT · VET REVIEW</Text>
           <Text style={styles.planTitle}>AI 병원 요약</Text>
           <Text style={styles.planSubtitle}>
-            같은 사건의 기록을 수의사가 보기 좋은 제출용 문장으로 정리해요.
+            같은 건강 흐름의 기록을 수의사가 보기 좋은 문장으로 정리해요.
           </Text>
         </View>
         <Text
@@ -5126,7 +5032,7 @@ function ResultVetDraftBox({
 
       {!episodeId ? (
         <Text style={styles.planEmptyText}>
-          서버에 저장되고 같은 건강 흐름에 연결된 기록에서 만들 수 있어요.
+          저장된 건강 기록에서 만들 수 있어요.
         </Text>
       ) : !canStartAiDraft ? (
         <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
@@ -6101,12 +6007,8 @@ function HistoryRecordItem({
         {optionLabel(levelOptions, record.input.energy)} ·{" "}
         {optionLabel(durationOptions, record.input.duration)}
       </Text>
-      <View style={styles.historyStorageRow}>
-        <Text style={styles.historyStorage}>
-          {record.result.storage === "remote" ? "서버 저장" : "기기 내 결과"}
-          {record.episodeId ? " · 사건 연결" : ""}
-        </Text>
-        {mediaSummary ? (
+      {mediaSummary ? (
+        <View style={styles.historyStorageRow}>
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => setMediaOpen((current) => !current)}
@@ -6116,8 +6018,8 @@ function HistoryRecordItem({
               {mediaOpen ? `${mediaSummary} 접기` : `${mediaSummary} 보기`}
             </Text>
           </TouchableOpacity>
-        ) : null}
-      </View>
+        </View>
+      ) : null}
       {mediaOpen ? (
         <View style={styles.historyMediaList}>
           {media.map((item) => (
@@ -6364,6 +6266,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   keyboard: {
+    flex: 1,
+  },
+  modalKeyboard: {
     flex: 1,
   },
   fontLoading: {
@@ -8674,13 +8579,5 @@ const styles = StyleSheet.create({
   },
   historyActionDanger: {
     color: colors.danger,
-  },
-  notice: {
-    marginTop: 18,
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "600",
-    lineHeight: 19,
-    textAlign: "center",
   },
 });

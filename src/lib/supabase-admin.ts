@@ -7,6 +7,7 @@ import type {
   EpisodePlan,
   EpisodeProgress,
   HealthCheckInput,
+  HistoryRecord,
   PetEpisode,
   PetProfile,
   ReportMediaAttachment,
@@ -55,6 +56,11 @@ export interface HealthReportSaveResult {
 export interface HealthReportEditResult {
   report: DisplayHealthReport;
   result: AnalysisResult;
+}
+
+export interface PetHealthHistoryResult {
+  records: HistoryRecord[];
+  reports: DisplayHealthReport[];
 }
 
 export interface ReportOwner {
@@ -1540,10 +1546,10 @@ export async function deleteHealthReportMedia(
   }
 }
 
-export async function listPetHealthReports(
+export async function getPetHealthHistory(
   accessToken: string | null,
   petId: string | null,
-): Promise<DisplayHealthReport[] | null> {
+): Promise<PetHealthHistoryResult | null> {
   const owner = await getReportOwner(accessToken, petId);
   if (!owner) return null;
   try {
@@ -1556,10 +1562,16 @@ export async function listPetHealthReports(
     );
     if (!mediaRows) return null;
     const mediaByReport = groupMediaByReport(await signReportMediaRows(mediaRows));
-    return reports.map((report) => ({
+    const reportsWithMedia = reports.map((report) => ({
       ...report,
       media: mediaByReport.get(report.id) ?? [],
     }));
+    return {
+      records: reportsWithMedia.map((report) =>
+        storedReportToHistoryRecord(report, owner.pet),
+      ),
+      reports: reportsWithMedia,
+    };
   } catch {
     return null;
   }

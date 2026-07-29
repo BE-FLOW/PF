@@ -9,8 +9,8 @@ export const oauthProviderLabels: Record<OAuthProvider, string> = {
 };
 
 export const defaultOAuthProviderStatus: OAuthProviderStatus = {
-  google: false,
-  apple: false,
+  google: true,
+  apple: true,
 };
 
 function readProviderFlag(
@@ -109,7 +109,7 @@ export function oauthLinkErrorMessage(provider: OAuthProvider, error: unknown) {
   const message = authErrorMessage(error).toLowerCase();
 
   if (code === "manual_linking_disabled" || message.includes("manual")) {
-    return "계정 연결 설정이 아직 꺼져 있어요. 관리자 설정을 확인해 주세요.";
+    return "계정 연결을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.";
   }
   if (
     code === "identity_already_exists" ||
@@ -135,7 +135,7 @@ export function oauthCallbackErrorMessage(error: unknown) {
     return "로그인 확인 코드가 만료되었거나 앱으로 제대로 돌아오지 않았어요. Google 또는 Apple로 다시 시작해 주세요.";
   }
   if (message.includes("redirect") || message.includes("provider")) {
-    return "로그인 설정을 확인해야 해요. 관리자에게 Redirect URL과 Provider 설정을 알려 주세요.";
+    return "로그인 연결 설정을 확인해야 해요. 잠시 후 다시 시도해 주세요.";
   }
   return "로그인을 완료하지 못했어요. 다시 시도해 주세요.";
 }
@@ -155,6 +155,19 @@ function callbackParam(url: string, key: string) {
 
 export function oauthCallbackCode(url: string) {
   return callbackParam(url, "code");
+}
+
+export function isOAuthCallbackUrl(url: string | null): url is string {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "petflow:" &&
+      (parsed.hostname === "auth-callback" || parsed.pathname === "/auth-callback")
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function oauthCallbackUrlErrorMessage(url: string) {
@@ -177,7 +190,7 @@ export function oauthCallbackUrlErrorMessage(url: string) {
     }
 
     if (message.includes("provider") || message.includes("redirect")) {
-      return "로그인 설정을 확인해야 해요. 관리자에게 Provider와 Redirect URL 설정을 알려 주세요.";
+      return "로그인 연결 설정을 확인해야 해요. 잠시 후 다시 시도해 주세요.";
     }
 
     return "로그인을 완료하지 못했어요. 다시 시도해 주세요.";
@@ -191,10 +204,10 @@ export function oauthSignInErrorMessage(provider: OAuthProvider, error: unknown)
   const message = authErrorMessage(error).toLowerCase();
 
   if (message.includes("provider") || message.includes("unsupported")) {
-    return `${label} 로그인이 아직 활성화되지 않았어요. 관리자 설정을 확인해 주세요.`;
+    return `${label} 로그인을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.`;
   }
   if (message.includes("redirect")) {
-    return `${label} 로그인 Redirect URL 설정을 확인해야 해요.`;
+    return `${label} 로그인 연결 설정을 확인해야 해요. 잠시 후 다시 시도해 주세요.`;
   }
   return `${label} 로그인을 완료하지 못했어요. 잠시 후 다시 시도해 주세요.`;
 }

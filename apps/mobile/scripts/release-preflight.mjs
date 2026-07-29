@@ -121,9 +121,31 @@ record("앱 버전과 식별자", () => {
 record("공통 앱 자산", () => {
   ensureFiles([
     "assets/icon.png",
-    "assets/splash-icon.png",
+    "assets/brand-icon.png",
     "assets/fonts/Pretendard-LICENSE.txt",
   ]);
+});
+
+record("EAS 업로드 제외 규칙", () => {
+  const ignoreRules = fs
+    .readFileSync(path.join(mobileRoot, ".easignore"), "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const requiredRules = [
+    ".env*",
+    "credentials/",
+    "credentials.json",
+    "google-service-account*.json",
+    "*.jks",
+    "*.keystore",
+    "*.mobileprovision",
+    "*.p12",
+    "*.p8",
+    "*.pem",
+  ];
+  const missingRules = requiredRules.filter((rule) => !ignoreRules.includes(rule));
+  ensure(!missingRules.length, `unsafe EAS archive rules: ${missingRules.join(", ")}`);
 });
 
 if (platform === "all" || platform === "android") {

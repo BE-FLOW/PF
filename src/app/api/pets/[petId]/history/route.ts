@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { accessTokenFromRequest } from "@/lib/api-auth";
 import { isUuid } from "@/lib/report-storage";
 import {
+  getPetHealthHistory,
   listPetEpisodes,
   listPetEpisodePlans,
   listPetEpisodeProgress,
-  listPetHealthReports,
 } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
@@ -25,17 +25,17 @@ export async function GET(
       { status: 400 },
     );
   }
-  const [reports, episodes, plans, progress] = await Promise.all([
-    listPetHealthReports(accessToken, petId),
+  const [history, episodes, plans, progress] = await Promise.all([
+    getPetHealthHistory(accessToken, petId),
     listPetEpisodes(accessToken, petId),
     listPetEpisodePlans(accessToken, petId),
     listPetEpisodeProgress(accessToken, petId),
   ]);
-  if (!reports || !episodes || !plans || !progress) {
+  if (!history || !episodes || !plans || !progress) {
     return NextResponse.json(
       { error: "기록을 불러올 수 없어요." },
       { status: 401 },
     );
   }
-  return NextResponse.json({ reports, episodes, plans, progress });
+  return NextResponse.json({ ...history, episodes, plans, progress });
 }

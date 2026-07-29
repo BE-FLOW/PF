@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  analyzeLocally,
   buildEpisodeReport,
   hasDailyObservation,
   toggleDailyObservation,
+  type AnalysisResult,
   type HealthCheckInput,
   type HistoryRecord,
 } from "./health";
@@ -41,9 +41,23 @@ describe("daily observation composer", () => {
 
 describe("episode follow-up flow", () => {
   function record(createdAt: string): HistoryRecord {
+    const result: AnalysisResult = {
+      id: `record-${createdAt}`,
+      createdAt,
+      riskLevel: "watch",
+      riskScore: 8,
+      headline: "지금은 차분히 관찰해도 좋아요",
+      summary: "평소 상태에 가깝게 기록됐어요.",
+      observations: [],
+      actions: [],
+      vetBrief: "보리의 기록",
+      disclaimer: "수의사의 진단을 대신하지 않습니다.",
+      source: "local",
+      storage: "remote",
+    };
     return {
       input: base,
-      result: { ...analyzeLocally(base), createdAt },
+      result,
     };
   }
 
