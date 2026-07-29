@@ -21,8 +21,8 @@ const defaults = Object.freeze({
   reviewImagePath: path.join(
     "store",
     "app-store",
-    "iphone-6-7",
-    "05-report-summary.png",
+    "iap",
+    "ai-summary-purchase.png",
   ),
 });
 

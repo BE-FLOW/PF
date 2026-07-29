@@ -115,7 +115,7 @@ export async function purchaseAiSummaryCredit(
   }
 }
 
-export async function refreshAiSummaryPurchaseHistory(userId: string) {
+export async function refreshAiSummaryPaymentStatus(userId: string) {
   if (!(await configureMobileBilling(userId))) {
     return {
       refreshed: false,
@@ -126,11 +126,11 @@ export async function refreshAiSummaryPurchaseHistory(userId: string) {
   try {
     await Purchases.invalidateCustomerInfoCache();
     await Purchases.getCustomerInfo();
-    return { refreshed: true, message: "구매 내역을 확인했어요." };
+    return { refreshed: true, message: "결제 반영 상태를 확인했어요." };
   } catch {
     return {
       refreshed: false,
-      message: "구매 내역을 확인하지 못했어요.",
+      message: "결제 반영 상태를 확인하지 못했어요.",
     };
   }
 }

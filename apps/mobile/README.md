@@ -27,7 +27,7 @@ npm run start
 - 첫 무료 요약이 남아 있는 동안에는 유료 구매를 먼저 권하지 않습니다. 무료분을
   사용한 뒤에만 자동 갱신 없는 1회 이용권을 보여 줍니다.
 - 결제 직후 서버 반영이 늦으면 앱이 짧게 재확인하고, 요청하던 AI 요약을 자동으로
-  이어 만듭니다. `구매 내역 확인`은 지연 상황을 위한 보조 경로입니다.
+  이어 만듭니다. `결제 반영 확인`은 지연 상황을 위한 보조 경로입니다.
 - 기록 저장은 요청별 idempotency key를 사용해 네트워크 재시도 중복을 막습니다.
 - 사진·영상은 서버가 발급한 비공개 Storage 업로드 경로만 사용합니다.
 
@@ -52,9 +52,10 @@ npm run status:ios:iap
 ```bash
 npm run release:android:closed
 npm run release:android:production
-npm run release:ios:testflight
 npm run release:ios:review-candidate
+npm run readiness:ios:app-store -- --build-number <새빌드>
 ```
 
 배포는 DB 마이그레이션과 서버 API가 먼저 반영된 뒤 진행합니다. 스토어 상태와
-현재 빌드는 `docs/mobile-store-registration.md`를 기준으로 확인합니다.
+현재 빌드는 `docs/mobile-store-registration.md`를 기준으로 확인합니다. iOS
+TestFlight 배포, 스크린샷 교체, 기존 승인 철회는 모두 정확한 빌드 번호를 요구합니다.

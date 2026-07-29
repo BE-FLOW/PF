@@ -14,22 +14,24 @@
 | Android package name | `com.beflow.petflow` |
 | 앱 버전 | `1.0` (`package.json`은 `1.0.0`) |
 | iOS App Store version | `1.0` |
-| iOS remote build number | `22` (다음 후보는 자동 증가) |
+| iOS remote build number | `24` (다음 후보는 `25` 예상) |
 | Android remote version code | `29` (다음 후보는 자동 증가) |
 | 개인정보 처리방침 | `https://pf-two-eta.vercel.app/privacy` |
 
-## 2026-07-23 상태
+## 2026-07-29 상태
 
 - 웹 운영본은 `main`의 최신 커밋으로 계속 갱신한다.
 - Android EAS 원격 version code는 `29`다. 결제가 포함된 다음 후보는 현재
   변경분을 동결한 뒤 자동 증가시켜 만든다.
-- iOS App Store Connect에 연결된 빌드는 `1.0 (22)`다. 빌드는 유효하지만 현재
-  심사 상태는 `REJECTED`, 출시 방식은 수동이다.
+- iOS App Store Connect에 연결된 빌드는 `1.0 (22)`다. 심사를 통과해
+  `PENDING_DEVELOPER_RELEASE` 상태지만 현재 `main`보다 오래된 빌드이므로 출시하지
+  않는다.
 - 따라서 앞으로 수정되는 내용은 새 Android/iOS 빌드를 만들기 전까지 설치된 앱에
   자동 반영되지 않는다.
 - Android 정식 출시는 Google Play 프로덕션 액세스와 결제 상품 활성화를 확인한
   뒤 진행한다.
-- iOS는 거절 사유를 해소한 최신 결제 빌드를 연결해 다시 심사한다.
+- iOS는 최신 `main`으로 새 빌드를 만들고 실제 화면을 다시 캡처한 뒤, 빌드 `22`를
+  철회하고 새 빌드와 첫 인앱결제를 함께 심사에 제출한다.
 
 ## 빌드와 제출 프로필
 
@@ -84,36 +86,86 @@ npm run release:android:closed
 
 ## iOS 심사와 출시
 
-빌드 `22`는 심사를 통과했지만 수동 출시 전 상태다. 승인된 빌드가 현재
-`origin/main`과 다르면 출시하지 않고 최신 빌드로 교체한 뒤 다시 심사한다.
+빌드 `22`는 심사를 통과했지만 현재 `origin/main`과 다르므로 출시하지 않는다.
+아래 순서는 예전 빌드나 예전 스크린샷을 선택하면 중단되도록 구성되어 있다.
 
-1. 아래 명령으로 새 후보를 빌드하고 업로드한다.
-2. 인앱결제 상품을 앱 버전에 연결한다.
-3. 결제 복구와 첫 무료 AI 요약을 Sandbox에서 확인한다.
-4. 메타데이터와 스크린샷을 확인한 뒤 새 빌드로 심사를 다시 제출한다.
+1. 코드 동결 커밋에서 새 후보를 빌드하고 App Store Connect에 업로드한다.
+2. 정확한 새 빌드 번호로 TestFlight에 배포하고 아래 기기 QA를 마친다.
+3. 실제 iPhone에서 스토어용 다섯 화면과 결제 모달 한 화면을 캡처하고 빌드 번호·
+   Git 커밋·파일 해시·QA 확인이 포함된 manifest를 만든다.
+4. 스크린샷만 별도 커밋해 `main`에 올린다.
+5. 승인된 빌드 `22`를 철회하고 새 빌드, 메타데이터, 스크린샷을 연결한다.
+6. App Store Connect 웹에서 첫 인앱결제를 이 앱 버전에 포함해 심사 제출한다.
 
 ```bash
 cd apps/mobile
 npm run release:ios:review-candidate
-npm run prepare:ios:app-store
-npm run upload:ios:screenshots
 ```
 
-외부 TestFlight에만 최신 후보를 제공할 때는 다음 명령을 사용한다.
+현재 원격 번호가 `24`이므로 다음 빌드는 `25`로 예상하지만, EAS 완료 화면의 실제
+번호를 사용한다. 아래의 `<새빌드>`를 그 번호로 바꾼다. TestFlight에서 다음을 모두
+확인한 뒤에만 QA 확인 문자열을 사용한다.
+
+- Google·Apple·심사용 이메일 로그인과 재실행 후 세션 유지
+- 반려동물 등록·수정·사진 표시
+- 기록 추가·수정·삭제, 사진·영상 열람
+- 달력 기간 선택, 기본 병원 공유 요약과 기기 공유
+- 첫 무료 AI 요약과 사실 초안 표시
+- Apple Sandbox 결제 취소 시 이용권 미지급
+- Apple Sandbox 결제 성공, 이용권 1회 지급·사용, 중복 지급 없음
+- 결제 지연 시 `결제 반영 확인`, 로그아웃·재로그인 후 기록과 잔여 이용권 유지
+- 별도 계정에서 즉시 계정 탈퇴 후 데이터 접근 차단
+
+스토어용 다섯 장은 `store/app-store/iphone-6-7`, 결제 모달 화면은
+`store/app-store/iap/ai-summary-purchase.png`에 둔다. 모두 1290×2796 PNG다.
 
 ```bash
-npm run release:ios:testflight
+npm run submit:ios:testflight-internal -- --build-number <새빌드>
+npm run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_BUILD_<새빌드>_QA_PASSED
+npm run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_BUILD_<새빌드>_QA_PASSED --execute true
 ```
+
+내부 QA를 마친 같은 빌드를 기존 외부 사용자에게도 제공할 때만 다음 명령을 실행한다.
+
+```bash
+npm run submit:ios:testflight-external -- --build-number <새빌드>
+```
+
+스크린샷 다섯 장과 manifest만 커밋·푸시한 뒤 기존 승인을 철회한다. 철회 명령은
+먼저 읽기 전용으로 대상 빌드가 `22`인지 확인한다.
+
+```bash
+npm run withdraw:ios:version -- --expected-build 22
+npm run withdraw:ios:version -- --expected-build 22 --execute true --confirm WITHDRAW_1.0_BUILD_22
+```
+
+새 빌드를 연결하고 스크린샷을 교체한다. `prepare`는 기본적으로 읽기 전용이며
+`--execute true`가 있을 때만 App Store Connect를 변경한다.
+
+```bash
+npm run prepare:ios:app-store -- --build-number <새빌드>
+npm run prepare:ios:app-store -- --build-number <새빌드> --execute true
+npm run validate:ios:screenshots -- --build-number <새빌드>
+npm run upload:ios:screenshots -- --build-number <새빌드>
+npm run upload:ios:iap-review
+npm run readiness:ios:app-store -- --build-number <새빌드>
+```
+
+마지막 단계는 App Store Connect 웹에서 `petflow_ai_summary_1`을 앱 버전 `1.0`과
+함께 선택해 심사 제출하는 것이다. 첫 인앱결제는 Apple 정책상 API로 대신 제출하지
+않는다.
 
 읽기 전용 상태 확인:
 
 ```bash
 npm run status:ios
 npm run verify:ios:release-build
+npm run readiness:ios:app-store -- --build-number <새빌드>
 ```
 
 `verify:ios:release-build`는 App Store에 선택된 빌드 번호를 EAS 빌드 이력과
-대조한다. 해당 빌드의 Git 커밋이 현재 `origin/main`과 다르면 실패한다.
+대조한다. 빌드 이후 변경은 App Store 스크린샷 파일만 허용하며 앱 코드가 한 줄이라도
+달라졌으면 실패한다.
 
 ## 자동 사전검증
 
@@ -172,7 +224,7 @@ ID에 연결한다. 관찰 원문·사진·영상·이메일은 결제 지표에
 - 앱 ID: `6786073387`
 - Bundle ID: `com.beflow.petflow`
 - App Store version: `1.0`
-- 현재 연결 빌드: iOS build `22`
+- 현재 연결 빌드: iOS build `22` (출시 금지, 최신 후보로 교체 예정)
 - 카테고리: 라이프스타일
 - 연령 등급: 9+
 - 가격: 무료
@@ -192,12 +244,12 @@ ID에 연결한다. 관찰 원문·사진·영상·이메일은 결제 지표에
 - AI 리포트는 수의사 확인 정보가 아닌 초안이라고 심사 메모와 앱 UI에 표시한다.
 - 즉시 계정 탈퇴 경로는 앱 계정 화면과 개인정보 처리방침에 제공한다.
 
-App Store 메타데이터와 스크린샷은 다음 스크립트로 반복 적용한다.
+App Store 메타데이터와 스크린샷은 정확한 빌드 번호를 지정해 적용한다.
 
 ```bash
 cd apps/mobile
-npm run prepare:ios:app-store
-npm run upload:ios:screenshots
+npm run prepare:ios:app-store -- --build-number <새빌드> --execute true
+npm run upload:ios:screenshots -- --build-number <새빌드>
 ```
 
 App Store Connect API 키는 저장소에 커밋하지 않는다. 기본 탐색 경로는

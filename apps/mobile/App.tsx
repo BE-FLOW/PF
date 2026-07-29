@@ -45,7 +45,7 @@ import {
   getMobileBillingProduct,
   isMobileBillingAvailable,
   purchaseAiSummaryCredit,
-  refreshAiSummaryPurchaseHistory,
+  refreshAiSummaryPaymentStatus,
   resetMobileBillingCache,
   subscribeToMobileBillingUpdates,
   type MobileBillingProduct,
@@ -630,7 +630,7 @@ export default function App() {
         });
 
         const productRequest = getMobileBillingProduct(user.id);
-        const purchaseRecovery = refreshAiSummaryPurchaseHistory(user.id)
+        const purchaseRecovery = refreshAiSummaryPaymentStatus(user.id)
           .catch(() => undefined)
           .then(async () => {
             const accessToken = await billingAccessToken();
@@ -2651,7 +2651,7 @@ export default function App() {
         (synced.access?.availableCredits ?? 0) < minimumCredits
       ) {
         setBillingMessage(
-          "결제는 완료됐어요. 스토어 반영이 늦어지고 있어 구매 내역에서 계속 확인할 수 있어요.",
+          "결제는 완료됐어요. 스토어 반영이 늦어지고 있어 결제 반영 확인에서 다시 확인할 수 있어요.",
         );
         void trackMonetizationEvent("purchase_sync_delayed", billingContext);
         return;
@@ -2674,7 +2674,7 @@ export default function App() {
     } catch {
       setBillingMessage(
         storePurchaseCompleted
-          ? "결제가 완료됐을 수 있어요. 구매 내역 확인을 눌러 반영해 주세요."
+          ? "결제가 완료됐을 수 있어요. 결제 반영 확인을 눌러 주세요."
           : "결제 준비 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
       );
       void trackMonetizationEvent("purchase_failed", billingContext);
@@ -2690,7 +2690,7 @@ export default function App() {
     setBillingLoading(true);
     setBillingMessage("");
     try {
-      const refreshed = await refreshAiSummaryPurchaseHistory(user.id);
+      const refreshed = await refreshAiSummaryPaymentStatus(user.id);
       if (!refreshed.refreshed) {
         setBillingMessage(refreshed.message);
         return;
@@ -2734,7 +2734,7 @@ export default function App() {
       );
     } catch {
       setBillingMessage(
-        "구매 내역을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        "결제 반영 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
       );
     } finally {
       billingOperationInFlightRef.current = false;
@@ -3766,22 +3766,28 @@ function AccountCard({
       aiAccess.reason !== "unavailable" &&
       !complimentarySummaryAvailable,
   );
+  const accountName =
+    accountProfile?.nickname?.trim() ||
+    (typeof user.user_metadata?.full_name === "string"
+      ? user.user_metadata.full_name.trim()
+      : "") ||
+    (typeof user.user_metadata?.name === "string"
+      ? user.user_metadata.name.trim()
+      : "") ||
+    "내 계정";
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardEyebrow}>SIGNED IN</Text>
-      <Text style={styles.cardTitle}>
-        {accountProfile?.nickname || user.email || "사용자"}
-      </Text>
+      <Text style={styles.cardEyebrow}>내 계정</Text>
+      <Text style={styles.cardTitle}>{accountName}</Text>
       <Text style={styles.cardText}>{user.email}</Text>
 
       <View style={styles.identityLinkBox}>
         <View style={styles.identityLinkHeader}>
           <View style={styles.cardHeaderText}>
-            <Text style={styles.identityLinkTitle}>로그인 연결</Text>
+            <Text style={styles.identityLinkTitle}>로그인 방법</Text>
             <Text style={styles.identityLinkText}>
-              기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 AI 요약 이용 내역이
-              그대로 이어져요.
+              Google 또는 Apple을 연결해도 지금 계정의 기록과 이용 내역이 이어져요.
             </Text>
           </View>
         </View>
@@ -3854,7 +3860,7 @@ function AccountCard({
 
         {!googleLinked || (appleEnabled && !appleLinked) ? (
           <Text style={styles.identityLinkHelp}>
-            기록이 나뉘지 않도록 먼저 기존 이메일 계정으로 로그인한 뒤 연결해 주세요.
+            연결은 선택 사항이며 현재 기록은 그대로 유지돼요.
           </Text>
         ) : null}
 
@@ -3929,7 +3935,7 @@ function AccountCard({
                 onPress={() => void onRefreshAiCredits()}
                 style={styles.aiBillingRestore}
               >
-                <Text style={styles.aiBillingRestoreText}>구매 내역 확인</Text>
+                <Text style={styles.aiBillingRestoreText}>결제 반영 확인</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -4101,7 +4107,7 @@ function AiBillingModal({
               onPress={() => void onRefresh()}
               style={styles.billingSecondaryButton}
             >
-              <Text style={styles.billingSecondaryText}>구매 내역 확인</Text>
+              <Text style={styles.billingSecondaryText}>결제 반영 확인</Text>
             </TouchableOpacity>
           ) : null}
 

@@ -20,7 +20,7 @@
 - 로그인 전 구매와 익명 사용자 구매를 허용하지 않습니다.
 - RevenueCat의 거래 양도 동작은 원래 App User ID에 구매를 유지하도록 설정합니다.
   OAuth 연결 뒤에도 Supabase 사용자 UUID가 같으므로 기록과 이용권이 함께 이어집니다.
-- 소모성 상품에 스토어 복원 UI를 사용하지 않습니다. `구매 내역 확인`은 현재
+- 소모성 상품에 스토어 복원 UI를 사용하지 않습니다. `결제 반영 확인`은 현재
   Supabase 계정의 RevenueCat 고객 정보와 서버 원장만 조용히 새로고침합니다.
 
 ## 서버 원장
@@ -36,7 +36,7 @@ AI 생성 전 서버가 이용권 한 개를 예약합니다. 생성 실패나 5
 
 결제 직후 스토어 거래가 RevenueCat에 늦게 보이는 경우 앱이 자동으로 여러 번
 확인하고, 이용권이 확인되면 사용자가 다시 누르지 않아도 요청하던 AI 요약을
-이어 만듭니다. 계속 지연될 때만 `구매 내역 확인`을 보조 경로로 제공합니다.
+이어 만듭니다. 계속 지연될 때만 `결제 반영 확인`을 보조 경로로 제공합니다.
 
 앱의 결제 완료 반영은 `/api/billing/sync`가 RevenueCat 고객 정보를 확인하는
 경로가 기본입니다. 따라서 웹훅이 잠시 지연돼도 정상 구매는 앱에서 복구할 수
@@ -55,7 +55,7 @@ AI 생성 전 서버가 이용권 한 개를 예약합니다. 생성 실패나 5
 
 - 구매창 열기·닫기
 - 결제 시작·취소·실패·반영 지연
-- 구매 내역 확인
+- 결제 반영 확인
 - 생성한 AI 요약 공유
 
 관찰 내용, 사진·영상과 이메일은 넣지 않습니다. 실제 결제 완료는
@@ -103,7 +103,7 @@ EXPO_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID=petflow_ai_summary_1
 7. RevenueCat Pro 웹훅은 `/api/billing/revenuecat/webhook`으로 전송되며
    Authorization 값이 서버 토큰과 같습니다.
 8. Apple Sandbox, Google 라이선스 테스터, 웹 테스트 결제에서 구매·취소·재시도·
-   구매 내역 확인·AI 실패 반환을 검증했습니다.
+   결제 반영 확인·AI 실패 반환을 검증했습니다.
 9. 환불된 미사용 이용권은 회수되고, 이미 생성한 기록과 요약은 유지됩니다.
 
 상품이나 키가 준비되지 않은 빌드에서는 결제 버튼을 숨기고 무료 이용권만
@@ -124,11 +124,12 @@ npm --prefix apps/mobile run status:ios:iap
 확인합니다. 상품 상태가 `READY_TO_SUBMIT`이어도 RevenueCat 연결과 새 네이티브
 빌드가 끝나기 전에는 앱 심사에 첨부하지 않습니다.
 
-최신 결제창을 실제 기기에서 캡처한 뒤 심사용 이미지를 교체할 때만 다음 명령을
-사용합니다.
+최신 결제창을 실제 기기에서 1290×2796 PNG로 캡처해
+`apps/mobile/store/app-store/iap/ai-summary-purchase.png`에 둔 뒤, 빌드 QA
+manifest를 만든 경우에만 다음 명령을 사용합니다.
 
 ```powershell
-node apps/mobile/scripts/configure-ios-iap.mjs --apply --replace-review-image --review-image <절대경로>
+npm --prefix apps/mobile run upload:ios:iap-review
 ```
 
 ## Google 상품 확인

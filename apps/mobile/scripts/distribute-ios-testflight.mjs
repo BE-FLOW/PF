@@ -18,24 +18,32 @@ const appId = args.get("--app-id") || process.env.ASC_APP_ID || defaults.appId;
 const groupName =
   args.get("--group") || process.env.ASC_EXTERNAL_GROUP_NAME || defaults.groupName;
 const buildNumber = args.get("--build-number") || process.env.ASC_BUILD_NUMBER;
+const execute = args.get("--execute") === "true";
+const internal = args.get("--internal") === "true";
 const keyId = args.get("--key-id") || defaults.keyId;
 const issuerId = args.get("--issuer-id") || defaults.issuerId;
 
 const { request } = createAppStoreConnectClient({ keyId, issuerId });
 
-async function findLatestBuild() {
-  const filter = buildNumber ? `&filter[version]=${encodeURIComponent(buildNumber)}` : "";
+if (!buildNumber) {
+  throw new Error("--build-number is required to prevent distributing a stale build.");
+}
+
+async function findRequestedBuild() {
   const data = await request(
-    `/v1/builds?filter[app]=${appId}${filter}&sort=-uploadedDate&limit=10`,
+    `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(buildNumber)}&sort=-uploadedDate&limit=10`,
   );
-  const build = data.data.find((item) => !item.attributes.expired);
-  return build ?? null;
+  const builds = data.data.filter((item) => !item.attributes.expired);
+  if (builds.length > 1) {
+    throw new Error(`Expected one App Store build ${buildNumber}; found ${builds.length}.`);
+  }
+  return builds[0] ?? null;
 }
 
 async function waitForValidBuild() {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30 * 60 * 1000) {
-    const build = await findLatestBuild();
+    const build = await findRequestedBuild();
     if (!build) {
       console.log(
         buildNumber
@@ -56,13 +64,17 @@ async function waitForValidBuild() {
   throw new Error("Timed out waiting for App Store Connect build processing.");
 }
 
-async function findExternalGroup() {
+async function findGroup() {
   const data = await request(`/v1/betaGroups?filter[app]=${appId}&limit=100`);
   const group = data.data.find(
-    (item) => item.attributes.name === groupName && item.attributes.isInternalGroup === false,
+    (item) =>
+      item.attributes.name === groupName &&
+      item.attributes.isInternalGroup === internal,
   );
   if (!group) {
-    throw new Error(`External TestFlight group not found: ${groupName}`);
+    throw new Error(
+      `${internal ? "Internal" : "External"} TestFlight group not found: ${groupName}`,
+    );
   }
   return group;
 }
@@ -109,9 +121,15 @@ async function ensureBetaReviewSubmission(buildId) {
 }
 
 const build = await waitForValidBuild();
-const group = await findExternalGroup();
-const attachState = await attachBuildToGroup(build.id, group.id);
-const reviewState = await ensureBetaReviewSubmission(build.id);
+const group = await findGroup();
+const attachState = execute
+  ? await attachBuildToGroup(build.id, group.id)
+  : "dry-run";
+const reviewState = execute
+  ? internal
+    ? "not-required"
+    : await ensureBetaReviewSubmission(build.id)
+  : "dry-run";
 
 console.log(
   JSON.stringify(
@@ -119,10 +137,15 @@ console.log(
       buildId: build.id,
       buildNumber: build.attributes.version,
       processingState: build.attributes.processingState,
-      externalGroup: group.attributes.name,
+      execute,
+      group: group.attributes.name,
+      internal,
       publicLink: group.attributes.publicLink,
       attachState,
       betaReviewState: reviewState,
+      nextStep: execute
+        ? `The exact build was attached to the ${internal ? "internal" : "external"} TestFlight group.`
+        : "Dry run only. Add --execute true to distribute this exact build.",
     },
     null,
     2,
