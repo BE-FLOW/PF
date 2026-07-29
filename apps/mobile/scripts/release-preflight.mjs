@@ -128,15 +128,15 @@ record("공통 앱 자산", () => {
 
 record("EAS 업로드 제외 규칙", () => {
   const ignoreRules = fs
-    .readFileSync(path.join(mobileRoot, ".easignore"), "utf8")
+    .readFileSync(path.join(repoRoot, ".easignore"), "utf8")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   const requiredRules = [
     ".env*",
-    "credentials/",
-    "credentials.json",
-    "google-service-account*.json",
+    "apps/mobile/credentials/",
+    "apps/mobile/credentials.json",
+    "apps/mobile/google-service-account*.json",
     "*.jks",
     "*.keystore",
     "*.mobileprovision",

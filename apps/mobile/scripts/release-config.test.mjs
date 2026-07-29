@@ -11,6 +11,7 @@ import {
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDir, "..");
+const repoRoot = path.resolve(mobileRoot, "..", "..");
 const require = createRequire(import.meta.url);
 const packageJson = JSON.parse(
   fs.readFileSync(path.join(mobileRoot, "package.json"), "utf8"),
@@ -29,9 +30,9 @@ describe("mobile release configuration", () => {
   });
 
   it("keeps local credentials out of EAS build archives", () => {
-    const easIgnore = fs.readFileSync(path.join(mobileRoot, ".easignore"), "utf8");
-    expect(easIgnore).toContain("credentials.json");
-    expect(easIgnore).toContain("credentials/");
+    const easIgnore = fs.readFileSync(path.join(repoRoot, ".easignore"), "utf8");
+    expect(easIgnore).toContain("apps/mobile/credentials.json");
+    expect(easIgnore).toContain("apps/mobile/credentials/");
     expect(easIgnore).toContain("*.p8");
     expect(easIgnore).toContain(".env*");
   });
