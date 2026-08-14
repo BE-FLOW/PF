@@ -3183,7 +3183,7 @@ function HomeDashboard({
         <Text style={styles.homePrepText}>
           {hasHistory
             ? "이전 기록과 병원에서 들은 내용은 다음 전달본에 이어져요."
-            : "한 줄과 사진을 병원에서 바로 보여줄 전달본으로 정리해요."}
+            : "한 줄과 사진만 남기세요. 첫 전달본은 무료예요."}
         </Text>
         <TouchableOpacity
           accessibilityLabel="병원 전달본 준비 시작"
@@ -5053,7 +5053,7 @@ function ResultVetDraftBox({
           ]}
         >
           {canUseAiDraft
-            ? `${aiAccess?.availableCredits ?? 0}회`
+            ? aiDraftCreditLabel(aiAccess)
             : aiAccess?.reason === "no_credits"
               ? "1회 추가"
               : "확인 필요"}
@@ -5079,7 +5079,11 @@ function ResultVetDraftBox({
               ]}
             >
               <Text style={styles.vetDraftPrimaryButtonText}>
-                {aiDraftActionLabel(vetDraftLoading, Boolean(vetDraft))}
+                {aiDraftActionLabel(
+                  vetDraftLoading,
+                  Boolean(vetDraft),
+                  aiAccess,
+                )}
               </Text>
             </TouchableOpacity>
             {vetDraft ? (
@@ -5798,7 +5802,7 @@ function EpisodeReportItem({
               ]}
             >
               {canUseAiDraft
-                ? `${aiAccess?.availableCredits ?? 0}회`
+                ? aiDraftCreditLabel(aiAccess)
                 : aiAccess?.reason === "no_credits"
                   ? "1회 추가"
                   : "확인 필요"}
@@ -5833,6 +5837,7 @@ function EpisodeReportItem({
                     {aiDraftActionLabel(
                       isCreatingVetDraft,
                       Boolean(vetDraft),
+                      aiAccess,
                     )}
                   </Text>
                 </TouchableOpacity>
@@ -6146,8 +6151,20 @@ function billingMessageTone(message: string): "success" | "error" {
   return completed && !failed ? "success" : "error";
 }
 
-function aiDraftActionLabel(loading: boolean, hasDraft: boolean) {
+function aiDraftCreditLabel(access: AiAccessStatus | null) {
+  if ((access?.complimentaryCredits ?? 0) > 0) return "첫 1회 무료";
+  return `${access?.availableCredits ?? 0}회`;
+}
+
+function aiDraftActionLabel(
+  loading: boolean,
+  hasDraft: boolean,
+  access: AiAccessStatus | null,
+) {
   if (loading) return "초안 만드는 중";
+  if (!hasDraft && (access?.complimentaryCredits ?? 0) > 0) {
+    return "첫 전달본 무료로 만들기";
+  }
   return hasDraft ? "다시 만들기 · 1회" : "병원 전달본 만들기 · 1회";
 }
 

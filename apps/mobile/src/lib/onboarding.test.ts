@@ -7,6 +7,7 @@ describe("first-use guide", () => {
 
     expect(guide.action).toBe("register");
     expect(guide.actionLabel).toBe("아이 등록하고 시작");
+    expect(guide.result).toContain("무료");
   });
 
   it("starts a short record when a pet has no history", () => {
@@ -18,6 +19,7 @@ describe("first-use guide", () => {
 
     expect(guide.action).toBe("record");
     expect(guide.title).toContain("보리");
+    expect(guide.result).toContain("무료");
   });
 
   it("uses existing records instead of asking for repeated input", () => {

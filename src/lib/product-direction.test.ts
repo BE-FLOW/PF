@@ -31,6 +31,7 @@ describe("current product direction", () => {
     expect(mobileSource).toContain("한 줄과 사진이 병원 전달본이 돼요");
     expect(mobileSource).toContain("병원에서 꼭 말하고 싶은 변화는 무엇인가요?");
     expect(mobileSource).toContain("저장하고 전달본 보기");
+    expect(mobileSource).toContain("첫 전달본 무료로 만들기");
     expect(mobileOnboardingSource).toContain("아이 등록하고 시작");
     expect(mobileOnboardingSource).toContain("첫 기록 남기기");
     expect(mobileOnboardingSource).toContain("기록 골라 전달본 만들기");
