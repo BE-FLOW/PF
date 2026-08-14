@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       (typeof body.comment !== "string" || body.comment.length > 500))
   ) {
     return NextResponse.json(
-      { error: "AI 리포트 피드백을 다시 확인해 주세요." },
+      { error: "병원 전달본 피드백을 다시 확인해 주세요." },
       { status: 400 },
     );
   }

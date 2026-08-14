@@ -31,8 +31,8 @@ export default function AccountDeletionPage() {
             <li>로그인 계정, 이메일과 연결된 로그인 수단</li>
             <li>반려동물 프로필, 건강 기록, 사진과 동영상 첨부 파일</li>
             <li>병원 공유용 요약, 자동 건강 흐름, 보호자가 옮긴 병원 안내</li>
-            <li>AI 병원 요약 사용량과 피드백</li>
-            <li>PetFlow에 저장된 구매 거래 식별자와 AI 요약 이용권 원장</li>
+            <li>병원 전달본 사용량과 피드백</li>
+            <li>PetFlow에 저장된 구매 거래 식별자와 병원 전달본 이용권 원장</li>
           </ul>
         </section>
 

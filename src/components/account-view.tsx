@@ -65,15 +65,15 @@ function PasswordChecklist({ password }: { password: string }) {
 
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access) {
-    return "AI 요약 이용 가능 횟수를 확인하고 있어요.";
+    return "병원 전달본 이용 가능 횟수를 확인하고 있어요.";
   }
   if (access.reason === "unavailable") {
     return "이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
   if (access.reason === "no_credits") {
-    return "필요할 때 AI 병원 요약 1회만 추가해요.";
+    return "필요할 때 병원 전달본 1회만 추가해요.";
   }
-  return `AI 병원 요약 ${access.availableCredits}회를 이용할 수 있어요.`;
+  return `병원 전달본 ${access.availableCredits}회를 이용할 수 있어요.`;
 }
 
 export function AccountView({
@@ -238,7 +238,7 @@ export function AccountView({
   async function requestDeletion() {
     if (deletionRequested) return;
     const confirmed = window.confirm(
-      "계정, 함께하는 아이들, 건강 기록, 사진·영상, AI 요약 기록이 삭제됩니다. 이 작업은 되돌리기 어려워요. 계속할까요?",
+      "계정, 함께하는 아이들, 건강 기록, 사진·영상, 병원 전달본 기록이 삭제됩니다. 이 작업은 되돌리기 어려워요. 계속할까요?",
     );
     if (!confirmed) return;
 
@@ -329,7 +329,7 @@ export function AccountView({
               <div>
                 <h3>로그인 연결</h3>
                 <p>
-                  기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 AI 요약 이용 내역이
+                  기존 이메일 계정에 Google 또는 Apple을 연결하면 기록과 병원 전달본 이용 내역이
                   그대로 이어져요.
                 </p>
               </div>
@@ -399,7 +399,7 @@ export function AccountView({
           <section className={`panel ai-access-panel ${aiAccess?.enabled ? "enabled" : ""}`}>
             <div className="panel-head">
               <div>
-                <h3>AI 병원 요약</h3>
+                <h3>병원 전달본</h3>
                 <p>{aiAccessCopy(aiAccess)}</p>
               </div>
               <span className={`ai-access-state ${aiAccess?.enabled ? "enabled" : ""}`}>
@@ -486,7 +486,7 @@ export function AccountView({
             <div>
               <h3>계정 탈퇴</h3>
               <p>
-                탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, AI 요약
+                탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, 병원 전달본
                 이용 기록이 삭제되고 현재 기기에서 로그아웃합니다.
               </p>
             </div>

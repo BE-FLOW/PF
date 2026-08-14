@@ -85,6 +85,49 @@ describe("iOS billing", () => {
     });
   });
 
+  it("loads and purchases the exact localized consumable", async () => {
+    const product = {
+      identifier: "petflow_ai_summary_1",
+      priceString: "₩1,900",
+    };
+    mocks.getProducts.mockResolvedValue([product]);
+    mocks.purchaseStoreProduct.mockResolvedValue({});
+    const billing = await loadBilling();
+
+    await expect(billing.getMobileBillingProduct("user-1")).resolves.toEqual({
+      identifier: "petflow_ai_summary_1",
+      priceLabel: "₩1,900",
+    });
+    await expect(billing.purchaseAiSummaryCredit("user-1")).resolves.toEqual({
+      status: "purchased",
+    });
+    expect(mocks.purchaseStoreProduct).toHaveBeenCalledWith(product);
+  });
+
+  it("does not start checkout when the configured product is missing", async () => {
+    mocks.getProducts.mockResolvedValue([]);
+    const billing = await loadBilling();
+
+    await expect(billing.purchaseAiSummaryCredit("user-1")).resolves.toEqual({
+      status: "unavailable",
+      message: "결제 상품을 불러오지 못했어요.",
+    });
+    expect(mocks.purchaseStoreProduct).not.toHaveBeenCalled();
+  });
+
+  it("refreshes RevenueCat before checking server-side purchase history", async () => {
+    const billing = await loadBilling();
+
+    await expect(
+      billing.refreshAiSummaryPaymentStatus("user-1"),
+    ).resolves.toEqual({
+      refreshed: true,
+      message: "결제 반영 상태를 확인했어요.",
+    });
+    expect(mocks.invalidateCustomerInfoCache).toHaveBeenCalledOnce();
+    expect(mocks.getCustomerInfo).toHaveBeenCalledOnce();
+  });
+
   it("disconnects a named store account during app sign-out", async () => {
     mocks.isConfigured.mockResolvedValue(true);
     mocks.getAppUserID.mockResolvedValue("user-1");

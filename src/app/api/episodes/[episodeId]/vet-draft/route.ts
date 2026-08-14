@@ -15,6 +15,7 @@ import {
   buildVetReviewDraft,
   formatVetReviewDraft,
 } from "@/lib/vet-review-report";
+import { vetDraftSystemPrompt } from "@/lib/vet-draft-prompt";
 import type { VetReviewDraft } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -128,12 +129,6 @@ async function enrichWithOpenAI(
                   minItems: 1,
                   maxItems: 5,
                 },
-                questionsForVet: {
-                  type: "array",
-                  items: { type: "string" },
-                  minItems: 2,
-                  maxItems: 4,
-                },
                 submissionNote: { type: "string" },
               },
               required: [
@@ -142,7 +137,6 @@ async function enrichWithOpenAI(
                 "keyObservations",
                 "mediaSummary",
                 "planAndProgress",
-                "questionsForVet",
                 "submissionNote",
               ],
             },
@@ -154,17 +148,7 @@ async function enrichWithOpenAI(
             content: [
               {
                 type: "input_text",
-                text:
-                  "당신은 반려동물 병원 접수 전 보호자 관찰 기록을 수의사가 빠르게 검토할 수 있게 정리하는 보조자입니다. " +
-                  "수의사 친화적인 사전 문진 보고서 문체를 사용하되 짧고 객관적으로 작성하세요. " +
-                  "입력된 사실만 사용하고 새 의학적 판단을 추가하지 마세요. " +
-                  "진단명, 질병 확정, 약물명, 용량, 치료 처방, 치료 계획을 생성하지 마세요. " +
-                  "보호자가 입력한 병원 계획과 경과는 수의사 확인 전 정보로 분리하세요. " +
-                  "첨부 사진·영상은 종류와 개수만 요약하고 이미지·영상 내용을 판독하거나 해석하지 마세요. " +
-                  "날짜별 변화, 반복 증상, 식욕·활력, 앱 안전 분류와 보호자가 옮긴 병원 안내를 구분하세요. " +
-                  "다른 병원에 처음 방문해도 이전 경과를 다시 설명하는 시간을 줄일 수 있게 handoffNote를 시간 순서로 작성하세요. " +
-                  "SOAP-LOOP의 관찰·정리·계획·경과 구조를 반영하되 SOAP 같은 전문 약어를 제목으로 노출하지 마세요. " +
-                  "보고서는 진료 전 검토 시간을 줄이는 초안이며 진단을 대신하지 않습니다. 한국어로 짧고 밀도 있게 작성하세요.",
+                text: vetDraftSystemPrompt,
               },
             ],
           },
@@ -181,7 +165,7 @@ async function enrichWithOpenAI(
                   timeline: baseDraft.timeline,
                   mediaSummary: baseDraft.mediaSummary,
                   planAndProgress: baseDraft.planAndProgress,
-                  questionsForVet: baseDraft.questionsForVet,
+                  missingObservableContext: baseDraft.questionsForVet,
                   submissionNote: baseDraft.submissionNote,
                   disclaimer: baseDraft.disclaimer,
                 }),
@@ -212,9 +196,6 @@ async function enrichWithOpenAI(
       baseDraft.planAndProgress;
     const mediaSummary =
       cleanStringArray(generated.mediaSummary, 1, 5) ?? baseDraft.mediaSummary;
-    const questionsForVet =
-      cleanStringArray(generated.questionsForVet, 2, 4) ??
-      baseDraft.questionsForVet;
     const submissionNote = cleanString(
       generated.submissionNote,
       baseDraft.submissionNote,
@@ -228,7 +209,7 @@ async function enrichWithOpenAI(
       keyObservations,
       mediaSummary,
       planAndProgress,
-      questionsForVet,
+      questionsForVet: baseDraft.questionsForVet,
       submissionNote,
     };
     return {
@@ -254,7 +235,7 @@ export async function POST(
   }
   if (!isUuid(episodeId)) {
     return NextResponse.json(
-      { error: "건강 흐름 정보를 다시 확인해 주세요." },
+      { error: "선택한 기록을 다시 확인해 주세요." },
       { status: 400 },
     );
   }
@@ -278,8 +259,8 @@ export async function POST(
     return NextResponse.json(
       {
         error: unavailable
-          ? "AI 요약 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
-          : "AI 병원 요약 1회 이용권이 필요해요.",
+          ? "병원 전달본 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
+          : "병원 전달본 1회 이용권이 필요해요.",
         access: access.status,
       },
       { status: unavailable ? 503 : 429 },
@@ -289,7 +270,7 @@ export async function POST(
   const bundle = await getEpisodeVetReviewBundle(accessToken, episodeId);
   if (!bundle) {
     return NextResponse.json(
-      { error: "수의사 검토용 초안을 만들 권한이나 기록을 확인하지 못했어요." },
+      { error: "병원 전달본을 만들 권한이나 기록을 확인하지 못했어요." },
       { status: 404 },
     );
   }
@@ -322,7 +303,7 @@ export async function POST(
       errorCode: "openai_unconfigured",
     });
     return NextResponse.json(
-      { error: "AI 요약을 잠시 사용할 수 없어요." },
+      { error: "병원 전달본을 잠시 만들 수 없어요." },
       { status: 503 },
     );
   }
@@ -351,8 +332,8 @@ export async function POST(
       {
         access: latestAccess,
         error: reservation.unavailable
-          ? "AI 요약 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
-          : "AI 병원 요약 1회 이용권이 필요해요.",
+          ? "병원 전달본 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
+          : "병원 전달본 1회 이용권이 필요해요.",
       },
       { status: reservation.unavailable ? 503 : 429 },
     );
@@ -368,7 +349,7 @@ export async function POST(
       errorCode: result.errorCode ?? "openai_failed",
     });
     return NextResponse.json(
-      { error: "AI 요약을 만들지 못했어요. 잠시 후 다시 시도해 주세요." },
+      { error: "병원 전달본을 만들지 못했어요. 잠시 후 다시 시도해 주세요." },
       { status: 502 },
     );
   }
@@ -386,7 +367,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "AI 요약 처리 상태를 확정하지 못했어요. 이용권은 자동으로 복구되니 잠시 후 다시 시도해 주세요.",
+          "병원 전달본 처리 상태를 확정하지 못했어요. 이용권은 자동으로 복구되니 잠시 후 다시 시도해 주세요.",
       },
       { status: 503 },
     );

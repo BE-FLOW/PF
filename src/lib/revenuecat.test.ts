@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const billingMocks = vi.hoisted(() => ({
   recordAiCreditPurchase: vi.fn(),
@@ -15,8 +15,13 @@ import {
   syncRevenueCatPurchases,
   verifyRevenueCatWebhookAuthorization,
 } from "./revenuecat";
+import { revenueCatServerConfiguration } from "./billing-config";
 
 const userId = "11111111-1111-4111-8111-111111111111";
+
+beforeEach(() => {
+  process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID = "petflow_ai_summary_1";
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -28,6 +33,13 @@ afterEach(() => {
 });
 
 describe("RevenueCat billing verification", () => {
+  it("does not allow any product without an explicit allowlist", () => {
+    delete process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID;
+    delete process.env.REVENUECAT_AI_SUMMARY_PRODUCT_IDS;
+
+    expect([...revenueCatProductIds()]).toEqual([]);
+  });
+
   it("keeps purchases behind an explicit product allowlist", () => {
     process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID = "petflow_ai_summary_1";
     process.env.REVENUECAT_AI_SUMMARY_PRODUCT_IDS =
@@ -38,6 +50,22 @@ describe("RevenueCat billing verification", () => {
       "petflow_ai_summary_2",
       "petflow_ai_summary_3",
     ]);
+  });
+
+  it("opens purchasing only when sync, webhook, and product settings exist", () => {
+    delete process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID;
+    process.env.REVENUECAT_SECRET_API_KEY = "secret-api-key";
+    process.env.REVENUECAT_WEBHOOK_AUTH_TOKEN = "webhook-token";
+
+    expect(revenueCatServerConfiguration()).toMatchObject({
+      customerSync: true,
+      webhook: true,
+      productAllowlist: false,
+      ready: false,
+    });
+
+    process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID = "petflow_ai_summary_1";
+    expect(revenueCatServerConfiguration().ready).toBe(true);
   });
 
   it("accepts only the configured webhook authorization", () => {
@@ -116,6 +144,70 @@ describe("RevenueCat billing verification", () => {
     expect(billingMocks.recordAiCreditPurchase).not.toHaveBeenCalled();
     expect(billingMocks.recordBillingEvent).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: "unrelated_product" }),
+    );
+  });
+
+  it("never credits an external checkout event", async () => {
+    billingMocks.recordBillingEvent.mockResolvedValue(true);
+
+    const result = await processRevenueCatWebhook({
+      id: "event-external",
+      type: "PURCHASE_REDEEMED",
+      app_user_id: userId,
+      product_id: "petflow_ai_summary_1",
+      store: "STRIPE",
+      transaction_id: "external-transaction",
+    });
+
+    expect(result).toEqual({ processed: true, status: "ignored" });
+    expect(billingMocks.recordAiCreditPurchase).not.toHaveBeenCalled();
+    expect(billingMocks.recordBillingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: "unsupported_store" }),
+    );
+  });
+
+  it("falls back safely when a webhook timestamp is outside the date range", async () => {
+    billingMocks.recordAiCreditPurchase.mockResolvedValue(
+      "22222222-2222-4222-8222-222222222222",
+    );
+    billingMocks.recordBillingEvent.mockResolvedValue(true);
+
+    await processRevenueCatWebhook({
+      id: "event-invalid-date",
+      type: "NON_RENEWING_PURCHASE",
+      app_user_id: userId,
+      product_id: "petflow_ai_summary_1",
+      store: "APP_STORE",
+      environment: "PRODUCTION",
+      transaction_id: "transaction-invalid-date",
+      purchased_at_ms: Number.MAX_VALUE,
+    });
+
+    expect(billingMocks.recordAiCreditPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ purchasedAt: expect.any(String) }),
+    );
+  });
+
+  it("rejects a purchase without an explicit store environment", async () => {
+    billingMocks.recordBillingEvent.mockResolvedValue(true);
+
+    const result = await processRevenueCatWebhook({
+      id: "event-invalid-environment",
+      type: "NON_RENEWING_PURCHASE",
+      app_user_id: userId,
+      product_id: "petflow_ai_summary_1",
+      store: "APP_STORE",
+      environment: "UNKNOWN",
+      transaction_id: "transaction-invalid-environment",
+    });
+
+    expect(result).toEqual({ processed: false, status: "invalid" });
+    expect(billingMocks.recordAiCreditPurchase).not.toHaveBeenCalled();
+    expect(billingMocks.recordBillingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "invalid_purchase_event",
+      }),
     );
   });
 
@@ -199,6 +291,7 @@ describe("RevenueCat billing verification", () => {
 
   it("syncs only valid allowlisted customer transactions", async () => {
     process.env.REVENUECAT_SECRET_API_KEY = "secret-api-key";
+    process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID = "petflow_ai_summary_1";
     billingMocks.recordAiCreditPurchase.mockResolvedValue(
       "33333333-3333-4333-8333-333333333333",
     );

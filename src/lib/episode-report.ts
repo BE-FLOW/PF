@@ -1,6 +1,7 @@
 import {
   ageGroupLabels,
   durationLabels,
+  formatSymptomSummary,
   levelLabels,
   symptomLabels,
 } from "./analysis";
@@ -25,15 +26,6 @@ const riskWeight: Record<RiskLevel, number> = {
   watch: 1,
   soon: 2,
   urgent: 3,
-};
-
-const conditionChangeLabels: Record<
-  EpisodeProgress["conditionChange"],
-  string
-> = {
-  better: "좋아짐",
-  same: "비슷함",
-  worse: "나빠짐",
 };
 
 const dayFormatter = new Intl.DateTimeFormat("ko-KR", {
@@ -149,12 +141,12 @@ export interface EpisodeReportTimelineItem {
   id: string;
   recordedAt: string;
   dateLabel: string;
+  note: string;
   symptoms: string;
   appetite: string;
   energy: string;
   duration: string;
   riskLabel: string;
-  redFlagCount: number;
   imageCount: number;
   videoCount: number;
   mediaCount: number;
@@ -245,16 +237,14 @@ export function buildEpisodeReport(
       id: record.result.id,
       recordedAt: record.result.createdAt,
       dateLabel: dateTimeFormatter.format(new Date(record.result.createdAt)),
+      note: record.input.note.trim(),
       symptoms: record.input.symptoms.length
-        ? record.input.symptoms
-            .map((symptom) => symptomLabels[symptom])
-            .join(", ")
+        ? formatSymptomSummary(record.input)
         : "선택한 주요 증상 없음",
       appetite: levelLabels[record.input.appetite],
       energy: levelLabels[record.input.energy],
       duration: durationLabels[record.input.duration],
       riskLabel: riskLabels[record.result.riskLevel],
-      redFlagCount: record.input.redFlags.length,
       ...counts,
     };
   });
@@ -271,18 +261,13 @@ export function buildEpisodeReport(
     ? timeline
         .map(
           (item, index) =>
-            `${index + 1}. ${item.dateLabel}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration} / 앱 안내: ${item.riskLabel}${item.redFlagCount ? ` / 위험 신호 ${item.redFlagCount}개 입력` : ""}${item.mediaCount ? `\n첨부: ${formatReportMediaCount(item.imageCount, item.videoCount)}` : ""}`,
+            `${index + 1}. ${item.dateLabel}${item.note ? `\n보호자 메모: ${item.note}` : ""}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration}${item.mediaCount ? `\n첨부: ${formatReportMediaCount(item.imageCount, item.videoCount)}` : ""}`,
         )
         .join("\n\n")
     : "기록 없음";
   const planText = plan?.tasks.length
-    ? plan.tasks
-        .map(
-          (task) =>
-            `- [${task.completedAt ? "완료" : "진행 전"}] ${task.text}`,
-        )
-        .join("\n")
-    : "아직 입력한 계획이 없습니다.";
+    ? plan.tasks.map((task) => `- ${task.text}`).join("\n")
+    : "보호자가 옮겨 적은 병원 안내 없음";
   const orderedProgress = [...progress].sort(
     (a, b) => a.followUpDay - b.followUpDay,
   );
@@ -291,22 +276,6 @@ export function buildEpisodeReport(
     episodeStartedAt,
     orderedProgress,
   );
-  const completedFollowUps = followUpCheckpoints.filter(
-    (checkpoint) => checkpoint.recordedAt,
-  );
-  const progressText = completedFollowUps.length
-    ? completedFollowUps
-        .map((checkpoint) => {
-          if (checkpoint.conditionChange) {
-            return `${checkpoint.followUpDay}일: ${conditionChangeLabels[checkpoint.conditionChange]} / 식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
-          }
-          const source = checkpoint.source === "health-record"
-            ? `${dayFormatter.format(new Date(checkpoint.recordedAt!))} 건강 기록 자동 연결 / `
-            : "";
-          return `${checkpoint.followUpDay}일 전후: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
-        })
-        .join("\n")
-    : "같은 흐름에 자동 연결된 기록이 아직 없습니다.";
   const mediaText = mediaSummary.length
     ? [
         ...mediaSummary,
@@ -314,11 +283,10 @@ export function buildEpisodeReport(
       ].join("\n")
     : "첨부 자료 없음";
   const shareText = [
-    "[PetFlow 병원 전달 요약]",
+    "[PetFlow 사실 요약]",
     `반려동물: ${petName} / ${petProfile}`,
     `기록 기간: ${periodLabel}`,
     `기록 횟수: ${timeline.length}회`,
-    `가장 높은 앱 안내 단계: ${riskLabels[highestRisk]}`,
     `반복 관찰: ${repeatedSymptoms.length ? repeatedSymptoms.join(", ") : "없음"}`,
     `식욕 변화 ${appetiteChangeCount}회 / 활력 변화 ${energyChangeCount}회`,
     "",
@@ -328,20 +296,16 @@ export function buildEpisodeReport(
     "[첨부 자료 · 보호자 저장]",
     mediaText,
     "",
-    "[병원에서 받은 계획 · 보호자 기록]",
+    "[병원에서 들은 내용 · 보호자 기록]",
     planText,
     "PetFlow에서 수의사가 직접 확인한 내용이 아닙니다.",
-    "",
-    "[초기·장기 경과 · 보호자 기록]",
-    progressText,
-    "PetFlow에서 수의사가 확인한 경과가 아닙니다.",
     "",
     "[확인 안내]",
     disclaimer,
   ].join("\n");
 
   return {
-    title: `${petName} 병원 전달 요약`,
+    title: `${petName} 사실 요약`,
     petProfile,
     periodLabel,
     recordCount: timeline.length,

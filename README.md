@@ -9,7 +9,7 @@
 [`docs/operations.md`](docs/operations.md), 결제 원장과 출시 조건은
 [`docs/billing.md`](docs/billing.md)를 따릅니다.
 
-현재 사업 목표는 앱에서 기록부터 병원 전달 요약까지 끝내고, 1회성 AI 요약의
+현재 사업 목표는 앱에서 기록부터 병원 전달까지 끝내고, 1회성 병원 전달본의
 첫 스토어 결제와 재구매 가능성을 빠르게 검증하는 것입니다. 문서는 고정된 정답이
 아니며 사용자 행동과 매출 근거에 따라 제품 계약부터 갱신합니다.
 
@@ -18,7 +18,7 @@
 - Android/iOS: Expo React Native (`apps/mobile`)
 - 보조 웹과 서버 API: Next.js App Router (`src`)
 - 인증·데이터·비공개 파일: Supabase Auth, PostgreSQL RLS, Storage
-- AI 병원 전달 초안: 인증된 Route Handler에서만 OpenAI 호출
+- 병원 전달본: 인증된 Route Handler에서만 OpenAI 호출
 
 브라우저와 앱은 데이터 소유권, 결제 상태, 파일 경로를 결정하지 않습니다. 서버와
 RLS가 매 요청마다 계정 소유권을 확인합니다.

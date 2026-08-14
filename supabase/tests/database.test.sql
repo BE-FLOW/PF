@@ -262,7 +262,7 @@ select is(
 );
 select has_column('public', 'episode_plans', 'source_type', 'plan source is stored');
 select has_column('public', 'episode_plans', 'review_status', 'plan review status is stored');
-select has_column('public', 'plan_tasks', 'completed_at', 'plan task completion is stored');
+select has_column('public', 'plan_tasks', 'completed_at', 'legacy completion data remains readable');
 select is(
   (select confdeltype::text from pg_constraint where conname = 'health_reports_user_id_fkey'),
   'c',

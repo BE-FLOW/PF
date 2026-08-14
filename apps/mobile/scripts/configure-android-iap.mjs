@@ -10,8 +10,8 @@ const defaults = Object.freeze({
   productId: "petflow_ai_summary_1",
   purchaseOptionId: "standard",
   locale: "ko-KR",
-  title: "AI 병원 전달 요약 1회",
-  description: "보호자 기록을 사실 중심의 병원 전달용 AI 초안으로 한 번 정리합니다.",
+  title: "병원 전달본 1회",
+  description: "선택한 관찰 기록을 병원 전달용 사실 초안으로 한 번 정리합니다.",
   currencyCode: "KRW",
   priceUnits: "1900",
 });

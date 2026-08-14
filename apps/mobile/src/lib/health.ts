@@ -15,6 +15,8 @@ export type SymptomId =
   | "urination"
   | "pain";
 
+export type SymptomDetailMap = Partial<Record<SymptomId, string[]>>;
+
 export type RedFlagId = "breathing" | "collapse" | "seizure" | "bleeding";
 
 export interface PetProfile {
@@ -52,6 +54,7 @@ export interface HealthCheckInput {
   ageGroup: "young" | "adult" | "senior";
   weight?: string;
   symptoms: SymptomId[];
+  symptomDetails?: SymptomDetailMap;
   appetite: Level;
   energy: Level;
   duration: Duration;
@@ -140,29 +143,16 @@ export interface EpisodeProgress {
   recordedAt: string;
 }
 
-export type HealthTrend = "stable" | "watch" | "worsening";
-
-export interface HealthFlowSummary {
-  trend: HealthTrend;
-  headline: string;
-  description: string;
-  recordCount: number;
-  repeatedSymptoms: string[];
-  highestRisk: RiskLevel | null;
-  latestRecordedAt: string | null;
-  vetBrief: string;
-}
-
 export interface EpisodeReportTimelineItem {
   id: string;
   recordedAt: string;
   dateLabel: string;
+  note: string;
   symptoms: string;
   appetite: string;
   energy: string;
   duration: string;
   riskLabel: string;
-  redFlagCount: number;
   imageCount: number;
   videoCount: number;
   mediaCount: number;
@@ -245,6 +235,146 @@ export const symptomOptions: Array<{ id: SymptomId; label: string }> = [
   { id: "pain", label: "통증 반응" },
 ];
 
+export const symptomDetailQuestions: Record<
+  SymptomId,
+  {
+    prompt: string;
+    reportPrompt: string;
+    options: Array<{ id: string; label: string }>;
+    exclusiveGroups?: string[][];
+  }
+> = {
+  vomiting: {
+    prompt: "구토의 횟수·내용물",
+    reportPrompt: "짧은 시간 내 반복 여부와 토한 내용물의 모습 미입력",
+    options: [
+      { id: "once", label: "한 번만" },
+      { id: "repeated", label: "짧은 시간에 반복" },
+      { id: "food_or_yellow", label: "먹은 것·노란 액체" },
+      { id: "blood", label: "피가 보임" },
+    ],
+    exclusiveGroups: [["once", "repeated"]],
+  },
+  diarrhea: {
+    prompt: "변의 양·모양",
+    reportPrompt: "변의 양·횟수와 점액·색 변화 미입력",
+    options: [
+      { id: "watery", label: "물처럼 묽음" },
+      { id: "repeated", label: "소량씩 자주" },
+      { id: "mucus", label: "점액이 보임" },
+      { id: "blood_or_black", label: "피·검은 변" },
+    ],
+  },
+  cough: {
+    prompt: "기침이 나타날 때",
+    reportPrompt: "운동·흥분 후인지, 밤·휴식 중인지 미입력",
+    options: [
+      { id: "dry", label: "마른기침" },
+      { id: "wet_sound", label: "가래 끓는 소리" },
+      { id: "after_activity", label: "운동·흥분 후" },
+      { id: "at_rest", label: "밤·휴식 중" },
+    ],
+  },
+  itching: {
+    prompt: "불편해하는 부위",
+    reportPrompt: "주로 긁거나 핥는 부위와 피부 변화 미입력",
+    options: [
+      { id: "ear_face", label: "귀·얼굴" },
+      { id: "paws", label: "발" },
+      { id: "body", label: "배·몸통" },
+      { id: "skin_change", label: "붉음·상처" },
+    ],
+  },
+  limping: {
+    prompt: "움직임에서 보인 점",
+    reportPrompt: "앞·뒷다리와 체중을 싣는 정도, 활동 후 변화 미입력",
+    options: [
+      { id: "front_leg", label: "앞다리" },
+      { id: "back_leg", label: "뒷다리" },
+      { id: "not_bearing_weight", label: "발을 딛기 어려움" },
+      { id: "after_activity", label: "활동 후 심함" },
+    ],
+  },
+  eye: {
+    prompt: "눈·귀에서 보인 점",
+    reportPrompt: "눈·귀 중 보인 위치와 분비물·행동 변화 미입력",
+    options: [
+      { id: "eye_discharge", label: "눈곱·눈물" },
+      { id: "eye_red_or_closed", label: "눈 충혈·감음" },
+      { id: "ear_discharge", label: "귀 냄새·분비물" },
+      { id: "ear_scratching", label: "귀를 긁거나 흔듦" },
+    ],
+  },
+  urination: {
+    prompt: "소변에서 달라진 점",
+    reportPrompt: "배뇨 횟수·양과 힘주는 행동·색 변화 미입력",
+    options: [
+      { id: "frequent", label: "자주 감" },
+      { id: "small_amount", label: "양이 줄음" },
+      { id: "straining", label: "힘주지만 잘 안 나옴" },
+      { id: "blood_or_color", label: "피·색 변화" },
+    ],
+  },
+  pain: {
+    prompt: "불편해하는 때",
+    reportPrompt: "접촉·움직임·안아 올리기·휴식 중 반응 상황 미입력",
+    options: [
+      { id: "when_touched", label: "만질 때" },
+      { id: "when_moving", label: "움직일 때" },
+      { id: "when_lifted", label: "안아 올릴 때" },
+      { id: "at_rest", label: "가만히 있어도" },
+    ],
+  },
+};
+
+export function selectedSymptomDetailLabels(
+  input: HealthCheckInput,
+  symptom: SymptomId,
+) {
+  const selected = new Set(input.symptomDetails?.[symptom] ?? []);
+  return symptomDetailQuestions[symptom].options
+    .filter((option) => selected.has(option.id))
+    .map((option) => option.label);
+}
+
+export function formatSymptomSummary(input: HealthCheckInput) {
+  return input.symptoms
+    .map((symptom) => {
+      const details = selectedSymptomDetailLabels(input, symptom);
+      return details.length
+        ? `${symptomOptions.find((option) => option.id === symptom)?.label ?? symptom} (${details.join(", ")})`
+        : symptomOptions.find((option) => option.id === symptom)?.label ?? symptom;
+    })
+    .join(", ");
+}
+
+export function toggleSymptomDetail(
+  input: HealthCheckInput,
+  symptom: SymptomId,
+  detailId: string,
+): HealthCheckInput {
+  const question = symptomDetailQuestions[symptom];
+  if (!question.options.some((option) => option.id === detailId)) return input;
+
+  const current = input.symptomDetails?.[symptom] ?? [];
+  const exclusiveGroup = question.exclusiveGroups?.find((group) =>
+    group.includes(detailId),
+  );
+  const withoutExclusiveAnswer = exclusiveGroup
+    ? current.filter((item) => !exclusiveGroup.includes(item))
+    : current;
+  const next = current.includes(detailId)
+    ? current.filter((item) => item !== detailId)
+    : [...withoutExclusiveAnswer, detailId];
+  return {
+    ...input,
+    symptomDetails: {
+      ...(input.symptomDetails ?? {}),
+      [symptom]: next,
+    },
+  };
+}
+
 export const levelOptions: Array<{ id: Level; label: string }> = [
   { id: "normal", label: "평소와 같음" },
   { id: "slight", label: "조금 줄었음" },
@@ -300,6 +430,13 @@ export function toggleDailyObservation(
     symptoms: input.symptoms.includes(observation)
       ? input.symptoms.filter((item) => item !== observation)
       : [...input.symptoms, observation],
+    symptomDetails: input.symptoms.includes(observation)
+      ? Object.fromEntries(
+          Object.entries(input.symptomDetails ?? {}).filter(
+            ([symptom]) => symptom !== observation,
+          ),
+        )
+      : input.symptomDetails,
   };
 }
 
@@ -426,12 +563,6 @@ const riskWeight: Record<RiskLevel, number> = {
   urgent: 3,
 };
 
-const conditionChangeLabels: Record<ConditionChange, string> = {
-  better: "좋아짐",
-  same: "비슷함",
-  worse: "나빠짐",
-};
-
 const dayFormatter = new Intl.DateTimeFormat("ko-KR", {
   timeZone: "Asia/Seoul",
   year: "numeric",
@@ -479,6 +610,7 @@ export function profileToHealthInput(profile: PetProfile): HealthCheckInput {
     ageGroup: deriveAgeGroup(profile.birthDate),
     weight: profile.weight || undefined,
     symptoms: [],
+    symptomDetails: {},
     appetite: "normal",
     energy: "normal",
     duration: "today",
@@ -491,119 +623,12 @@ export function resetToNormal(input: HealthCheckInput): HealthCheckInput {
   return {
     ...input,
     symptoms: [],
+    symptomDetails: {},
     appetite: "normal",
     energy: "normal",
     duration: "today",
     redFlags: [],
     note: "",
-  };
-}
-
-export function summarizeHealthFlow(
-  records: HistoryRecord[],
-  petName = "반려동물",
-  now = new Date(),
-): HealthFlowSummary {
-  const cutoff = new Date(now);
-  cutoff.setDate(cutoff.getDate() - 14);
-  const recent = [...records]
-    .filter((record) => new Date(record.result.createdAt) >= cutoff)
-    .sort(
-      (a, b) =>
-        new Date(b.result.createdAt).getTime() -
-        new Date(a.result.createdAt).getTime(),
-    );
-
-  if (!recent.length) {
-    return {
-      trend: "stable",
-      headline: "아직 건강 흐름을 만들 기록이 없어요",
-      description: "",
-      recordCount: 0,
-      repeatedSymptoms: [],
-      highestRisk: null,
-      latestRecordedAt: null,
-      vetBrief: `${petName}의 최근 14일 건강 기록이 아직 없습니다.`,
-    };
-  }
-
-  const symptomCounts = new Map<SymptomId, number>();
-  for (const record of recent) {
-    for (const symptom of record.input.symptoms) {
-      symptomCounts.set(symptom, (symptomCounts.get(symptom) ?? 0) + 1);
-    }
-  }
-  const repeatedSymptoms = [...symptomCounts.entries()]
-    .filter(([, count]) => count >= 2)
-    .sort((a, b) => b[1] - a[1])
-    .map(([symptom, count]) => `${symptomLabels[symptom]} ${count}회`)
-    .slice(0, 3);
-
-  const highestRisk = recent.reduce<RiskLevel>(
-    (highest, record) =>
-      riskWeight[record.result.riskLevel] > riskWeight[highest]
-        ? record.result.riskLevel
-        : highest,
-    "watch",
-  );
-  const latestScores = recent.slice(0, 3).map((record) => record.result.riskScore);
-  const olderScores = recent.slice(3, 6).map((record) => record.result.riskScore);
-  const average = (values: number[]) =>
-    values.reduce((total, value) => total + value, 0) / Math.max(values.length, 1);
-  const scoreRise = olderScores.length
-    ? average(latestScores) - average(olderScores)
-    : 0;
-  const worsening = highestRisk === "urgent" || scoreRise >= 15;
-  const needsWatch =
-    !worsening &&
-    (highestRisk === "soon" ||
-      repeatedSymptoms.length > 0 ||
-      recent.some(
-        (record) =>
-          record.input.appetite !== "normal" || record.input.energy !== "normal",
-      ));
-  const trend = worsening ? "worsening" : needsWatch ? "watch" : "stable";
-
-  const copy =
-    trend === "worsening"
-      ? {
-          headline: "최근 기록에서 더 주의할 변화가 보여요",
-          description:
-            "최근 점수 상승이나 위험 신호가 있어 병원 상담 시 흐름을 함께 보여주세요.",
-        }
-      : trend === "watch"
-        ? {
-            headline: "반복되는 변화를 조금 더 지켜봐 주세요",
-            description:
-              "증상이나 컨디션 변화를 같은 기준으로 기록해 주세요.",
-          }
-        : {
-            headline: "최근 기록은 비교적 안정적인 흐름이에요",
-            description:
-              "뚜렷한 반복 변화는 보이지 않아요. 지금처럼 간단히 이어서 기록해 주세요.",
-          };
-  const abnormalConditionCount = recent.filter(
-    (record) =>
-      record.input.appetite !== "normal" || record.input.energy !== "normal",
-  ).length;
-  const vetBrief = [
-    `${petName} 최근 14일 건강 흐름`,
-    `기록 ${recent.length}회`,
-    `가장 높은 단계: ${riskLabels[highestRisk]}`,
-    repeatedSymptoms.length
-      ? `반복 기록: ${repeatedSymptoms.join(", ")}`
-      : "반복된 주요 증상 없음",
-    `식욕 또는 활력 변화 ${abnormalConditionCount}회`,
-  ].join("\n");
-
-  return {
-    trend,
-    ...copy,
-    recordCount: recent.length,
-    repeatedSymptoms,
-    highestRisk,
-    latestRecordedAt: recent[0].result.createdAt,
-    vetBrief,
   };
 }
 
@@ -752,16 +777,14 @@ export function buildEpisodeReport(
       id: record.result.id,
       recordedAt: record.result.createdAt,
       dateLabel: dateTimeFormatter.format(new Date(record.result.createdAt)),
+      note: record.input.note.trim(),
       symptoms: record.input.symptoms.length
-        ? record.input.symptoms
-            .map((symptom) => symptomLabels[symptom])
-            .join(", ")
+        ? formatSymptomSummary(record.input)
         : "선택한 주요 증상 없음",
       appetite: levelLabels[record.input.appetite],
       energy: levelLabels[record.input.energy],
       duration: durationLabels[record.input.duration],
       riskLabel: riskLabels[record.result.riskLevel],
-      redFlagCount: record.input.redFlags.length,
       ...counts,
     };
   });
@@ -778,18 +801,15 @@ export function buildEpisodeReport(
     ? timeline
         .map(
           (item, index) =>
-            `${index + 1}. ${item.dateLabel}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration} / 앱 안내: ${item.riskLabel}${item.redFlagCount ? ` / 위험 신호 ${item.redFlagCount}개 입력` : ""}${item.mediaCount ? `\n첨부: ${formatReportMediaCount(item.imageCount, item.videoCount)}` : ""}`,
+            `${index + 1}. ${item.dateLabel}${item.note ? `\n보호자 메모: ${item.note}` : ""}\n증상: ${item.symptoms}\n식욕: ${item.appetite} / 활력: ${item.energy}\n지속 기간: ${item.duration}${item.mediaCount ? `\n첨부: ${formatReportMediaCount(item.imageCount, item.videoCount)}` : ""}`,
         )
         .join("\n\n")
     : "기록 없음";
   const planText = plan?.tasks.length
     ? plan.tasks
-        .map(
-          (task) =>
-            `- [${task.completedAt ? "완료" : "진행 전"}] ${task.text}`,
-        )
+        .map((task) => `- ${task.text}`)
         .join("\n")
-    : "아직 입력한 계획이 없습니다.";
+    : "입력한 병원 안내가 없습니다.";
   const orderedProgress = [...progress].sort(
     (a, b) => a.followUpDay - b.followUpDay,
   );
@@ -798,22 +818,6 @@ export function buildEpisodeReport(
     episodeStartedAt,
     orderedProgress,
   );
-  const completedFollowUps = followUpCheckpoints.filter(
-    (checkpoint) => checkpoint.recordedAt,
-  );
-  const progressText = completedFollowUps.length
-    ? completedFollowUps
-        .map((checkpoint) => {
-          if (checkpoint.conditionChange) {
-            return `${checkpoint.followUpDay}일: ${conditionChangeLabels[checkpoint.conditionChange]} / 식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
-          }
-          const source = checkpoint.source === "health-record"
-            ? `${dayFormatter.format(new Date(checkpoint.recordedAt!))} 건강 기록 자동 연결 / `
-            : "";
-          return `${checkpoint.followUpDay}일 전후: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} / 활력 ${levelLabels[checkpoint.energy ?? "normal"]}`;
-        })
-        .join("\n")
-    : "같은 흐름에 자동 연결된 기록이 아직 없습니다.";
   const mediaText = mediaSummary.length
     ? [
         ...mediaSummary,
@@ -821,11 +825,10 @@ export function buildEpisodeReport(
       ].join("\n")
     : "첨부 자료 없음";
   const shareText = [
-    "[PetFlow 병원 전달 요약]",
+    "[PetFlow 사실 요약]",
     `반려동물: ${petName} / ${petProfile}`,
     `기록 기간: ${periodLabel}`,
     `기록 횟수: ${timeline.length}회`,
-    `가장 높은 앱 안내 단계: ${riskLabels[highestRisk]}`,
     `반복 관찰: ${repeatedSymptoms.length ? repeatedSymptoms.join(", ") : "없음"}`,
     `식욕 변화 ${appetiteChangeCount}회 / 활력 변화 ${energyChangeCount}회`,
     "",
@@ -835,20 +838,16 @@ export function buildEpisodeReport(
     "[첨부 자료 · 보호자 저장]",
     mediaText,
     "",
-    "[병원에서 받은 계획 · 보호자 기록]",
+    "[병원에서 들은 내용 · 보호자 기록]",
     planText,
     "PetFlow에서 수의사가 직접 확인한 내용이 아닙니다.",
-    "",
-    "[초기·장기 경과 · 보호자 기록]",
-    progressText,
-    "PetFlow에서 수의사가 확인한 경과가 아닙니다.",
     "",
     "[확인 안내]",
     disclaimer,
   ].join("\n");
 
   return {
-    title: `${petName} 병원 전달 요약`,
+    title: `${petName} 사실 요약`,
     petProfile,
     periodLabel,
     recordCount: timeline.length,

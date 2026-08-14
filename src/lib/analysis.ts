@@ -17,6 +17,119 @@ export const symptomLabels: Record<SymptomId, string> = {
   pain: "통증 반응",
 };
 
+export const symptomDetailQuestions: Record<
+  SymptomId,
+  {
+    prompt: string;
+    reportPrompt: string;
+    options: Array<{ id: string; label: string }>;
+    exclusiveGroups?: string[][];
+  }
+> = {
+  vomiting: {
+    prompt: "구토의 횟수·내용물",
+    reportPrompt: "짧은 시간 내 반복 여부와 토한 내용물의 모습 미입력",
+    options: [
+      { id: "once", label: "한 번만" },
+      { id: "repeated", label: "짧은 시간에 반복" },
+      { id: "food_or_yellow", label: "먹은 것·노란 액체" },
+      { id: "blood", label: "피가 보임" },
+    ],
+    exclusiveGroups: [["once", "repeated"]],
+  },
+  diarrhea: {
+    prompt: "변의 양·모양",
+    reportPrompt: "변의 양·횟수와 점액·색 변화 미입력",
+    options: [
+      { id: "watery", label: "물처럼 묽음" },
+      { id: "repeated", label: "소량씩 자주" },
+      { id: "mucus", label: "점액이 보임" },
+      { id: "blood_or_black", label: "피·검은 변" },
+    ],
+  },
+  cough: {
+    prompt: "기침이 나타날 때",
+    reportPrompt: "운동·흥분 후인지, 밤·휴식 중인지 미입력",
+    options: [
+      { id: "dry", label: "마른기침" },
+      { id: "wet_sound", label: "가래 끓는 소리" },
+      { id: "after_activity", label: "운동·흥분 후" },
+      { id: "at_rest", label: "밤·휴식 중" },
+    ],
+  },
+  itching: {
+    prompt: "불편해하는 부위",
+    reportPrompt: "주로 긁거나 핥는 부위와 피부 변화 미입력",
+    options: [
+      { id: "ear_face", label: "귀·얼굴" },
+      { id: "paws", label: "발" },
+      { id: "body", label: "배·몸통" },
+      { id: "skin_change", label: "붉음·상처" },
+    ],
+  },
+  limping: {
+    prompt: "움직임에서 보인 점",
+    reportPrompt: "앞·뒷다리와 체중을 싣는 정도, 활동 후 변화 미입력",
+    options: [
+      { id: "front_leg", label: "앞다리" },
+      { id: "back_leg", label: "뒷다리" },
+      { id: "not_bearing_weight", label: "발을 딛기 어려움" },
+      { id: "after_activity", label: "활동 후 심함" },
+    ],
+  },
+  eye: {
+    prompt: "눈·귀에서 보인 점",
+    reportPrompt: "눈·귀 중 보인 위치와 분비물·행동 변화 미입력",
+    options: [
+      { id: "eye_discharge", label: "눈곱·눈물" },
+      { id: "eye_red_or_closed", label: "눈 충혈·감음" },
+      { id: "ear_discharge", label: "귀 냄새·분비물" },
+      { id: "ear_scratching", label: "귀를 긁거나 흔듦" },
+    ],
+  },
+  urination: {
+    prompt: "소변에서 달라진 점",
+    reportPrompt: "배뇨 횟수·양과 힘주는 행동·색 변화 미입력",
+    options: [
+      { id: "frequent", label: "자주 감" },
+      { id: "small_amount", label: "양이 줄음" },
+      { id: "straining", label: "힘주지만 잘 안 나옴" },
+      { id: "blood_or_color", label: "피·색 변화" },
+    ],
+  },
+  pain: {
+    prompt: "불편해하는 때",
+    reportPrompt: "접촉·움직임·안아 올리기·휴식 중 반응 상황 미입력",
+    options: [
+      { id: "when_touched", label: "만질 때" },
+      { id: "when_moving", label: "움직일 때" },
+      { id: "when_lifted", label: "안아 올릴 때" },
+      { id: "at_rest", label: "가만히 있어도" },
+    ],
+  },
+};
+
+export function selectedSymptomDetailLabels(
+  input: HealthCheckInput,
+  symptom: SymptomId,
+) {
+  const selected = new Set(input.symptomDetails?.[symptom] ?? []);
+  return symptomDetailQuestions[symptom].options
+    .filter((option) => selected.has(option.id))
+    .map((option) => option.label);
+}
+
+export function formatSymptomSummary(input: HealthCheckInput) {
+  return input.symptoms
+    .map((symptom) => {
+      const details = selectedSymptomDetailLabels(input, symptom);
+      return details.length
+        ? `${symptomLabels[symptom]} (${details.join(", ")})`
+        : symptomLabels[symptom];
+    })
+    .join(", ");
+}
+
 export const durationLabels: Record<HealthCheckInput["duration"], string> = {
   today: "오늘부터",
   "2-3days": "2~3일",
@@ -79,6 +192,13 @@ export function toggleDailyObservation(
     symptoms: input.symptoms.includes(observation)
       ? input.symptoms.filter((item) => item !== observation)
       : [...input.symptoms, observation],
+    symptomDetails: input.symptoms.includes(observation)
+      ? Object.fromEntries(
+          Object.entries(input.symptomDetails ?? {}).filter(
+            ([symptom]) => symptom !== observation,
+          ),
+        )
+      : input.symptomDetails,
   };
 }
 
@@ -136,6 +256,7 @@ export function profileToHealthInput(profile: PetProfile): HealthCheckInput {
     ageGroup: deriveAgeGroup(profile.birthDate),
     weight: profile.weight,
     symptoms: [],
+    symptomDetails: {},
     appetite: "normal",
     energy: "normal",
     duration: "today",
@@ -192,7 +313,7 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
         : "watch";
   const copy = riskCopy(riskLevel);
   const symptomText = input.symptoms.length
-    ? input.symptoms.map((item) => symptomLabels[item]).join(", ")
+    ? formatSymptomSummary(input)
     : "선택한 주요 증상 없음";
   const profileLine = [
     input.species === "dog"
@@ -303,6 +424,44 @@ export function isHealthCheckInput(value: unknown): value is HealthCheckInput {
     const parsed = new Date(`${date}T00:00:00Z`);
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
   };
+  const hasValidSymptomDetails = (
+    value: unknown,
+    selectedSymptoms: unknown,
+  ) => {
+    if (value === undefined) return true;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      !Array.isArray(selectedSymptoms)
+    ) {
+      return false;
+    }
+    const selected = new Set(
+      selectedSymptoms.filter((item): item is string => typeof item === "string"),
+    );
+    const entries = Object.entries(value);
+    return (
+      entries.length <= Object.keys(symptomDetailQuestions).length &&
+      entries.every(([symptom, details]) => {
+        const question = symptomDetailQuestions[symptom as SymptomId];
+        if (!question || !selected.has(symptom)) return false;
+        if (
+          !Array.isArray(details) ||
+          !hasValidUniqueValues(
+            details,
+            new Set(question.options.map((option) => option.id)),
+            question.options.length,
+          )
+        ) {
+          return false;
+        }
+        return (question.exclusiveGroups ?? []).every(
+          (group) => group.filter((id) => details.includes(id)).length <= 1,
+        );
+      })
+    );
+  };
 
   return Boolean(
     typeof input.petName === "string" &&
@@ -321,6 +480,7 @@ export function isHealthCheckInput(value: unknown): value is HealthCheckInput {
       (typeof input.weight === "string" && input.weight.length <= 20)) &&
     ["young", "adult", "senior"].includes(input.ageGroup ?? "") &&
     hasValidUniqueValues(input.symptoms, symptoms, symptoms.size) &&
+    hasValidSymptomDetails(input.symptomDetails, input.symptoms) &&
     ["normal", "slight", "low", "none"].includes(input.appetite ?? "") &&
     ["normal", "slight", "low", "none"].includes(input.energy ?? "") &&
     ["today", "2-3days", "4-7days", "over-week"].includes(

@@ -30,11 +30,14 @@ function record(createdAt: string, changes: Partial<HealthCheckInput> = {}): His
 }
 
 describe("buildVetReviewDraft", () => {
-  it("summarizes multiple days with check scores for vet review", () => {
+  it("summarizes owner observations without presenting app scores as facts", () => {
     const draft = buildVetReviewDraft(
       [
         record("2026-06-10T00:00:00.000Z"),
-        record("2026-06-12T00:00:00.000Z", { energy: "low" }),
+        record("2026-06-12T00:00:00.000Z", {
+          energy: "low",
+          note: "산책 뒤 두 번 토하고 평소보다 처졌어요.",
+        }),
       ],
       "보리",
       undefined,
@@ -42,17 +45,55 @@ describe("buildVetReviewDraft", () => {
       { generatedAt: "2026-06-15T00:00:00.000Z" },
     );
 
-    expect(draft.title).toContain("수의사 검토용");
+    expect(draft.title).toContain("병원 전달본");
     expect(draft.timeline).toHaveLength(2);
-    expect(draft.timeline[0]).toContain("CHECK SCORE");
+    expect(draft.timeline.join("\n")).toContain("산책 뒤 두 번 토하고");
+    expect(draft.copyText).not.toContain("CHECK SCORE");
+    expect(draft.copyText).not.toContain("가장 높은 앱 안내");
     expect(draft.keyObservations).toContain("반복 관찰: 구토 2회");
     expect(draft.reviewStatus).toBe("unreviewed");
-    expect(draft.planAndProgress.join("\n")).toContain(
-      "일반 건강 기록에서 자동 연결",
-    );
+    expect(draft.planAndProgress.join("\n")).not.toContain("자동 연결");
   });
 
-  it("uses the episode start date for automatic follow-up checkpoints", () => {
+  it("preserves answered symptom intake facts instead of asking them again", () => {
+    const draft = buildVetReviewDraft(
+      [
+        record("2026-06-10T00:00:00.000Z", {
+          symptomDetails: {
+            vomiting: ["repeated", "food_or_yellow"],
+          },
+        }),
+      ],
+      "보리",
+      undefined,
+      [],
+      { generatedAt: "2026-06-15T00:00:00.000Z" },
+    );
+
+    expect(draft.timeline[0]).toContain(
+      "구토 (짧은 시간에 반복, 먹은 것·노란 액체)",
+    );
+    expect(draft.keyObservations.join("\n")).toContain("짧은 시간에 반복");
+    expect(draft.questionsForVet).toEqual([]);
+    expect(draft.copyText).not.toContain("[진료 중 추가 확인]");
+  });
+
+  it("lists only concise observable gaps when intake facts are missing", () => {
+    const draft = buildVetReviewDraft(
+      [record("2026-06-10T00:00:00.000Z")],
+      "보리",
+      undefined,
+      [],
+      { generatedAt: "2026-06-15T00:00:00.000Z" },
+    );
+
+    expect(draft.questionsForVet).toEqual([
+      "구토: 짧은 시간 내 반복 여부와 토한 내용물의 모습 미입력",
+    ]);
+    expect(draft.copyText).toContain("[추가로 확인하면 좋은 사실]");
+  });
+
+  it("does not expose fixed follow-up checkpoints in the handoff", () => {
     const draft = buildVetReviewDraft(
       [record("2026-06-17T00:00:00.000Z")],
       "보리",
@@ -64,10 +105,8 @@ describe("buildVetReviewDraft", () => {
       },
     );
 
-    expect(draft.planAndProgress.join("\n")).toContain("7일 전후");
-    expect(draft.planAndProgress.join("\n")).toContain(
-      "일반 건강 기록에서 자동 연결",
-    );
+    expect(draft.planAndProgress.join("\n")).not.toContain("7일 전후");
+    expect(draft.copyText).not.toContain("이어진 기록 시점");
   });
 
   it("keeps owner-reported plan and follow-up progress separate from confirmed vet content", () => {
@@ -109,10 +148,9 @@ describe("buildVetReviewDraft", () => {
       { generatedAt: "2026-06-15T00:00:00.000Z" },
     );
 
-    expect(draft.planAndProgress.join("\n")).toContain("보호자 기록 병원 계획");
-    expect(draft.planAndProgress.join("\n")).toContain("3일 전후 관찰");
-    expect(draft.planAndProgress.join("\n")).toContain("확인 전");
-    expect(draft.copyText).toContain("[병원 계획과 이어진 기록]");
+    expect(draft.planAndProgress.join("\n")).toContain("보호자가 옮긴 병원 안내");
+    expect(draft.planAndProgress.join("\n")).not.toContain("3일 전후 관찰");
+    expect(draft.copyText).toContain("[병원에서 들은 내용 · 보호자 기록]");
     expect(draft.copyText).toContain("[다른 병원 첫 설명]");
     expect(draft.handoffNote).toContain("다른 병원");
   });

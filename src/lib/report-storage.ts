@@ -21,6 +21,7 @@ export interface StoredHealthReport {
   owner_note: string | null;
   age_group: HealthCheckInput["ageGroup"];
   symptoms: HealthCheckInput["symptoms"];
+  symptom_details?: HealthCheckInput["symptomDetails"];
   appetite: HealthCheckInput["appetite"];
   energy: HealthCheckInput["energy"];
   duration: HealthCheckInput["duration"];
@@ -67,6 +68,7 @@ export function toStoredHealthReport(
     owner_note: input.note.trim().slice(0, 1000) || null,
     age_group: input.ageGroup,
     symptoms: input.symptoms,
+    symptom_details: input.symptomDetails ?? {},
     appetite: input.appetite,
     energy: input.energy,
     duration: input.duration,
@@ -87,6 +89,7 @@ export function storedReportToHistoryRecord(
   const input: HealthCheckInput = {
     ...profileToHealthInput(profile),
     symptoms: stored.symptoms,
+    symptomDetails: stored.symptom_details ?? {},
     appetite: stored.appetite,
     energy: stored.energy,
     duration: stored.duration,

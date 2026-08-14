@@ -52,14 +52,14 @@ describe("buildEpisodeReport", () => {
     expect(report.disclaimer).toContain("확인된 진료기록이 아닙니다");
   });
 
-  it("does not place free-text notes into the share payload", () => {
+  it("places the owner's hospital-facing note in the share payload", () => {
     const report = buildEpisodeReport([
       record("2026-06-10T00:00:00.000Z", {
-        note: "보호자만 보는 개인 메모",
+        note: "어제 저녁부터 두 번 토했어요.",
       }),
     ]);
 
-    expect(report.shareText).not.toContain("보호자만 보는 개인 메모");
+    expect(report.shareText).toContain("보호자 메모: 어제 저녁부터 두 번 토했어요.");
   });
 
   it("adds owner-reported hospital plan tasks without marking them confirmed", () => {
@@ -75,7 +75,7 @@ describe("buildEpisodeReport", () => {
           id: "70000000-0000-4000-8000-000000000001",
           text: "3일 뒤 상태를 다시 확인하기",
           position: 0,
-          completedAt: null,
+          completedAt: "2026-06-16T00:00:00.000Z",
         },
       ],
     };
@@ -86,12 +86,14 @@ describe("buildEpisodeReport", () => {
     );
 
     expect(report.planTasks).toHaveLength(1);
-    expect(report.shareText).toContain("[병원에서 받은 계획 · 보호자 기록]");
+    expect(report.shareText).toContain("[병원에서 들은 내용 · 보호자 기록]");
     expect(report.shareText).toContain("3일 뒤 상태를 다시 확인하기");
     expect(report.shareText).toContain("수의사가 직접 확인한 내용이 아닙니다");
+    expect(report.shareText).not.toContain("완료");
+    expect(report.shareText).not.toContain("진행 전");
   });
 
-  it("adds structured owner progress checkpoints to the share summary", () => {
+  it("keeps legacy progress data out of the hospital-facing summary", () => {
     const progress: EpisodeProgress[] = [
       {
         id: "80000000-0000-4000-8000-000000000001",
@@ -126,10 +128,9 @@ describe("buildEpisodeReport", () => {
     );
 
     expect(report.progress).toHaveLength(2);
-    expect(report.shareText).toContain("[초기·장기 경과 · 보호자 기록]");
-    expect(report.shareText).toContain("3일: 좋아짐");
-    expect(report.shareText).toContain("30일: 비슷함");
-    expect(report.shareText).toContain("수의사가 확인한 경과가 아닙니다");
+    expect(report.shareText).not.toContain("초기·장기 경과");
+    expect(report.shareText).not.toContain("3일: 좋아짐");
+    expect(report.shareText).not.toContain("30일: 비슷함");
   });
 
   it("maps ordinary health records to follow-up checkpoints automatically", () => {
@@ -155,7 +156,7 @@ describe("buildEpisodeReport", () => {
       30,
     ]);
     expect(completed.every((checkpoint) => checkpoint.source === "health-record")).toBe(true);
-    expect(report.shareText).toContain("건강 기록 자동 연결");
+    expect(report.shareText).not.toContain("건강 기록 자동 연결");
   });
 
   it("summarizes owner-uploaded media without interpreting it", () => {

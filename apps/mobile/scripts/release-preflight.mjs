@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
   appStoreConnectDefaults,
+  createAppStoreConnectClient,
   findKeyPath,
   parseArgs,
 } from "./lib/app-store-connect.mjs";
@@ -281,6 +282,30 @@ if (platform === "all" || platform === "ios") {
       mobileRoot,
     );
     context.iosRemoteVersion = output.split(/\r?\n/).filter(Boolean).at(-1);
+  });
+
+  await recordAsync("iOS 인앱결제 상품", async () => {
+    const { request } = createAppStoreConnectClient();
+    const query = new URLSearchParams({
+      "filter[productId]": "petflow_ai_summary_1",
+      limit: "10",
+    });
+    const response = await request(
+      `/v1/apps/${appStoreConnectDefaults.appId}/inAppPurchasesV2?${query}`,
+    );
+    const purchase = response?.data?.[0];
+    ensure(Boolean(purchase), "petflow_ai_summary_1 is missing");
+    ensure(
+      purchase.attributes?.inAppPurchaseType === "CONSUMABLE",
+      `unexpected product type: ${purchase.attributes?.inAppPurchaseType ?? "missing"}`,
+    );
+    ensure(
+      ["READY_TO_SUBMIT", "WAITING_FOR_REVIEW", "IN_REVIEW", "APPROVED"].includes(
+        purchase.attributes?.state,
+      ),
+      `product is not releasable: ${purchase.attributes?.state ?? "missing"}`,
+    );
+    context.iosInAppPurchaseState = purchase.attributes.state;
   });
 }
 

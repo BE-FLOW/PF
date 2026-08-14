@@ -8,18 +8,19 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:release": "vitest run scripts/dummy-account-policy.test.mjs",
     "db:start": "npx supabase start",
     "db:reset": "npx supabase db reset",
     "db:test": "npx supabase test db",
     "db:cleanup:dummy": "node scripts/cleanup-dummy-data.mjs",
+    "metrics:paid-validation": "node scripts/check-paid-validation.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs",
-    "verify:all": "npm run lint && npm test && npm run build && npm --prefix apps/mobile run verify",
+    "verify:all": "npm run lint && npm test && npm run test:release && npm run build && npm --prefix apps/mobile run verify",
     "release:preflight:android": "npm --prefix apps/mobile run release:preflight:android",
     "release:preflight:ios": "npm --prefix apps/mobile run release:preflight:ios"
   },
   "dependencies": {
     "@fontsource/pretendard": "^5.2.5",
-    "@revenuecat/purchases-js": "^1.48.0",
     "@supabase/supabase-js": "^2.108.1",
     "next": "16.2.11",
     "react": "19.2.8",
@@ -37,6 +38,9 @@
     "vitest": "^4.1.8"
   },
   "overrides": {
+    "brace-expansion": "5.0.8",
+    "minimatch": "10.2.6",
+    "nanoid": "3.3.18",
     "postcss": "8.5.23",
     "sharp": "0.35.3"
   }

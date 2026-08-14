@@ -58,6 +58,10 @@ import {
   type MonetizationEventName,
 } from "./src/lib/monetization";
 import {
+  buildFirstUseGuide,
+  type FirstUseGuide,
+} from "./src/lib/onboarding";
+import {
   buildRecordCalendar,
   isRecordDateInRange,
   monthKeyFromDate,
@@ -87,16 +91,16 @@ import {
   reportMediaExtensionFromMimeType,
   reportMediaKindFromMimeType,
   riskLabels,
+  symptomDetailQuestions,
   symptomOptions,
-  summarizeHealthFlow,
   toggleDailyObservation,
+  toggleSymptomDetail,
   type AiAccessStatus,
   type AiReportFeedbackInput,
   type AnalysisResult,
   type EpisodePlan,
   type EpisodeProgress,
   type EpisodeReport,
-  type HealthFlowSummary,
   type HealthCheckInput,
   type HistoryRecord,
   type PetEpisode,
@@ -114,7 +118,6 @@ import {
   isMissingVaccinationTableError,
   toVaccinationRecord,
   vaccinationDraftFromRecords,
-  vaccinationReminder,
   vaccinationSelectColumns,
   type VaccinationDraft,
   type VaccinationRow,
@@ -131,12 +134,12 @@ type MainSection = "home" | "record" | "reports" | "account";
 
 const mainSectionOptions: Array<{ id: MainSection; label: string }> = [
   { id: "home", label: "홈" },
-  { id: "record", label: "기록" },
-  { id: "reports", label: "보고서" },
+  { id: "record", label: "병원 준비" },
+  { id: "reports", label: "전달본" },
   { id: "account", label: "계정" },
 ];
 
-const quickGuideStoragePrefix = "petflow-quick-guide-v1";
+const quickGuideStoragePrefix = "petflow-quick-guide-v2";
 const billingPendingStoragePrefix = "petflow-billing-pending-v1";
 
 function quickGuideStorageKey(userId: string) {
@@ -217,7 +220,6 @@ interface EpisodeReportGroup {
 }
 
 type NoticeTone = "error" | "success";
-type CheckScoreTone = "good" | "watch" | "alert" | "empty";
 
 interface EpisodeNotice {
   episodeId: string | null;
@@ -225,13 +227,7 @@ interface EpisodeNotice {
   tone: NoticeTone;
 }
 
-interface AiFeedbackDraft {
-  usefulnessScore: AiReportFeedbackInput["usefulnessScore"];
-  comment: string;
-}
-
 type VetDraftMap = Record<string, VetReviewDraft>;
-type AiFeedbackDraftMap = Record<string, AiFeedbackDraft>;
 
 const emptyVaccinationDraft: VaccinationDraft = {
   name: "",
@@ -250,11 +246,6 @@ const emptyPetDraft: PetDraft = {
   photoPath: "",
   photoUrl: "",
   vaccination: emptyVaccinationDraft,
-};
-
-const defaultAiFeedbackDraft: AiFeedbackDraft = {
-  usefulnessScore: 5,
-  comment: "",
 };
 
 const speciesOptions: Array<{ id: Species; label: string }> = [
@@ -298,11 +289,9 @@ const aiFeedbackScoreOptions: Array<{
   id: AiReportFeedbackInput["usefulnessScore"];
   label: string;
 }> = [
-  { id: 5, label: "5점" },
-  { id: 4, label: "4점" },
-  { id: 3, label: "3점" },
-  { id: 2, label: "2점" },
-  { id: 1, label: "1점" },
+  { id: 5, label: "도움됨" },
+  { id: 3, label: "보통" },
+  { id: 1, label: "아쉬움" },
 ];
 
 const apiBaseUrl =
@@ -495,12 +484,12 @@ export default function App() {
     requestId: string;
   } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyResolvedPetId, setHistoryResolvedPetId] = useState<string | null>(null);
   const [historyMessage, setHistoryMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [editingPlanEpisodeId, setEditingPlanEpisodeId] = useState<string | null>(null);
   const [planDraft, setPlanDraft] = useState("");
   const [planSavingEpisodeId, setPlanSavingEpisodeId] = useState<string | null>(null);
-  const [planTogglingTaskId, setPlanTogglingTaskId] = useState<string | null>(null);
   const [planNotice, setPlanNotice] = useState<EpisodeNotice>({
     episodeId: null,
     text: "",
@@ -522,6 +511,24 @@ export default function App() {
     episodeId: string;
     reportIds?: string[];
   } | null>(null);
+
+  async function continuePendingAiDraft(access?: AiAccessStatus | null) {
+    if (!access?.enabled || access.availableCredits < 1) return false;
+    const pendingDraft = pendingAiDraftRef.current;
+    if (!pendingDraft) return false;
+
+    // Store updates can arrive more than once. Clear first so one purchase creates once.
+    pendingAiDraftRef.current = null;
+    setBillingModalOpen(false);
+    setBillingMessage("");
+    await createVetDraft(
+      pendingDraft.episodeId,
+      pendingDraft.reportIds,
+      true,
+    );
+    return true;
+  }
+
   const [accountDeletionLoading, setAccountDeletionLoading] = useState(false);
   const [accountDeletionMessage, setAccountDeletionMessage] = useState("");
   const [accountDeletionRequested, setAccountDeletionRequested] = useState(false);
@@ -533,7 +540,6 @@ export default function App() {
     text: "",
     tone: "success",
   });
-  const [aiFeedbackDrafts, setAiFeedbackDrafts] = useState<AiFeedbackDraftMap>({});
   const [aiFeedbackSavingUsageId, setAiFeedbackSavingUsageId] =
     useState<string | null>(null);
   const [aiFeedbackNotice, setAiFeedbackNotice] = useState<EpisodeNotice>({
@@ -591,10 +597,11 @@ export default function App() {
           if (!access) return;
           if (active) setAiAccess(access);
           const minimumCredits = billingPendingMinimumCreditsRef.current;
-          if (
-            minimumCredits === null ||
-            access.availableCredits < minimumCredits
-          ) {
+          if (minimumCredits === null) {
+            if (active) await continuePendingAiDraft(access);
+            return;
+          }
+          if (access.availableCredits < minimumCredits) {
             return;
           }
 
@@ -603,17 +610,7 @@ export default function App() {
           if (!active) return;
           setBillingPurchasePending(false);
           setBillingMessage("결제가 반영됐어요.");
-
-          const pendingDraft = pendingAiDraftRef.current;
-          pendingAiDraftRef.current = null;
-          if (pendingDraft) {
-            setBillingModalOpen(false);
-            await createVetDraft(
-              pendingDraft.episodeId,
-              pendingDraft.reportIds,
-              true,
-            );
-          }
+          await continuePendingAiDraft(access);
         };
 
         removeBillingListener = subscribeToMobileBillingUpdates(() => {
@@ -663,7 +660,6 @@ export default function App() {
   }, [user?.id]);
 
   const resetAiFeedbackState = useCallback(() => {
-    setAiFeedbackDrafts({});
     setAiFeedbackSavingUsageId(null);
     setAiFeedbackNotice({ episodeId: null, text: "", tone: "success" });
     setSavedAiFeedbackUsageIds([]);
@@ -682,17 +678,6 @@ export default function App() {
         history.filter((record) => record.petId && record.petId === selectedPetId),
       ),
     [history, selectedPetId],
-  );
-  const selectedPetVaccinations = useMemo(
-    () =>
-      selectedPetId
-        ? vaccinations.filter((record) => record.petId === selectedPetId)
-        : [],
-    [selectedPetId, vaccinations],
-  );
-  const healthFlow = useMemo(
-    () => summarizeHealthFlow(selectedPetHistory, selectedPet?.name),
-    [selectedPet?.name, selectedPetHistory],
   );
   const hasHealthDraft = useMemo(() => {
     if (!healthInput) return false;
@@ -786,13 +771,14 @@ export default function App() {
         return new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime();
       });
   }, [episodes, plans, progress, selectedPet?.name, selectedPetHistory, selectedPetId]);
-  const activeEpisodeGroup = episodeReportGroups.find(
-    (group) => group.episode?.status === "open",
-  );
-
   useEffect(() => {
     let active = true;
     if (!authReady || !user) {
+      return () => {
+        active = false;
+      };
+    }
+    if (pets.length > 0 && historyResolvedPetId !== selectedPet?.id) {
       return () => {
         active = false;
       };
@@ -809,7 +795,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [authReady, user]);
+  }, [authReady, historyResolvedPetId, pets.length, selectedPet?.id, user]);
 
   function closeQuickGuide() {
     setQuickGuideOpen(false);
@@ -818,10 +804,29 @@ export default function App() {
     }
   }
 
+  const firstUseGuide = useMemo(
+    () =>
+      buildFirstUseGuide({
+        petCount: pets.length,
+        petName: selectedPet?.name,
+        recordCount: selectedPetHistory.length,
+      }),
+    [pets.length, selectedPet?.name, selectedPetHistory.length],
+  );
+
+  function startFromQuickGuide() {
+    closeQuickGuide();
+    if (firstUseGuide.action === "report") {
+      setMainSection("reports");
+      return;
+    }
+    startHealthRecord();
+  }
+
   const headline = useMemo(() => {
     if (!configured) return "앱 환경을 먼저 연결해요";
     if (!authReady) return "계정 확인 중";
-    if (!user) return "계정으로 이어서 관리";
+    if (!user) return "병원에서 반복 설명하지 않도록";
     return "펫플로우";
   }, [authReady, configured, user]);
 
@@ -854,6 +859,7 @@ export default function App() {
       setLatestEpisodeId(null);
       setEditingHealthRecord(null);
       setHistory([]);
+      setHistoryResolvedPetId(null);
       setEpisodes([]);
       setPlans([]);
       setProgress([]);
@@ -864,7 +870,6 @@ export default function App() {
       setEditingPlanEpisodeId(null);
       setPlanDraft("");
       setPlanSavingEpisodeId(null);
-      setPlanTogglingTaskId(null);
       setPlanNotice({ episodeId: null, text: "", tone: "success" });
       setAiAccess(null);
       setAccountDeletionLoading(false);
@@ -986,7 +991,6 @@ export default function App() {
       setEditingPlanEpisodeId(null);
       setPlanDraft("");
       setPlanSavingEpisodeId(null);
-      setPlanTogglingTaskId(null);
       setPlanNotice({ episodeId: null, text: "", tone: "success" });
       setVetDrafts({});
       setVetDraftLoadingEpisodeId(null);
@@ -1013,6 +1017,7 @@ export default function App() {
     const petId = pet.id;
     if (!petId) return;
     const loadSequence = ++historyLoadSequenceRef.current;
+    setHistoryResolvedPetId(null);
     setHistoryLoading(true);
     setHistoryMessage("");
 
@@ -1047,6 +1052,7 @@ export default function App() {
       }
     } finally {
       if (loadSequence === historyLoadSequenceRef.current) {
+        setHistoryResolvedPetId(petId);
         setHistoryLoading(false);
       }
     }
@@ -1395,7 +1401,6 @@ export default function App() {
     setEditingPlanEpisodeId(null);
     setPlanDraft("");
     setPlanSavingEpisodeId(null);
-    setPlanTogglingTaskId(null);
     setPlanNotice({ episodeId: null, text: "", tone: "success" });
     setVetDrafts({});
     setVetDraftLoadingEpisodeId(null);
@@ -1628,7 +1633,7 @@ export default function App() {
 
     Alert.alert(
       "계정 탈퇴",
-      "계정, 함께하는 아이들, 건강 기록, 사진·영상, AI 요약 이용 기록이 삭제됩니다. 이 작업은 되돌리기 어려워요.",
+      "계정, 함께하는 아이들, 건강 기록, 사진·영상, 병원 전달본 이용 기록이 삭제됩니다. 이 작업은 되돌리기 어려워요.",
       [
         { text: "취소", style: "cancel" },
         {
@@ -1845,7 +1850,7 @@ export default function App() {
   function confirmDeleteExistingMedia(item: ReportMediaAttachment) {
     Alert.alert(
       "첨부 자료를 삭제할까요?",
-      "이 기록과 병원 요약에서 함께 빠져요.",
+      "이 기록과 병원 전달본에서 함께 빠져요.",
       [
         { text: "취소", style: "cancel" },
         {
@@ -1934,7 +1939,7 @@ export default function App() {
   function confirmDeleteHealthRecord(record: HistoryRecord) {
     Alert.alert(
       "기록을 삭제할까요?",
-      "삭제하면 병원 전달 요약에서도 빠져요.",
+      "삭제하면 사실 요약과 병원 전달본에서도 빠져요.",
       [
         { text: "취소", style: "cancel" },
         {
@@ -2173,7 +2178,7 @@ export default function App() {
     const petName = pets.find((pet) => pet.id === editingPetId)?.name ?? "이 아이";
     Alert.alert(
       `${petName}의 정보를 삭제할까요?`,
-      "건강 기록, 사진·영상과 병원 요약에 연결된 내용도 함께 삭제돼요.",
+      "건강 기록, 사진·영상과 병원 전달본에 연결된 내용도 함께 삭제돼요.",
       [
         { text: "취소", style: "cancel" },
         {
@@ -2396,7 +2401,9 @@ export default function App() {
         title: report.title,
         message: report.shareText,
       });
-      setShareMessage("병원 전달 요약을 공유했어요.");
+      setShareMessage(
+        "사실 요약을 공유했어요. 다녀온 뒤 들은 내용도 같은 흐름에 이어둘 수 있어요.",
+      );
     } catch {
       setShareMessage("공유 창을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
@@ -2488,60 +2495,6 @@ export default function App() {
     }
   }
 
-  async function toggleEpisodePlanTask(
-    episodeId: string,
-    taskId: string,
-    completed: boolean,
-  ) {
-    setPlanTogglingTaskId(taskId);
-    setPlanNotice({ episodeId, text: "", tone: "success" });
-    try {
-      const supabase = getSupabaseClient();
-      const { data } = supabase
-        ? await supabase.auth.getSession()
-        : { data: { session: null } };
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("missing session");
-
-      const response = await fetch(`${apiBaseUrl}/api/episodes/${episodeId}/plan`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ taskId, completed }),
-      });
-      if (!response.ok) throw new Error("toggle plan task failed");
-
-      const completedAt = completed ? new Date().toISOString() : null;
-      setPlans((current) =>
-        current.map((plan) =>
-          plan.episodeId === episodeId
-            ? {
-                ...plan,
-                tasks: plan.tasks.map((task) =>
-                  task.id === taskId ? { ...task, completedAt } : task,
-                ),
-              }
-            : plan,
-        ),
-      );
-      setPlanNotice({
-        episodeId,
-        text: completed ? "체크 완료로 표시했어요." : "체크를 해제했어요.",
-        tone: "success",
-      });
-    } catch {
-      setPlanNotice({
-        episodeId,
-        text: "체크 상태를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
-        tone: "error",
-      });
-    } finally {
-      setPlanTogglingTaskId(null);
-    }
-  }
-
   async function billingAccessToken() {
     const supabase = getSupabaseClient();
     const { data } = supabase
@@ -2622,6 +2575,12 @@ export default function App() {
         return;
       }
       setAiAccess(current.access);
+      if (!current.access.purchaseAvailable) {
+        setBillingMessage(
+          "현재 결제를 이용할 수 없어요. 앱을 최신 버전으로 업데이트한 뒤 다시 확인해 주세요.",
+        );
+        return;
+      }
       const minimumCredits = current.access.availableCredits + 1;
 
       void trackMonetizationEvent("purchase_started", billingContext);
@@ -2660,16 +2619,10 @@ export default function App() {
       billingPendingMinimumCreditsRef.current = null;
       await clearPendingBillingMinimum(user.id).catch(() => undefined);
       setBillingPurchasePending(false);
-      const pendingDraft = pendingAiDraftRef.current;
-      pendingAiDraftRef.current = null;
-      setBillingModalOpen(false);
-      setBillingMessage("");
-      if (pendingDraft) {
-        await createVetDraft(
-          pendingDraft.episodeId,
-          pendingDraft.reportIds,
-          true,
-        );
+      const continued = await continuePendingAiDraft(synced.access);
+      if (!continued) {
+        setBillingModalOpen(false);
+        setBillingMessage("");
       }
     } catch {
       setBillingMessage(
@@ -2712,25 +2665,21 @@ export default function App() {
         billingPendingMinimumCreditsRef.current = null;
         await clearPendingBillingMinimum(user.id).catch(() => undefined);
         setBillingPurchasePending(false);
-        setBillingMessage("");
-        setBillingModalOpen(false);
-        const pendingDraft = pendingAiDraftRef.current;
-        pendingAiDraftRef.current = null;
-        if (pendingDraft) {
-          await createVetDraft(
-            pendingDraft.episodeId,
-            pendingDraft.reportIds,
-            true,
-          );
+        const continued = await continuePendingAiDraft(synced.access);
+        if (!continued) {
+          setBillingMessage("");
+          setBillingModalOpen(false);
         }
         return;
       }
 
+      if (await continuePendingAiDraft(synced.access)) return;
+
       setBillingMessage(
         synced.error ??
           (synced.access?.availableCredits
-            ? `AI 요약 ${synced.access.availableCredits}회를 확인했어요.`
-            : "추가로 확인된 AI 요약 이용권이 없어요."),
+            ? `병원 전달본 ${synced.access.availableCredits}회를 확인했어요.`
+            : "추가로 확인된 병원 전달본 이용권이 없어요."),
       );
     } catch {
       setBillingMessage(
@@ -2749,12 +2698,20 @@ export default function App() {
   ) {
     if (!accessConfirmed && !aiAccess?.enabled) {
       if (aiAccess?.reason === "no_credits") {
-        openBillingForAiDraft(episodeId, reportIds);
+        if (aiAccess.purchaseAvailable) {
+          openBillingForAiDraft(episodeId, reportIds);
+        } else {
+          setVetDraftNotice({
+            episodeId,
+            text: "결제 연결을 준비하고 있어요. 앱을 최신 버전으로 업데이트한 뒤 다시 확인해 주세요.",
+            tone: "error",
+          });
+        }
         return false;
       }
       setVetDraftNotice({
         episodeId,
-        text: "AI 요약 이용 가능 여부를 확인하지 못했어요.",
+        text: "병원 전달본 이용 가능 여부를 확인하지 못했어요.",
         tone: "error",
       });
       return false;
@@ -2795,7 +2752,7 @@ export default function App() {
       setVetDrafts((current) => ({ ...current, [episodeId]: nextDraft }));
       setVetDraftNotice({
         episodeId,
-        text: "AI 병원 요약을 만들었어요.",
+        text: "병원 전달본을 만들었어요.",
         tone: "success",
       });
       const nextAccess = await fetchAiAccessStatus(accessToken);
@@ -2807,7 +2764,7 @@ export default function App() {
         text:
           error instanceof Error
             ? error.message
-            : "AI 요약을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+            : "병원 전달본을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
         tone: "error",
       });
       return false;
@@ -2826,37 +2783,25 @@ export default function App() {
       void trackMonetizationEvent("ai_summary_shared", "report");
       setVetDraftNotice({
         episodeId,
-        text: "AI 요약을 공유했어요.",
+        text: "전달본을 공유했어요. 다녀온 뒤 들은 내용을 한 줄로 이어둘 수 있어요.",
         tone: "success",
       });
     } catch {
       setVetDraftNotice({
         episodeId,
-        text: "AI 요약 공유 창을 열지 못했어요.",
+        text: "병원 전달본 공유 창을 열지 못했어요.",
         tone: "error",
       });
     }
   }
 
-  function updateAiFeedbackDraft(
-    usageId: string,
-    patch: Partial<AiFeedbackDraft>,
+  async function saveAiFeedback(
+    episodeId: string,
+    draft: VetReviewDraft,
+    usefulnessScore: AiReportFeedbackInput["usefulnessScore"],
   ) {
-    setAiFeedbackDrafts((current) => ({
-      ...current,
-      [usageId]: {
-        ...(current[usageId] ?? defaultAiFeedbackDraft),
-        ...patch,
-      },
-    }));
-    setAiFeedbackNotice({ episodeId: null, text: "", tone: "success" });
-  }
-
-  async function saveAiFeedback(episodeId: string, draft: VetReviewDraft) {
     const usageId = draft.usageId;
     if (!usageId) return;
-
-    const feedback = aiFeedbackDrafts[usageId] ?? defaultAiFeedbackDraft;
 
     setAiFeedbackSavingUsageId(usageId);
     setAiFeedbackNotice({ episodeId, text: "", tone: "success" });
@@ -2876,8 +2821,7 @@ export default function App() {
         },
         body: JSON.stringify({
           usageId,
-          usefulnessScore: feedback.usefulnessScore,
-          comment: feedback.comment.trim() || undefined,
+          usefulnessScore,
         } satisfies AiReportFeedbackInput),
       });
       if (!response.ok) throw new Error("save feedback failed");
@@ -2887,7 +2831,7 @@ export default function App() {
       );
       setAiFeedbackNotice({
         episodeId,
-        text: "AI 요약 피드백을 저장했어요.",
+        text: "병원 전달본 피드백을 저장했어요.",
         tone: "success",
       });
     } catch {
@@ -2902,8 +2846,8 @@ export default function App() {
   }
 
   const appDescription = user
-    ? "기록, 사진과 병원 요약을 한곳에서 이어서 관리해요."
-    : "기록과 사진을 안전하게 이어서 관리하려면 계정으로 시작해요.";
+    ? "병원 가기 전 상황을 남기고 전달본을 준비해요."
+    : "한 줄과 사진을 시작 시점과 변화 순서로 정리해요.";
   const showPageIntro = !configured || !authReady || !user;
 
   const accountCard = user ? (
@@ -2979,13 +2923,9 @@ export default function App() {
               <MainSectionTabs value={mainSection} onChange={changeMainSection} />
                   {mainSection === "home" ? (
                     <HomeDashboard
-                      flow={healthFlow}
                       history={selectedPetHistory}
-                      latestResult={latestResult}
                       pets={pets}
                       selectedPet={selectedPet}
-                      activeEpisodeGroup={activeEpisodeGroup}
-                      vaccinations={selectedPetVaccinations}
                       onEditPet={() => {
                         if (selectedPet) {
                           startEditingPet(selectedPet);
@@ -3067,11 +3007,9 @@ export default function App() {
                       <HealthHistoryCard
                         key={selectedPet.id}
                         aiAccess={aiAccess}
-                        aiFeedbackDrafts={aiFeedbackDrafts}
                         aiFeedbackNotice={aiFeedbackNotice}
                         aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
                         episodeGroups={episodeReportGroups}
-                        flow={healthFlow}
                         history={selectedPetHistory}
                         loading={historyLoading}
                         message={historyMessage}
@@ -3079,7 +3017,6 @@ export default function App() {
                         editingPlanEpisodeId={editingPlanEpisodeId}
                         planDraft={planDraft}
                         planSavingEpisodeId={planSavingEpisodeId}
-                        planTogglingTaskId={planTogglingTaskId}
                         planNotice={planNotice}
                         vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
                         vetDraftNotice={vetDraftNotice}
@@ -3097,8 +3034,6 @@ export default function App() {
                         onCancelPlanEdit={cancelPlanEdit}
                         onChangePlanDraft={setPlanDraft}
                         onSavePlan={saveEpisodePlan}
-                        onTogglePlanTask={toggleEpisodePlanTask}
-                        onChangeAiFeedbackDraft={updateAiFeedbackDraft}
                         shareMessage={shareMessage}
                       />
                     ) : (
@@ -3127,7 +3062,12 @@ export default function App() {
 
         </ScrollView>
       </KeyboardAvoidingView>
-      <QuickGuideModal open={quickGuideOpen} onClose={closeQuickGuide} />
+      <QuickGuideModal
+        guide={firstUseGuide}
+        open={quickGuideOpen}
+        onClose={closeQuickGuide}
+        onStart={startFromQuickGuide}
+      />
       <PasswordRecoveryModal
         open={passwordRecoveryOpen}
         onClose={() => setPasswordRecoveryOpen(false)}
@@ -3196,174 +3136,105 @@ function AppBrandMark() {
 }
 
 function HomeDashboard({
-  activeEpisodeGroup,
-  flow,
   history,
-  latestResult,
   pets,
   selectedPet,
-  vaccinations,
   onEditPet,
   onGoRecord,
   onGoReports,
 }: {
-  activeEpisodeGroup?: EpisodeReportGroup;
-  flow: HealthFlowSummary;
   history: HistoryRecord[];
-  latestResult: AnalysisResult | null;
   pets: PetProfile[];
   selectedPet?: PetProfile;
-  vaccinations: VaccinationRecord[];
   onEditPet: () => void;
   onGoRecord: (dateKey?: string) => void;
   onGoReports: () => void;
 }) {
-  const latestRecord = history[0];
-  const riskScore = latestResult?.riskScore ?? latestRecord?.result.riskScore;
-  const checkScore = riskScore === undefined ? undefined : displayCheckScore(riskScore);
-  const scoreTone = getCheckScoreTone(checkScore);
-  const riskLevel = latestResult?.riskLevel ?? latestRecord?.result.riskLevel;
-  const latestAt = latestResult?.createdAt ?? latestRecord?.result.createdAt;
   const petSummary = selectedPet
     ? [speciesLabel(selectedPet.species), selectedPet.breed].filter(Boolean).join(" · ")
     : "함께 볼 아이를 골라주세요";
-  const vaccination = vaccinationReminder(vaccinations);
+  const hasHistory = history.length > 0;
   if (!pets.length) {
     return (
       <View style={styles.card}>
-        <Text style={styles.cardEyebrow}>WELCOME</Text>
-        <Text style={styles.cardTitle}>함께할 아이를 먼저 알려주세요</Text>
+          <Text style={styles.cardEyebrow}>병원 가기 전 3분</Text>
+        <Text style={styles.cardTitle}>이름과 종류만 먼저 알려주세요</Text>
         <Text style={styles.cardText}>
-          이름과 종류만 저장하면 바로 기록할 수 있어요.
+          등록 뒤 달라진 점 한 줄만 남기면 돼요.
         </Text>
-        <SecondaryButton label="첫 아이 등록" onPress={() => onGoRecord()} />
+        <PrimaryButton
+          disabled={false}
+          label="30초 등록 시작"
+          onPress={() => onGoRecord()}
+        />
       </View>
     );
   }
 
   return (
-    <>
-      <View style={styles.homePetCard}>
-        <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>오늘 상태</Text>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => onGoRecord()}
-            style={styles.homePrimaryAction}
-          >
-            <Text style={styles.homePrimaryActionText}>기록하기</Text>
-          </TouchableOpacity>
-          <View style={styles.homeInlineStatusRow}>
-            {vaccination ? (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={onEditPet}
-              style={[
-                  styles.homeInlineStatus,
-                  vaccination.tone === "due" && styles.homeInlineStatusDue,
-                  vaccination.tone === "overdue" && styles.homeInlineStatusOverdue,
-              ]}
-              >
-                <Text style={styles.homeInlineStatusText} numberOfLines={1}>
-                  {vaccination.label} · {vaccination.title}
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-            {activeEpisodeGroup ? (
-              <TouchableOpacity
-                activeOpacity={0.86}
-                onPress={onGoReports}
-                style={styles.homeInlineStatus}
-              >
-                <Text style={styles.homeInlineStatusText} numberOfLines={1}>
-                  진행 중 · 기록 {activeEpisodeGroup.records.length}회 · 흐름 자동 연결
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
+    <View style={styles.homePetCard}>
+      <View style={styles.cardHeaderText}>
+        <Text style={styles.cardEyebrow}>병원 가기 전 3분</Text>
+        <Text style={styles.homePrepTitle}>
+          {hasHistory
+            ? `${selectedPet?.name ?? "반려동물"}의 새 변화만 이어주세요`
+            : `${selectedPet?.name ?? "반려동물"}의 달라진 점을 남겨주세요`}
+        </Text>
+        <Text style={styles.homePrepText}>
+          {hasHistory
+            ? "이전 기록과 병원에서 들은 내용은 다음 전달본에 이어져요."
+            : "한 줄과 사진을 병원에서 바로 보여줄 전달본으로 정리해요."}
+        </Text>
         <TouchableOpacity
+          accessibilityLabel="병원 전달본 준비 시작"
+          accessibilityRole="button"
           activeOpacity={0.85}
-          onPress={onEditPet}
-          style={styles.homePetProfile}
+          onPress={() => onGoRecord()}
+          style={styles.homePrimaryAction}
         >
-          <View style={styles.petPhotoSlot}>
-            {selectedPet?.photoUrl ? (
-              <Image source={{ uri: selectedPet.photoUrl }} style={styles.petPhotoSlotImage} />
-            ) : (
-              <Text style={styles.petPhotoSlotText}>
-                {avatarLabel(selectedPet?.name ?? "펫")}
-              </Text>
-            )}
-          </View>
-          <View style={styles.homePetProfileNameRow}>
-            <Text style={styles.homePetName} numberOfLines={1}>
-              {selectedPet ? selectedPet.name : "반려동물"}
-            </Text>
-            <Text style={styles.homePetEdit}>{selectedPet ? "수정" : "등록"}</Text>
-          </View>
-          <Text style={styles.homePetMeta} numberOfLines={1}>
-            {petSummary || "정보 없음"}
+          <Text style={styles.homePrimaryActionText}>
+            {hasHistory ? "새 변화 이어서 남기기" : "3분 준비 시작"}
           </Text>
         </TouchableOpacity>
-      </View>
-
-      <View
-        style={[
-          styles.homeScoreCard,
-          scoreTone === "good" && styles.homeScoreCardGood,
-          scoreTone === "watch" && styles.homeScoreCardWatch,
-          scoreTone === "alert" && styles.homeScoreCardAlert,
-        ]}
-      >
-        <View style={styles.homeScoreTop}>
-          <View style={styles.homeScoreCopy}>
-            <Text style={styles.cardEyebrow}>현재 상태</Text>
-            <Text style={styles.homeScoreTitle}>
-              {riskLevel ? riskLabels[riskLevel] : "첫 기록 전"}
-            </Text>
-            <Text style={styles.homeMutedText}>
-              {latestAt
-                ? `${formatRecordedAt(latestAt)} · 최근 14일 ${flow.recordCount}회`
-                : "기록을 시작해 주세요."}
-            </Text>
-            <Text style={styles.homeFlowHeadline} numberOfLines={1}>
-              {flow.headline}
-            </Text>
-            <TouchableOpacity activeOpacity={0.85} onPress={onGoReports}>
-              <Text style={styles.homeFlowLink}>건강 흐름 보기</Text>
-            </TouchableOpacity>
-          </View>
-          <View
-            style={[
-              styles.homeScoreBadge,
-              scoreTone === "good" && styles.homeScoreBadgeGood,
-              scoreTone === "watch" && styles.homeScoreBadgeWatch,
-              scoreTone === "alert" && styles.homeScoreBadgeAlert,
-            ]}
+        {history.length ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onGoReports}
+            style={styles.homeExistingRecordsLink}
           >
-            <Text
-              style={[
-                styles.homeScoreValue,
-                scoreTone === "watch" && styles.homeScoreValueWatch,
-                scoreTone === "alert" && styles.homeScoreValueAlert,
-              ]}
-            >
-              {checkScore ?? "--"}
+            <Text style={styles.homeExistingRecordsText}>
+              기록 {history.length}개로 전달본 만들기 ›
             </Text>
-            <Text
-              style={[
-                styles.homeScoreCaption,
-                (scoreTone === "watch" || scoreTone === "alert") &&
-                  styles.homeScoreCaptionDark,
-              ]}
-            >
-              CHECK
-            </Text>
-          </View>
-        </View>
+          </TouchableOpacity>
+        ) : null}
       </View>
-    </>
+      <TouchableOpacity
+        accessibilityLabel={`${selectedPet?.name ?? "반려동물"} 정보 수정`}
+        accessibilityRole="button"
+        activeOpacity={0.85}
+        onPress={onEditPet}
+        style={styles.homePetProfile}
+      >
+        <View style={styles.petPhotoSlot}>
+          {selectedPet?.photoUrl ? (
+            <Image source={{ uri: selectedPet.photoUrl }} style={styles.petPhotoSlotImage} />
+          ) : (
+            <Text style={styles.petPhotoSlotText}>
+              {avatarLabel(selectedPet?.name ?? "펫")}
+            </Text>
+          )}
+        </View>
+        <View style={styles.homePetProfileNameRow}>
+          <Text style={styles.homePetName} numberOfLines={1}>
+            {selectedPet ? selectedPet.name : "반려동물"}
+          </Text>
+          <Text style={styles.homePetEdit}>{selectedPet ? "수정" : "등록"}</Text>
+        </View>
+        <Text style={styles.homePetMeta} numberOfLines={1}>
+          {petSummary || "정보 없음"}
+        </Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -3400,12 +3271,12 @@ function MainSectionTabs({
 function ReportsEmptyState({ onGoRecord }: { onGoRecord: () => void }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.cardEyebrow}>REPORTS</Text>
+      <Text style={styles.cardEyebrow}>병원 전달본</Text>
       <Text style={styles.cardTitle}>함께할 아이를 먼저 알려주세요</Text>
       <Text style={styles.cardText}>
-        아이별 기록과 병원 전달 요약을 모아서 볼 수 있어요.
+        이름과 종류만 입력하면 바로 병원 준비를 시작할 수 있어요.
       </Text>
-      <SecondaryButton label="아이 등록하기" onPress={onGoRecord} />
+      <SecondaryButton label="등록하고 준비하기" onPress={onGoRecord} />
     </View>
   );
 }
@@ -3471,6 +3342,22 @@ function AuthForm({
 
   return (
     <View style={styles.card}>
+      <View style={styles.authValuePreview}>
+        <Text style={styles.authValueEyebrow}>PET FLOW · 3분 병원 준비</Text>
+        <Text style={styles.authValueTitle}>한 줄과 사진이 병원 전달본이 돼요</Text>
+        <View style={styles.valuePreviewRow}>
+          <View style={styles.valuePreviewBlock}>
+            <Text style={styles.valuePreviewLabel}>남기는 것</Text>
+            <Text style={styles.valuePreviewText}>달라진 점 · 사진</Text>
+          </View>
+          <Text style={styles.valuePreviewArrow}>→</Text>
+          <View style={[styles.valuePreviewBlock, styles.valuePreviewResult]}>
+            <Text style={styles.valuePreviewLabel}>얻는 것</Text>
+            <Text style={styles.valuePreviewText}>병원 전달본</Text>
+          </View>
+        </View>
+      </View>
+
       <View style={styles.authTabs} accessibilityLabel="계정 시작 방법">
         <TouchableOpacity
           activeOpacity={0.85}
@@ -3763,6 +3650,7 @@ function AccountCard({
   const canOfferPurchase = Boolean(
     billingProduct &&
       aiAccess &&
+      aiAccess.purchaseAvailable &&
       aiAccess.reason !== "unavailable" &&
       !complimentarySummaryAvailable,
   );
@@ -3873,7 +3761,7 @@ function AccountCard({
       <View style={[styles.aiAccessBox, aiAccess?.enabled && styles.aiAccessBoxEnabled]}>
         <View style={styles.aiAccessHeader}>
           <View style={styles.cardHeaderText}>
-            <Text style={styles.aiAccessTitle}>AI 병원 요약</Text>
+            <Text style={styles.aiAccessTitle}>병원 전달본</Text>
             <Text style={styles.aiAccessText}>{aiAccessCopy(aiAccess)}</Text>
           </View>
           <Text
@@ -3907,7 +3795,7 @@ function AccountCard({
 
         {complimentarySummaryAvailable ? (
           <Text style={styles.aiTrialHint}>
-            첫 요약은 무료예요. 기록을 고른 뒤 AI 병원 요약을 만들어 보세요.
+            첫 전달본은 무료예요. 기록을 고른 뒤 병원 전달본을 만들어 보세요.
           </Text>
         ) : null}
 
@@ -3954,7 +3842,7 @@ function AccountCard({
         <View style={styles.cardHeaderText}>
           <Text style={styles.quickGuideEntryTitle}>사용법 보기</Text>
           <Text style={styles.quickGuideEntryText}>
-            기록부터 병원 요약까지 한눈에 확인해요.
+            기록부터 병원 전달본까지 한눈에 확인해요.
           </Text>
         </View>
         <Text style={styles.quickGuideEntryArrow}>›</Text>
@@ -3963,7 +3851,7 @@ function AccountCard({
       <View style={styles.accountDeletionBox}>
         <Text style={styles.accountDeletionTitle}>계정 탈퇴</Text>
         <Text style={styles.accountDeletionText}>
-          탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, AI 요약 이용
+          탈퇴하면 계정과 함께하는 아이들, 건강 기록, 사진·영상, 병원 전달본 이용
           기록이 삭제되고 현재 기기에서 로그아웃합니다.
         </Text>
         <TouchableOpacity
@@ -4038,19 +3926,19 @@ function AiBillingModal({
     >
       <View style={styles.quickGuideBackdrop}>
         <View
-          accessibilityLabel="AI 병원 요약 1회 이용권"
+          accessibilityLabel="병원 전달본 1회 이용권"
           accessibilityViewIsModal
           style={styles.billingDialog}
         >
-          <Text style={styles.quickGuideEyebrow}>AI 병원 요약 · 1회 이용권</Text>
+          <Text style={styles.quickGuideEyebrow}>병원 전달본 · 1회 이용권</Text>
           <Text style={styles.quickGuideTitle}>
             {context === "report"
-              ? `지금 고른 기록을\n병원용 요약으로`
-              : `필요한 순간에\n병원용 요약 한 번`}
+              ? `지금 고른 기록을\n병원에서 바로 보여주세요`
+              : `처음부터 다시 설명하지 않도록\n전달본 한 번`}
           </Text>
           <Text style={styles.billingDescription}>
-            날짜별 변화와 보호자 관찰을 짧게 정리해요. 1회 결제이며 자동 갱신은
-            없어요.
+            시작 시점과 변화 순서를 사실 중심으로 정리해요. 1회 결제이며 자동
+            갱신은 없어요.
           </Text>
 
           {access?.availableCredits ? (
@@ -4066,7 +3954,9 @@ function AiBillingModal({
             activeOpacity={0.86}
             accessibilityRole="button"
             disabled={
-              loading || (!purchasePending && (productLoading || !product))
+              loading ||
+              (!purchasePending &&
+                (productLoading || !product || !access?.purchaseAvailable))
             }
             onPress={() =>
               void (purchasePending ? onRefresh() : onPurchase())
@@ -4074,7 +3964,8 @@ function AiBillingModal({
             style={[
               styles.quickGuideClose,
               (loading ||
-                (!purchasePending && (productLoading || !product))) &&
+                (!purchasePending &&
+                  (productLoading || !product || !access?.purchaseAvailable))) &&
                 styles.buttonDisabled,
             ]}
           >
@@ -4085,7 +3976,9 @@ function AiBillingModal({
                 {purchasePending
                   ? "결제 반영 확인"
                   : product
-                  ? `${product.priceLabel} · 1회 추가`
+                    ? access?.purchaseAvailable
+                      ? `${product.priceLabel} · 1회 추가`
+                      : "결제를 준비 중이에요"
                   : productLoading
                     ? "상품 확인 중"
                     : "결제를 준비 중이에요"}
@@ -4096,7 +3989,7 @@ function AiBillingModal({
           <Text style={styles.billingFootnote}>
             {purchasePending
               ? "결제는 끝났어요. 중복 결제 없이 이용권 반영만 확인해요."
-              : "결제 후 바로 요약을 이어서 만들어요. 진단이나 처방은 만들지 않아요."}
+              : "결제 후 바로 전달본을 이어서 만들어요. 진단이나 처방은 만들지 않아요."}
           </Text>
 
           {!purchasePending ? (
@@ -4129,18 +4022,16 @@ function AiBillingModal({
 }
 
 function QuickGuideModal({
+  guide,
   open,
   onClose,
+  onStart,
 }: {
+  guide: FirstUseGuide;
   open: boolean;
   onClose: () => void;
+  onStart: () => void;
 }) {
-  const items = [
-    ["1", "짧게 기록", "달라진 점만 남기고 사진·영상은 필요할 때 더해요."],
-    ["2", "흐름은 자동 연결", "같은 아이의 기록을 날짜별 경과로 자동 정리해요."],
-    ["3", "병원 갈 때 요약", "필요한 기간을 골라 병원에 보여줄 자료를 만들어요."],
-  ] as const;
-
   return (
     <Modal
       animationType="fade"
@@ -4155,30 +4046,38 @@ function QuickGuideModal({
           accessibilityViewIsModal
           style={styles.quickGuideDialog}
         >
-          <Text style={styles.quickGuideEyebrow}>처음 사용법</Text>
-          <Text style={styles.quickGuideTitle}>세 가지만 기억하면 돼요</Text>
+          <Text style={styles.quickGuideEyebrow}>{guide.eyebrow}</Text>
+          <Text style={styles.quickGuideTitle}>{guide.title}</Text>
+          <Text style={styles.quickGuideDescription}>{guide.description}</Text>
 
-          <View style={styles.quickGuideList}>
-            {items.map(([number, title, description]) => (
-              <View key={number} style={styles.quickGuideItem}>
-                <View style={styles.quickGuideNumber}>
-                  <Text style={styles.quickGuideNumberText}>{number}</Text>
-                </View>
-                <View style={styles.cardHeaderText}>
-                  <Text style={styles.quickGuideItemTitle}>{title}</Text>
-                  <Text style={styles.quickGuideItemText}>{description}</Text>
-                </View>
-              </View>
-            ))}
+          <View style={styles.quickGuideValueFlow}>
+            <View style={styles.valuePreviewBlock}>
+              <Text style={styles.valuePreviewLabel}>남기는 것</Text>
+              <Text style={styles.valuePreviewText}>한 줄 · 사진</Text>
+            </View>
+            <Text style={styles.valuePreviewArrow}>→</Text>
+            <View style={[styles.valuePreviewBlock, styles.valuePreviewResult]}>
+              <Text style={styles.valuePreviewLabel}>얻는 것</Text>
+              <Text style={styles.valuePreviewText}>병원 전달본</Text>
+            </View>
           </View>
+          <Text style={styles.quickGuideResult}>{guide.result}</Text>
 
           <TouchableOpacity
             activeOpacity={0.86}
             accessibilityRole="button"
-            onPress={onClose}
+            onPress={onStart}
             style={styles.quickGuideClose}
           >
-            <Text style={styles.quickGuideCloseText}>시작하기</Text>
+            <Text style={styles.quickGuideCloseText}>{guide.actionLabel}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            onPress={onClose}
+            style={styles.quickGuideLater}
+          >
+            <Text style={styles.quickGuideLaterText}>홈 먼저 보기</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -4237,6 +4136,65 @@ function PetManager({
 }) {
   const selectedPet = pets.find((pet) => pet.id === selectedPetId);
   const showPetForm = formExpanded || !pets.length;
+
+  if (!showPetForm && selectedPet) {
+    return (
+      <View style={[styles.card, styles.petContextCard]}>
+        <View style={styles.petContextRow}>
+          <View style={styles.petAvatar}>
+            {selectedPet.photoUrl ? (
+              <Image source={{ uri: selectedPet.photoUrl }} style={styles.petAvatarImage} />
+            ) : (
+              <Text style={styles.petAvatarText}>{avatarLabel(selectedPet.name)}</Text>
+            )}
+          </View>
+          <View style={styles.petListText}>
+            <Text style={styles.petName}>{selectedPet.name}</Text>
+            <Text style={styles.petMeta}>{speciesLabel(selectedPet.species)}</Text>
+          </View>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => onEdit(selectedPet)}
+            style={styles.editButton}
+          >
+            <Text style={styles.editButtonText}>수정</Text>
+          </TouchableOpacity>
+          <TouchableOpacity activeOpacity={0.85} onPress={onNew} style={styles.smallButton}>
+            <Text style={styles.smallButtonText}>+ 추가</Text>
+          </TouchableOpacity>
+        </View>
+        {pets.length > 1 ? (
+          <ScrollView
+            horizontal
+            contentContainerStyle={styles.petSwitcher}
+            showsHorizontalScrollIndicator={false}
+          >
+            {pets.map((pet) => (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                key={pet.id}
+                onPress={() => pet.id && onSelect(pet.id)}
+                style={[
+                  styles.petSwitcherButton,
+                  pet.id === selectedPetId && styles.petSwitcherButtonSelected,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.petSwitcherText,
+                    pet.id === selectedPetId && styles.petSwitcherTextSelected,
+                  ]}
+                >
+                  {pet.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        ) : null}
+        <Message text={message} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.card}>
@@ -4312,7 +4270,7 @@ function PetManager({
 
       {selectedPet ? (
         <View style={styles.selectedPetBox}>
-          <Text style={styles.selectedPetLabel}>오늘 살펴볼 아이</Text>
+          <Text style={styles.selectedPetLabel}>기록할 아이</Text>
           <Text style={styles.selectedPetName}>{selectedPet.name}</Text>
         </View>
       ) : null}
@@ -4359,6 +4317,11 @@ function PetForm({
   const breedSuggestions = breedOptions[draft.species];
   const birthDateShortcuts = useMemo(() => buildBirthDateShortcuts(), []);
   const selectedBreed = draft.breed.trim();
+  const [detailsExpanded, setDetailsExpanded] = useState(editing);
+
+  useEffect(() => {
+    setDetailsExpanded(editing);
+  }, [editing]);
 
   const chooseSpecies = (species: Species) => {
     setDraft({
@@ -4384,33 +4347,6 @@ function PetForm({
           </TouchableOpacity>
         ) : null}
       </View>
-      <View style={styles.petPhotoEditor}>
-        <View style={styles.petPhotoPreview}>
-          {draft.photoUrl ? (
-            <Image source={{ uri: draft.photoUrl }} style={styles.petPhotoPreviewImage} />
-          ) : (
-            <Text style={styles.petPhotoPreviewText}>
-              {draft.name ? avatarLabel(draft.name) : "펫"}
-            </Text>
-          )}
-        </View>
-        <View style={styles.petPhotoCopy}>
-          <Text style={styles.petPhotoTitle}>프로필 사진</Text>
-          <Text style={styles.petPhotoText}>
-            선택 사항이에요. 홈에서 아이를 더 빨리 알아볼 수 있어요.
-          </Text>
-          <View style={styles.petPhotoActions}>
-            <TouchableOpacity activeOpacity={0.85} onPress={onPickPhoto} style={styles.photoButton}>
-              <Text style={styles.photoButtonText}>사진 선택</Text>
-            </TouchableOpacity>
-            {draft.photoUrl || draft.photoPath ? (
-              <TouchableOpacity activeOpacity={0.85} onPress={onRemovePhoto}>
-                <Text style={styles.photoRemoveText}>사진 지우기</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
-      </View>
       <FieldLabel label="이름" />
       <TextInput
         maxLength={30}
@@ -4428,145 +4364,185 @@ function PetForm({
         onSelect={chooseSpecies}
       />
 
-      <FieldLabel label="품종" />
-      {breedSuggestions.length ? (
-        <View style={styles.choicePanel}>
-          <Text style={styles.choicePanelText}>자주 쓰는 품종</Text>
-          <ChipGroup
-            options={breedSuggestions.map((breed) => ({ id: breed, label: breed }))}
-            selected={selectedBreed}
-            onSelect={(breed) => setDraft({ ...draft, breed })}
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => setDetailsExpanded((current) => !current)}
+        style={styles.petDetailsToggle}
+      >
+        <Text style={styles.petDetailsToggleText}>
+          {detailsExpanded ? "세부 정보 접기" : "사진·세부 정보 추가"}
+        </Text>
+        <Text style={styles.petDetailsToggleIcon}>{detailsExpanded ? "−" : "+"}</Text>
+      </TouchableOpacity>
+
+      {detailsExpanded ? (
+        <>
+          <View style={styles.petPhotoEditor}>
+            <View style={styles.petPhotoPreview}>
+              {draft.photoUrl ? (
+                <Image source={{ uri: draft.photoUrl }} style={styles.petPhotoPreviewImage} />
+              ) : (
+                <Text style={styles.petPhotoPreviewText}>
+                  {draft.name ? avatarLabel(draft.name) : "펫"}
+                </Text>
+              )}
+            </View>
+            <View style={styles.petPhotoCopy}>
+              <Text style={styles.petPhotoTitle}>프로필 사진</Text>
+              <View style={styles.petPhotoActions}>
+                <TouchableOpacity activeOpacity={0.85} onPress={onPickPhoto} style={styles.photoButton}>
+                  <Text style={styles.photoButtonText}>사진 선택</Text>
+                </TouchableOpacity>
+                {draft.photoUrl || draft.photoPath ? (
+                  <TouchableOpacity activeOpacity={0.85} onPress={onRemovePhoto}>
+                    <Text style={styles.photoRemoveText}>사진 지우기</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+          </View>
+
+          <FieldLabel label="품종" />
+          {breedSuggestions.length ? (
+            <View style={styles.choicePanel}>
+              <Text style={styles.choicePanelText}>자주 쓰는 품종</Text>
+              <ChipGroup
+                options={breedSuggestions.map((breed) => ({ id: breed, label: breed }))}
+                selected={selectedBreed}
+                onSelect={(breed) => setDraft({ ...draft, breed })}
+              />
+            </View>
+          ) : (
+            <Text style={styles.helperText}>모르면 비워둬도 괜찮아요.</Text>
+          )}
+          <TextInput
+            maxLength={40}
+            onChangeText={(breed) => setDraft({ ...draft, breed })}
+            placeholder="목록에 없으면 직접 입력"
+            placeholderTextColor={colors.placeholder}
+            style={[styles.input, styles.inputAfterChoice]}
+            value={draft.breed}
           />
-        </View>
-      ) : (
-        <Text style={styles.helperText}>특별히 정해진 품종이 없으면 비워둬도 괜찮아요.</Text>
-      )}
-      <TextInput
-        maxLength={40}
-        onChangeText={(breed) => setDraft({ ...draft, breed })}
-        placeholder="목록에 없으면 직접 입력"
-        placeholderTextColor={colors.placeholder}
-        style={[styles.input, styles.inputAfterChoice]}
-        value={draft.breed}
-      />
 
-      <FieldLabel label="생일" />
-      <View style={styles.choicePanel}>
-        <Text style={styles.choicePanelText}>빠른 선택</Text>
-        <ChipGroup
-          options={birthDateShortcuts}
-          selected={draft.birthDate}
-          onSelect={(birthDate) => setDraft({ ...draft, birthDate })}
-        />
-      </View>
-      <TextInput
-        keyboardType="numbers-and-punctuation"
-        maxLength={10}
-        onChangeText={(birthDate) => setDraft({ ...draft, birthDate })}
-        placeholder="YYYY-MM-DD"
-        placeholderTextColor={colors.placeholder}
-        style={[styles.input, styles.inputAfterChoice]}
-        value={draft.birthDate}
-      />
-
-      <FieldLabel label="성별·중성화" />
-      <ChipGroup
-        options={sexOptions}
-        selected={draft.sex}
-        onSelect={(sex) => setDraft({ ...draft, sex })}
-      />
-
-      <FieldLabel label="체중" />
-      <TextInput
-        maxLength={20}
-        onChangeText={(weight) => setDraft({ ...draft, weight })}
-        placeholder="예: 4.2kg"
-        placeholderTextColor={colors.placeholder}
-        style={styles.input}
-        value={draft.weight}
-      />
-
-      <View style={styles.vaccinationInline}>
-        <View style={styles.vaccinationInlineHeader}>
-          <View>
-            <Text style={styles.vaccinationInlineTitle}>예방접종</Text>
-            <Text style={styles.vaccinationInlineText}>
-              접종 기록과 다음 병원 예정일을 함께 남겨요.
-            </Text>
-          </View>
-          <Text style={styles.vaccinationInlineBadge}>
-            {draft.vaccination.dueAt ? "일정 있음" : "선택"}
-          </Text>
-        </View>
-        <FieldLabel label="접종명" />
-        <TextInput
-          maxLength={80}
-          onChangeText={(name) =>
-            setDraft({
-              ...draft,
-              vaccination: { ...draft.vaccination, name },
-            })
-          }
-          placeholder="예: 종합백신, 광견병"
-          placeholderTextColor={colors.placeholder}
-          style={styles.input}
-          value={draft.vaccination.name}
-        />
-        <View style={styles.inlineDateGrid}>
-          <View style={styles.inlineDateField}>
-            <FieldLabel label="맞은 날" />
-            <TextInput
-              keyboardType="numbers-and-punctuation"
-              maxLength={10}
-              onChangeText={(administeredAt) =>
-                setDraft({
-                  ...draft,
-                  vaccination: { ...draft.vaccination, administeredAt },
-                })
-              }
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.placeholder}
-              style={styles.input}
-              value={draft.vaccination.administeredAt}
+          <FieldLabel label="생일" />
+          <View style={styles.choicePanel}>
+            <Text style={styles.choicePanelText}>빠른 선택</Text>
+            <ChipGroup
+              options={birthDateShortcuts}
+              selected={draft.birthDate}
+              onSelect={(birthDate) => setDraft({ ...draft, birthDate })}
             />
           </View>
-          <View style={styles.inlineDateField}>
-            <FieldLabel label="다음 예정일" />
+          <TextInput
+            keyboardType="numbers-and-punctuation"
+            maxLength={10}
+            onChangeText={(birthDate) => setDraft({ ...draft, birthDate })}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.placeholder}
+            style={[styles.input, styles.inputAfterChoice]}
+            value={draft.birthDate}
+          />
+
+          <FieldLabel label="성별·중성화" />
+          <ChipGroup
+            options={sexOptions}
+            selected={draft.sex}
+            onSelect={(sex) => setDraft({ ...draft, sex })}
+          />
+
+          <FieldLabel label="체중" />
+          <TextInput
+            maxLength={20}
+            onChangeText={(weight) => setDraft({ ...draft, weight })}
+            placeholder="예: 4.2kg"
+            placeholderTextColor={colors.placeholder}
+            style={styles.input}
+            value={draft.weight}
+          />
+
+          <View style={styles.vaccinationInline}>
+            <View style={styles.vaccinationInlineHeader}>
+              <View>
+                <Text style={styles.vaccinationInlineTitle}>예방접종</Text>
+                <Text style={styles.vaccinationInlineText}>
+                  접종일이나 다음 예정일이 있을 때만 남겨요.
+                </Text>
+              </View>
+              <Text style={styles.vaccinationInlineBadge}>
+                {draft.vaccination.dueAt ? "일정 있음" : "선택"}
+              </Text>
+            </View>
+            <FieldLabel label="접종명" />
             <TextInput
-              keyboardType="numbers-and-punctuation"
-              maxLength={10}
-              onChangeText={(dueAt) =>
+              maxLength={80}
+              onChangeText={(name) =>
                 setDraft({
                   ...draft,
-                  vaccination: { ...draft.vaccination, dueAt },
+                  vaccination: { ...draft.vaccination, name },
                 })
               }
-              placeholder="YYYY-MM-DD"
+              placeholder="예: 종합백신, 광견병"
               placeholderTextColor={colors.placeholder}
               style={styles.input}
-              value={draft.vaccination.dueAt}
+              value={draft.vaccination.name}
+            />
+            <View style={styles.inlineDateGrid}>
+              <View style={styles.inlineDateField}>
+                <FieldLabel label="맞은 날" />
+                <TextInput
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={10}
+                  onChangeText={(administeredAt) =>
+                    setDraft({
+                      ...draft,
+                      vaccination: { ...draft.vaccination, administeredAt },
+                    })
+                  }
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.placeholder}
+                  style={styles.input}
+                  value={draft.vaccination.administeredAt}
+                />
+              </View>
+              <View style={styles.inlineDateField}>
+                <FieldLabel label="다음 예정일" />
+                <TextInput
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={10}
+                  onChangeText={(dueAt) =>
+                    setDraft({
+                      ...draft,
+                      vaccination: { ...draft.vaccination, dueAt },
+                    })
+                  }
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.placeholder}
+                  style={styles.input}
+                  value={draft.vaccination.dueAt}
+                />
+              </View>
+            </View>
+            <FieldLabel label="메모" />
+            <TextInput
+              maxLength={120}
+              onChangeText={(note) =>
+                setDraft({
+                  ...draft,
+                  vaccination: { ...draft.vaccination, note },
+                })
+              }
+              placeholder="병원명이나 특이사항"
+              placeholderTextColor={colors.placeholder}
+              style={styles.input}
+              value={draft.vaccination.note}
             />
           </View>
-        </View>
-        <FieldLabel label="메모" />
-        <TextInput
-          maxLength={120}
-          onChangeText={(note) =>
-            setDraft({
-              ...draft,
-              vaccination: { ...draft.vaccination, note },
-            })
-          }
-          placeholder="병원명이나 특이사항"
-          placeholderTextColor={colors.placeholder}
-          style={styles.input}
-          value={draft.vaccination.note}
-        />
-      </View>
+        </>
+      ) : null}
 
       <PrimaryButton
         disabled={loading}
-        label={loading ? "저장 중..." : editing ? "수정 저장" : "등록하고 선택"}
+        label={loading ? "저장 중..." : editing ? "수정 저장" : "등록하고 기록 시작"}
         onPress={onSave}
       />
       {onDelete ? (
@@ -4672,20 +4648,15 @@ function HealthRecorder({
   const hasContent = !allNormal || totalMediaCount > 0;
   const recordDateTitle =
     recordDateKey === toRecordDateKey(new Date())
-      ? "오늘 기록"
-      : `${formatCalendarDate(recordDateKey)} 기록`;
+      ? "병원 가기 전 기록"
+      : `${formatCalendarDate(recordDateKey)} 상황`;
 
   if (result && !isEditing) {
     return (
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>기록했어요</Text>
+        <Text style={styles.cardTitle}>병원 전달 준비</Text>
         <Message text={message} />
         <Message text={mediaUploadMessage} tone="success" />
-        <PrimaryButton
-          disabled={false}
-          label="새 기록 남기기"
-          onPress={onStartNew}
-        />
         <HealthResultCard
           aiAccess={aiAccess}
           episodeId={episodeId}
@@ -4696,6 +4667,7 @@ function HealthRecorder({
           onCreateVetDraft={onCreateVetDraft}
           onShareVetDraft={onShareVetDraft}
         />
+        <SecondaryButton label="내용 더 남기기" onPress={onStartNew} />
       </View>
     );
   }
@@ -4703,18 +4675,21 @@ function HealthRecorder({
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>
-        {isEditing ? "기록 수정" : recordDateTitle}
+        {isEditing ? "기록 수정" : "병원 가기 전 문진 준비"}
       </Text>
+      {!isEditing && recordDateKey !== toRecordDateKey(new Date()) ? (
+        <Text style={styles.cardText}>{recordDateTitle}</Text>
+      ) : null}
 
       <View style={styles.recordComposer}>
         <Text style={styles.composerPrompt}>
-          오늘 {input.petName || "반려동물"}는 어땠나요?
+          병원에서 꼭 말하고 싶은 변화는 무엇인가요?
         </Text>
         <TextInput
           maxLength={1000}
           multiline
           onChangeText={(note) => setInput({ ...input, note })}
-          placeholder="한 줄, 사진 한 장만 남겨도 충분해요."
+          placeholder="예: 어제 저녁부터 밥을 안 먹고 두 번 토했어요."
           placeholderTextColor={colors.placeholder}
           style={[styles.input, styles.composerTextarea]}
           textAlignVertical="top"
@@ -4734,8 +4709,8 @@ function HealthRecorder({
         />
 
         <View style={styles.composerSectionHeading}>
-          <Text style={styles.composerSectionTitle}>빠른 선택</Text>
-          <Text style={styles.composerSectionHint}>해당되는 변화만 눌러주세요</Text>
+          <Text style={styles.composerSectionTitle}>해당하는 변화</Text>
+          <Text style={styles.composerSectionHint}>필요한 것만 선택</Text>
         </View>
         <ScrollView
           horizontal
@@ -4758,6 +4733,57 @@ function HealthRecorder({
             );
           })}
         </ScrollView>
+
+        {input.symptoms.length ? (
+          <View style={styles.symptomDetailsBox}>
+            <View style={styles.composerSectionHeading}>
+              <Text style={styles.composerSectionTitle}>문진에서 자주 묻는 내용</Text>
+              <Text style={styles.composerSectionHint}>해당되는 것만 선택</Text>
+            </View>
+            {input.symptoms.map((symptom) => {
+              const question = symptomDetailQuestions[symptom];
+              const selected = new Set(input.symptomDetails?.[symptom] ?? []);
+              return (
+                <View key={symptom} style={styles.symptomDetailRow}>
+                  <Text style={styles.symptomDetailPrompt}>{question.prompt}</Text>
+                  <ScrollView
+                    horizontal
+                    contentContainerStyle={styles.observationChipRow}
+                    showsHorizontalScrollIndicator={false}
+                  >
+                    {question.options.map((option) => {
+                      const active = selected.has(option.id);
+                      return (
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: active }}
+                          activeOpacity={0.85}
+                          key={option.id}
+                          onPress={() =>
+                            setInput(toggleSymptomDetail(input, symptom, option.id))
+                          }
+                          style={[
+                            styles.chip,
+                            active && styles.observationChipSelected,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.chipText,
+                              active && styles.observationChipTextSelected,
+                            ]}
+                          >
+                            {active ? `✓ ${option.label}` : option.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
 
         {input.appetite !== "normal" ? (
           <View style={styles.composerDetailBlock}>
@@ -4803,15 +4829,13 @@ function HealthRecorder({
       </View>
 
       <PrimaryButton
-        disabled={loading}
+        disabled={loading || (!isEditing && !hasContent)}
         label={
           loading
             ? "저장 중..."
             : isEditing
               ? "수정 저장"
-              : hasContent
-                ? "기록하기"
-                : "평소처럼 기록"
+              : "저장하고 전달본 보기"
         }
         onPress={() => onSubmit()}
       />
@@ -4962,20 +4986,8 @@ function HealthResultCard({
   const checkScore = displayCheckScore(result.riskScore);
   return (
     <View style={[styles.resultCard, styles[`resultCard_${result.riskLevel}`]]}>
-      <View style={styles.resultHeader}>
-        <View>
-          <Text style={styles.resultEyebrow}>CHECK SCORE</Text>
-          <Text style={styles.resultScore}>{checkScore}</Text>
-        </View>
-        <Text style={styles.resultRisk}>{riskLabels[result.riskLevel]}</Text>
-      </View>
-      <Text style={styles.resultTitle}>{result.headline}</Text>
-      <Text style={styles.resultSummary}>{result.summary}</Text>
-      <Text style={styles.resultMeta}>{recordDateLabel(result.createdAt)}</Text>
-
-      <ResultList title="지금 할 수 있는 일" items={result.actions} />
       <View style={styles.vetBriefBox}>
-        <Text style={styles.vetBriefTitle}>병원에 보여줄 요약</Text>
+        <Text style={styles.vetBriefTitle}>기본 사실 요약</Text>
         <Text style={styles.vetBriefText}>{result.vetBrief}</Text>
       </View>
       <ResultVetDraftBox
@@ -4987,6 +4999,18 @@ function HealthResultCard({
         onCreateVetDraft={onCreateVetDraft}
         onShareVetDraft={onShareVetDraft}
       />
+      <View style={styles.resultHeader}>
+        <View>
+          <Text style={styles.resultEyebrow}>앱 안전 안내</Text>
+          <Text style={styles.resultScore}>{checkScore}</Text>
+        </View>
+        <Text style={styles.resultRisk}>{riskLabels[result.riskLevel]}</Text>
+      </View>
+      <Text style={styles.resultTitle}>{result.headline}</Text>
+      <Text style={styles.resultSummary}>{result.summary}</Text>
+      <Text style={styles.resultMeta}>{recordDateLabel(result.createdAt)}</Text>
+
+      <ResultList title="지금 할 수 있는 일" items={result.actions} />
       <Text style={styles.disclaimer}>{result.disclaimer}</Text>
     </View>
   );
@@ -5016,10 +5040,10 @@ function ResultVetDraftBox({
     <View style={styles.resultVetDraftBox}>
       <View style={styles.planHeader}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.vetDraftEyebrow}>AI DRAFT · VET REVIEW</Text>
-          <Text style={styles.planTitle}>AI 병원 요약</Text>
+          <Text style={styles.vetDraftEyebrow}>AI 정리 · 수의사 확인 전</Text>
+          <Text style={styles.planTitle}>병원 전달본</Text>
           <Text style={styles.planSubtitle}>
-            같은 건강 흐름의 기록을 수의사가 보기 좋은 문장으로 정리해요.
+            고른 기록을 수의사가 빠르게 읽을 수 있는 사실 중심 문장으로 정리해요.
           </Text>
         </View>
         <Text
@@ -5065,26 +5089,12 @@ function ResultVetDraftBox({
                 onPress={() => void onShareVetDraft(episodeId, vetDraft)}
                 style={styles.vetDraftSecondaryButton}
               >
-                <Text style={styles.vetDraftSecondaryButtonText}>요약 공유</Text>
+                <Text style={styles.vetDraftSecondaryButtonText}>전달본 공유</Text>
               </TouchableOpacity>
             ) : null}
           </View>
 
-          {vetDraft ? (
-            <View style={styles.vetDraftPreview}>
-              <Text style={styles.vetDraftSource}>
-                {vetDraft.source === "openai" ? "AI 정리 · 확인 전" : "규칙 기반 정리"}
-              </Text>
-              <Text style={styles.vetDraftOverview}>{vetDraft.overview}</Text>
-              <Text style={styles.vetDraftHandoffLabel}>다른 병원 첫 설명</Text>
-              <Text style={styles.vetDraftHandoff}>{vetDraft.handoffNote}</Text>
-              {vetDraft.questionsForVet.slice(0, 2).map((item) => (
-                <Text key={item} style={styles.vetDraftQuestion}>
-                  · {item}
-                </Text>
-              ))}
-            </View>
-          ) : null}
+          {vetDraft ? <VetDraftPreview draft={vetDraft} /> : null}
         </>
       )}
 
@@ -5092,8 +5102,146 @@ function ResultVetDraftBox({
         <Message text={vetDraftNotice.text} tone={vetDraftNotice.tone} />
       ) : null}
       <Text style={styles.planLimitText}>
-        AI 요약은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인 전 자료로 표시됩니다.
+        AI로 정리한 전달본은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인 전 자료로 표시됩니다.
       </Text>
+    </View>
+  );
+}
+
+function VetDraftPreview({
+  draft,
+  onOpenRecord,
+  records = [],
+}: {
+  draft: VetReviewDraft;
+  onOpenRecord?: (record: HistoryRecord) => void;
+  records?: HistoryRecord[];
+}) {
+  const sourceRecords = [...records].sort(
+    (a, b) =>
+      new Date(a.result.createdAt).getTime() -
+      new Date(b.result.createdAt).getTime(),
+  );
+
+  return (
+    <View style={styles.vetDraftPreview}>
+      <Text style={styles.vetDraftSource}>
+        {draft.source === "openai" ? "AI 정리 · 수의사 확인 전" : "규칙 기반 정리"}
+      </Text>
+      <Text style={styles.vetDraftOverview}>{draft.overview}</Text>
+      <Text style={styles.vetDraftHandoffLabel}>병원에 먼저 전할 내용</Text>
+      <Text style={styles.vetDraftHandoff}>{draft.handoffNote}</Text>
+      <View style={styles.vetDraftFactList}>
+        {draft.keyObservations.slice(0, 3).map((item) => (
+          <Text key={item} style={styles.vetDraftFact}>
+            · {item}
+          </Text>
+        ))}
+      </View>
+      {sourceRecords.length ? (
+        <View style={styles.vetDraftSources}>
+          <Text style={styles.vetDraftHandoffLabel}>사용한 원본 기록</Text>
+          <ScrollView
+            horizontal
+            contentContainerStyle={styles.vetDraftSourceList}
+            showsHorizontalScrollIndicator={false}
+          >
+            {sourceRecords.map((record) => (
+              <TouchableOpacity
+                accessibilityLabel={`${formatCalendarDate(toRecordDateKey(record.result.createdAt))} 원본 기록 열기`}
+                accessibilityRole="button"
+                activeOpacity={0.82}
+                key={record.result.id}
+                onPress={() => onOpenRecord?.(record)}
+                style={styles.vetDraftSourceButton}
+              >
+                <Text style={styles.vetDraftSourceButtonDate}>
+                  {formatCalendarDate(toRecordDateKey(record.result.createdAt))}
+                </Text>
+                <Text style={styles.vetDraftSourceButtonAction}>원본 보기 ›</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function FactualReportPreview({
+  report,
+  records,
+  planCount,
+  onOpenRecord,
+  onShare,
+}: {
+  report: EpisodeReport;
+  records: HistoryRecord[];
+  planCount: number;
+  onOpenRecord: (record: HistoryRecord) => void;
+  onShare: () => void;
+}) {
+  const sourceRecords = [...records].sort(
+    (a, b) =>
+      new Date(a.result.createdAt).getTime() -
+      new Date(b.result.createdAt).getTime(),
+  );
+  const facts = [
+    `기록 기간 · ${report.periodLabel}`,
+    report.repeatedSymptoms.length
+      ? `반복 관찰 · ${report.repeatedSymptoms.join(", ")}`
+      : "반복 관찰 · 없음",
+    `식욕 변화 ${report.appetiteChangeCount}회 · 활력 변화 ${report.energyChangeCount}회`,
+  ];
+
+  return (
+    <View style={styles.factualPreviewBox}>
+      <View style={styles.factualPreviewHeader}>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.factualPreviewEyebrow}>기본 제공</Text>
+          <Text style={styles.factualPreviewTitle}>사실 요약</Text>
+        </View>
+        <TouchableOpacity
+          accessibilityLabel="사실 요약 공유"
+          accessibilityRole="button"
+          activeOpacity={0.85}
+          onPress={onShare}
+          style={styles.factualPreviewShareButton}
+        >
+          <Text style={styles.factualPreviewShareText}>공유</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.factualPreviewFacts}>
+        {facts.map((fact) => (
+          <Text key={fact} style={styles.factualPreviewFact}>
+            {fact}
+          </Text>
+        ))}
+      </View>
+      <Text style={styles.factualPreviewMeta}>
+        기록 {report.recordCount}회 · 병원 안내 {planCount}개 · 첨부 {report.mediaCount}개
+      </Text>
+      <ScrollView
+        horizontal
+        contentContainerStyle={styles.vetDraftSourceList}
+        showsHorizontalScrollIndicator={false}
+      >
+        {sourceRecords.map((record) => (
+          <TouchableOpacity
+            accessibilityLabel={`${formatCalendarDate(toRecordDateKey(record.result.createdAt))} 원본 기록 열기`}
+            accessibilityRole="button"
+            activeOpacity={0.82}
+            key={record.result.id}
+            onPress={() => onOpenRecord(record)}
+            style={styles.factualPreviewSourceButton}
+          >
+            <Text style={styles.vetDraftSourceButtonDate}>
+              {formatCalendarDate(toRecordDateKey(record.result.createdAt))}
+            </Text>
+            <Text style={styles.factualPreviewSourceAction}>원본 보기 ›</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -5142,12 +5290,10 @@ function highestCalendarRisk(records: HistoryRecord[]) {
 
 function HealthHistoryCard({
   aiAccess,
-  aiFeedbackDrafts,
   aiFeedbackNotice,
   aiFeedbackSavingUsageId,
   editingPlanEpisodeId,
   episodeGroups,
-  flow,
   history,
   loading,
   message,
@@ -5155,13 +5301,11 @@ function HealthHistoryCard({
   planDraft,
   planNotice,
   planSavingEpisodeId,
-  planTogglingTaskId,
   vetDraftLoadingEpisodeId,
   vetDraftNotice,
   vetDrafts,
   savedAiFeedbackUsageIds,
   onCancelPlanEdit,
-  onChangeAiFeedbackDraft,
   onChangePlanDraft,
   onCreateVetDraft,
   onGoRecord,
@@ -5173,16 +5317,13 @@ function HealthHistoryCard({
   onShareReport,
   onShareVetDraft,
   onStartPlanEdit,
-  onTogglePlanTask,
   shareMessage,
 }: {
   aiAccess: AiAccessStatus | null;
-  aiFeedbackDrafts: AiFeedbackDraftMap;
   aiFeedbackNotice: EpisodeNotice;
   aiFeedbackSavingUsageId: string | null;
   editingPlanEpisodeId: string | null;
   episodeGroups: EpisodeReportGroup[];
-  flow: HealthFlowSummary;
   history: HistoryRecord[];
   loading: boolean;
   message: string;
@@ -5190,32 +5331,26 @@ function HealthHistoryCard({
   planDraft: string;
   planNotice: EpisodeNotice;
   planSavingEpisodeId: string | null;
-  planTogglingTaskId: string | null;
   vetDraftLoadingEpisodeId: string | null;
   vetDraftNotice: EpisodeNotice;
   vetDrafts: VetDraftMap;
   savedAiFeedbackUsageIds: string[];
   onCancelPlanEdit: () => void;
-  onChangeAiFeedbackDraft: (
-    usageId: string,
-    patch: Partial<AiFeedbackDraft>,
-  ) => void;
   onChangePlanDraft: (value: string) => void;
   onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
   onGoRecord: (dateKey?: string) => void;
   onRefresh: () => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
-  onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
+  onSaveAiFeedback: (
+    episodeId: string,
+    draft: VetReviewDraft,
+    usefulnessScore: AiReportFeedbackInput["usefulnessScore"],
+  ) => Promise<void>;
   onEditRecord: (record: HistoryRecord) => void;
   onDeleteRecord: (record: HistoryRecord) => void;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
-  onTogglePlanTask: (
-    episodeId: string,
-    taskId: string,
-    completed: boolean,
-  ) => Promise<void>;
   shareMessage: string;
 }) {
   const latestDateKey = toRecordDateKey(history[0]?.result.createdAt ?? new Date());
@@ -5306,10 +5441,6 @@ function HealthHistoryCard({
     selectedGroup && (fullEpisodeSelection || draftScope === selectedGroup.key)
       ? cachedVetDraft
       : undefined;
-  const aiFeedbackDraft = selectedVetDraft?.usageId
-    ? aiFeedbackDrafts[selectedVetDraft.usageId] ?? defaultAiFeedbackDraft
-    : defaultAiFeedbackDraft;
-
   function selectCalendarDay(dateKey: string) {
     setCalendarMonth(dateKey.slice(0, 7));
     setReportOpen(false);
@@ -5359,7 +5490,6 @@ function HealthHistoryCard({
         </TouchableOpacity>
         <EpisodeReportItem
           aiAccess={aiAccess}
-          aiFeedbackDraft={aiFeedbackDraft}
           aiFeedbackNotice={aiFeedbackNotice}
           aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
           editingPlanEpisodeId={editingPlanEpisodeId}
@@ -5367,21 +5497,19 @@ function HealthHistoryCard({
           planDraft={planDraft}
           planNotice={planNotice}
           planSavingEpisodeId={planSavingEpisodeId}
-          planTogglingTaskId={planTogglingTaskId}
           vetDraft={selectedVetDraft}
           vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
           vetDraftNotice={vetDraftNotice}
           savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
           onCancelPlanEdit={onCancelPlanEdit}
-          onChangeAiFeedbackDraft={onChangeAiFeedbackDraft}
           onChangePlanDraft={onChangePlanDraft}
           onCreateVetDraft={createSelectedVetDraft}
+          onEditRecord={onEditRecord}
           onSaveAiFeedback={onSaveAiFeedback}
           onSavePlan={onSavePlan}
           onShareReport={onShareReport}
           onShareVetDraft={onShareVetDraft}
           onStartPlanEdit={onStartPlanEdit}
-          onTogglePlanTask={onTogglePlanTask}
         />
         <Message text={shareMessage} tone="success" />
       </View>
@@ -5392,11 +5520,11 @@ function HealthHistoryCard({
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>기록 달력</Text>
+          <Text style={styles.cardTitle}>병원에 가져갈 기록</Text>
           <Text style={styles.calendarFlowSummary}>
             {history.length
-              ? `최근 14일 ${flow.recordCount}회 · ${flow.headline}`
-              : "오늘 기록부터 시작해요."}
+              ? "병원에 보여줄 날짜나 기간을 골라주세요."
+              : "먼저 병원에서 설명할 상황을 남겨주세요."}
           </Text>
         </View>
         <TouchableOpacity
@@ -5520,7 +5648,7 @@ function HealthHistoryCard({
             ]}
           >
             <Text style={styles.calendarPrimaryActionText}>
-              + {selectionStart === todayKey ? "오늘 기록" : "기록 추가"}
+              + {selectionStart === todayKey ? "지금 상황" : "당시 상황"}
             </Text>
           </TouchableOpacity>
         ) : null}
@@ -5534,7 +5662,7 @@ function HealthHistoryCard({
           ]}
         >
           <Text style={styles.calendarSecondaryActionText}>
-            {selectedGroup?.episode ? "요약 · AI" : "선택 요약"}
+            {selectedGroup?.episode ? "전달본 준비" : "사실 요약 보기"}
           </Text>
         </TouchableOpacity>
       </View>
@@ -5561,7 +5689,6 @@ function HealthHistoryCard({
 
 function EpisodeReportItem({
   aiAccess,
-  aiFeedbackDraft,
   aiFeedbackNotice,
   aiFeedbackSavingUsageId,
   editingPlanEpisodeId,
@@ -5569,24 +5696,21 @@ function EpisodeReportItem({
   planDraft,
   planNotice,
   planSavingEpisodeId,
-  planTogglingTaskId,
   vetDraft,
   vetDraftLoadingEpisodeId,
   vetDraftNotice,
   savedAiFeedbackUsageIds,
   onCancelPlanEdit,
-  onChangeAiFeedbackDraft,
   onChangePlanDraft,
   onCreateVetDraft,
+  onEditRecord,
   onSaveAiFeedback,
   onSavePlan,
   onShareReport,
   onShareVetDraft,
   onStartPlanEdit,
-  onTogglePlanTask,
 }: {
   aiAccess: AiAccessStatus | null;
-  aiFeedbackDraft: AiFeedbackDraft;
   aiFeedbackNotice: EpisodeNotice;
   aiFeedbackSavingUsageId: string | null;
   editingPlanEpisodeId: string | null;
@@ -5594,48 +5718,30 @@ function EpisodeReportItem({
   planDraft: string;
   planNotice: EpisodeNotice;
   planSavingEpisodeId: string | null;
-  planTogglingTaskId: string | null;
   vetDraft?: VetReviewDraft;
   vetDraftLoadingEpisodeId: string | null;
   vetDraftNotice: EpisodeNotice;
   savedAiFeedbackUsageIds: string[];
   onCancelPlanEdit: () => void;
-  onChangeAiFeedbackDraft: (
-    usageId: string,
-    patch: Partial<AiFeedbackDraft>,
-  ) => void;
   onChangePlanDraft: (value: string) => void;
   onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
-  onSaveAiFeedback: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
+  onEditRecord: (record: HistoryRecord) => void;
+  onSaveAiFeedback: (
+    episodeId: string,
+    draft: VetReviewDraft,
+    usefulnessScore: AiReportFeedbackInput["usefulnessScore"],
+  ) => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
   onShareReport: (report: EpisodeReport) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
-  onTogglePlanTask: (
-    episodeId: string,
-    taskId: string,
-    completed: boolean,
-  ) => Promise<void>;
 }) {
   const episodeId = group.episode?.id;
-  const mediaSummary = group.report.mediaCount
-    ? `${group.report.mediaCount}개 첨부`
-    : "첨부 없음";
   const planTasks = group.plan?.tasks ?? [];
-  const completedTasks =
-    planTasks.filter((task) => task.completedAt).length;
-  const planSummary = group.plan
-    ? `계획 ${completedTasks}/${planTasks.length}`
-    : group.episode
-      ? "계획 미등록"
-      : "개별 기록";
   const isEditingPlan = Boolean(episodeId && editingPlanEpisodeId === episodeId);
   const isSavingPlan = Boolean(episodeId && planSavingEpisodeId === episodeId);
   const itemPlanNotice =
     episodeId && planNotice.episodeId === episodeId ? planNotice : null;
-  const completedFollowUps = group.report.followUpCheckpoints.filter(
-    (checkpoint) => checkpoint.recordedAt,
-  );
   const canUseAiDraft = Boolean(aiAccess?.enabled);
   const isCreatingVetDraft = Boolean(
     episodeId && vetDraftLoadingEpisodeId === episodeId,
@@ -5660,142 +5766,29 @@ function EpisodeReportItem({
         <View style={styles.cardHeaderText}>
           <Text style={styles.episodeTitle}>{group.report.title}</Text>
           <Text style={styles.episodeDescription}>
-            {group.report.periodLabel} · {group.report.recordCount}회 기록 · 최고 단계{" "}
-            {group.report.highestRiskLabel}
+            {group.report.periodLabel} · {group.report.recordCount}회 기록 · 첨부{" "}
+            {group.report.mediaCount}개
           </Text>
         </View>
       </View>
 
+      <FactualReportPreview
+        onOpenRecord={onEditRecord}
+        onShare={() => void onShareReport(group.report)}
+        planCount={planTasks.length}
+        records={group.records}
+        report={group.report}
+      />
+
       <>
-          <View style={styles.episodeExpandedActions}>
-            <Text style={styles.episodeExpandedMeta} numberOfLines={1}>
-              {planSummary} · 연결 기록 {completedFollowUps.length}회 · {mediaSummary}
-            </Text>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => void onShareReport(group.report)}
-              style={styles.episodeShareButton}
-            >
-              <Text style={styles.episodeShareButtonText}>병원 요약 공유</Text>
-            </TouchableOpacity>
-          </View>
-          {episodeId ? (
-            <View style={styles.planBox}>
-          <View style={styles.planHeader}>
-            <View style={styles.cardHeaderText}>
-              <Text style={styles.planTitle}>병원에서 받은 안내</Text>
-              <Text style={styles.planSubtitle}>
-                보호자가 병원 안내를 옮겨 적은 기록이에요. PetFlow가 만든 치료
-                계획은 아니에요.
-              </Text>
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={isSavingPlan}
-              onPress={() =>
-                isEditingPlan ? onCancelPlanEdit() : onStartPlanEdit(group)
-              }
-              style={[styles.planEditButton, isSavingPlan && styles.buttonDisabled]}
-            >
-              <Text style={styles.planEditButtonText}>
-                {isEditingPlan ? "닫기" : planTasks.length ? "수정" : "추가"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {planTasks.length ? (
-            <View style={styles.planTaskList}>
-              {planTasks.map((task) => {
-                const completed = Boolean(task.completedAt);
-                const toggling = planTogglingTaskId === task.id;
-                return (
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    disabled={toggling || isSavingPlan}
-                    key={task.id}
-                    onPress={() =>
-                      void onTogglePlanTask(episodeId, task.id, !completed)
-                    }
-                    style={[
-                      styles.planTaskRow,
-                      completed && styles.planTaskRowDone,
-                      toggling && styles.buttonDisabled,
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.planTaskCheck,
-                        completed && styles.planTaskCheckDone,
-                      ]}
-                    >
-                      <Text style={styles.planTaskCheckText}>
-                        {completed ? "✓" : ""}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[
-                        styles.planTaskText,
-                        completed && styles.planTaskTextDone,
-                      ]}
-                    >
-                      {task.text}
-                    </Text>
-                    <Text style={styles.planTaskState}>
-                      {completed ? "완료" : "진행 전"}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ) : (
-            <Text style={styles.planEmptyText}>
-              병원에서 들은 안내를 줄마다 하나씩 적어두면 다음 방문 때 바로
-              보여줄 수 있어요.
-            </Text>
-          )}
-
-          {isEditingPlan ? (
-            <View style={styles.planEditor}>
-              <TextInput
-                multiline
-                numberOfLines={5}
-                onChangeText={onChangePlanDraft}
-                placeholder={"예: 3일 뒤 상태 확인\n예: 물 마시는 양 관찰"}
-                placeholderTextColor={colors.placeholder}
-                style={[styles.input, styles.textarea, styles.planTextarea]}
-                textAlignVertical="top"
-                value={planDraft}
-              />
-              <Text style={styles.planLimitText}>
-                최대 5개, 항목당 160자까지 저장할 수 있어요.
-              </Text>
-              <TouchableOpacity
-                activeOpacity={0.85}
-                disabled={isSavingPlan}
-                onPress={() => void onSavePlan(episodeId)}
-                style={[styles.planSaveButton, isSavingPlan && styles.buttonDisabled]}
-              >
-                <Text style={styles.planSaveButtonText}>
-                  {isSavingPlan ? "저장 중" : "안내 저장"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-          {itemPlanNotice ? (
-            <Message text={itemPlanNotice.text} tone={itemPlanNotice.tone} />
-          ) : null}
-        </View>
-      ) : null}
-
       {episodeId ? (
         <View style={styles.vetDraftBox}>
           <View style={styles.planHeader}>
             <View style={styles.cardHeaderText}>
-              <Text style={styles.vetDraftEyebrow}>AI DRAFT · VET REVIEW</Text>
-              <Text style={styles.planTitle}>AI 병원 요약</Text>
+              <Text style={styles.vetDraftEyebrow}>AI 정리 · 수의사 확인 전</Text>
+              <Text style={styles.planTitle}>병원 전달본</Text>
               <Text style={styles.planSubtitle}>
-                여러 기록, 병원 안내, 경과를 수의사가 빠르게 볼 수 있는 초안으로
-                정리해요.
+                보호자 메모와 사진, 선택한 사실을 수의사가 빠르게 읽도록 정리해요.
               </Text>
             </View>
             <Text
@@ -5812,12 +5805,10 @@ function EpisodeReportItem({
             </Text>
           </View>
 
-          <View style={styles.vetDraftIncludes}>
-            <Text style={styles.vetDraftInclude}>관찰 {group.report.recordCount}회</Text>
-            <Text style={styles.vetDraftInclude}>계획 {completedTasks}/{planTasks.length}</Text>
-            <Text style={styles.vetDraftInclude}>연결 기록 {completedFollowUps.length}회</Text>
-            <Text style={styles.vetDraftInclude}>첨부 {group.report.mediaCount}개</Text>
-          </View>
+          <Text style={styles.episodeExpandedMeta}>
+            기록 {group.report.recordCount}회 · 병원 안내 {planTasks.length}개 · 첨부{" "}
+            {group.report.mediaCount}개
+          </Text>
 
           {!canUseAiDraft && aiAccess?.reason !== "no_credits" ? (
             <Text style={styles.planEmptyText}>{aiAccessCopy(aiAccess)}</Text>
@@ -5852,103 +5843,56 @@ function EpisodeReportItem({
                     onPress={() => void onShareVetDraft(episodeId, vetDraft)}
                     style={styles.vetDraftSecondaryButton}
                   >
-                    <Text style={styles.vetDraftSecondaryButtonText}>요약 공유</Text>
+                    <Text style={styles.vetDraftSecondaryButtonText}>전달본 공유</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
 
               {vetDraft ? (
-                <View style={styles.vetDraftPreview}>
-                  <Text style={styles.vetDraftSource}>
-                    {vetDraft.source === "openai" ? "AI 정리 · 확인 전" : "규칙 기반 정리"}
-                  </Text>
-                  <Text style={styles.vetDraftOverview}>{vetDraft.overview}</Text>
-                  <Text style={styles.vetDraftHandoffLabel}>다른 병원 첫 설명</Text>
-                  <Text style={styles.vetDraftHandoff}>{vetDraft.handoffNote}</Text>
-                  {vetDraft.questionsForVet.slice(0, 2).map((item) => (
-                    <Text key={item} style={styles.vetDraftQuestion}>
-                      · {item}
-                    </Text>
-                  ))}
-                  {feedbackUsageId ? (
+                <>
+                  <VetDraftPreview
+                    draft={vetDraft}
+                    onOpenRecord={onEditRecord}
+                    records={group.records}
+                  />
+                  {feedbackUsageId && !isAiFeedbackSaved ? (
                     <View style={styles.aiFeedbackBox}>
-                      <Text style={styles.aiFeedbackTitle}>사용자 피드백</Text>
-                      <Text style={styles.aiFeedbackHint}>
-                        수의사에게 보여주기 좋은 초안인지 짧게 알려주세요.
+                      <Text style={styles.aiFeedbackTitle}>
+                        이 전달본이 도움됐나요?
                       </Text>
-
-                      <Text style={styles.aiFeedbackLabel}>유용성</Text>
                       <View style={styles.aiFeedbackScoreRow}>
-                        {aiFeedbackScoreOptions.map((option) => {
-                          const selected =
-                            aiFeedbackDraft.usefulnessScore === option.id;
-                          return (
-                            <TouchableOpacity
-                              activeOpacity={0.85}
-                              key={option.id}
-                              onPress={() =>
-                                onChangeAiFeedbackDraft(feedbackUsageId, {
-                                  usefulnessScore: option.id,
-                                })
-                              }
-                              style={[
-                                styles.aiFeedbackScoreButton,
-                                selected && styles.aiFeedbackScoreButtonSelected,
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.aiFeedbackScoreText,
-                                  selected && styles.aiFeedbackScoreTextSelected,
-                                ]}
-                              >
-                                {option.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
+                        {aiFeedbackScoreOptions.map((option) => (
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            disabled={isSavingAiFeedback}
+                            key={option.id}
+                            onPress={() =>
+                              void onSaveAiFeedback(
+                                episodeId,
+                                vetDraft,
+                                option.id,
+                              )
+                            }
+                            style={[
+                              styles.aiFeedbackScoreButton,
+                              isSavingAiFeedback && styles.buttonDisabled,
+                            ]}
+                          >
+                            <Text style={styles.aiFeedbackScoreText}>
+                              {option.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
                       </View>
-
-                      <View style={styles.aiFeedbackInputRow}>
-                        <TextInput
-                          maxLength={200}
-                          onChangeText={(comment) =>
-                            onChangeAiFeedbackDraft(feedbackUsageId, { comment })
-                          }
-                          placeholder="빠진 정보나 아쉬운 점 (선택)"
-                          placeholderTextColor={colors.placeholder}
-                          style={[styles.input, styles.aiFeedbackInput]}
-                          value={aiFeedbackDraft.comment}
-                        />
-                      </View>
-
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        disabled={isSavingAiFeedback}
-                        onPress={() => void onSaveAiFeedback(episodeId, vetDraft)}
-                        style={[
-                          styles.aiFeedbackSaveButton,
-                          isSavingAiFeedback && styles.buttonDisabled,
-                        ]}
-                      >
-                        <Text style={styles.aiFeedbackSaveButtonText}>
-                          {isAiFeedbackSaved
-                            ? "피드백 다시 저장"
-                            : isSavingAiFeedback
-                              ? "저장 중"
-                              : "피드백 저장"}
-                        </Text>
-                      </TouchableOpacity>
-
-                      {itemAiFeedbackNotice ? (
-                        <Message
-                          text={itemAiFeedbackNotice.text}
-                          tone={itemAiFeedbackNotice.tone}
-                        />
-                      ) : null}
                     </View>
                   ) : null}
-                </View>
+                  {itemAiFeedbackNotice ? (
+                    <Message
+                      text={itemAiFeedbackNotice.text}
+                      tone={itemAiFeedbackNotice.tone}
+                    />
+                  ) : null}
+                </>
               ) : null}
             </>
           )}
@@ -5957,19 +5901,80 @@ function EpisodeReportItem({
             <Message text={itemVetDraftNotice.text} tone={itemVetDraftNotice.tone} />
           ) : null}
           <Text style={styles.planLimitText}>
-            AI 요약은 진단·처방·약물명·용량·치료 계획을 만들지 않으며 수의사 확인
-            전 자료로 표시됩니다.
+            AI 정리이며 진단·처방이 아닌 수의사 확인 전 자료예요.
           </Text>
         </View>
       ) : null}
 
-          <View style={styles.episodePreviewBox}>
-            <Text style={styles.episodePreviewTitle}>제출용 미리보기</Text>
-            <Text numberOfLines={5} style={styles.episodePreviewText}>
-              {group.report.shareText}
-            </Text>
+      {episodeId ? (
+        <View style={styles.planBox}>
+          <View style={styles.planHeader}>
+            <View style={styles.cardHeaderText}>
+              <Text style={styles.planTitle}>병원에서 들은 내용</Text>
+              <Text style={styles.planSubtitle}>
+                {planTasks.length
+                  ? "다음 전달본에 자동으로 이어져요."
+                  : "다음 병원에서 다시 설명하지 않도록 들은 내용만 남겨요."}
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={isSavingPlan}
+              onPress={() =>
+                isEditingPlan ? onCancelPlanEdit() : onStartPlanEdit(group)
+              }
+              style={[styles.planEditButton, isSavingPlan && styles.buttonDisabled]}
+            >
+              <Text style={styles.planEditButtonText}>
+                {isEditingPlan ? "닫기" : planTasks.length ? "수정" : "한 줄 남기기"}
+              </Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.disclaimer}>{group.report.disclaimer}</Text>
+
+          {planTasks.length ? (
+            <View style={styles.planNoteList}>
+              {planTasks.map((task) => (
+                <Text key={task.id} style={styles.planNoteText}>
+                  · {task.text}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+
+          {isEditingPlan ? (
+            <View style={styles.planEditor}>
+              <TextInput
+                multiline
+                numberOfLines={3}
+                onChangeText={onChangePlanDraft}
+                placeholder={"예: 3일 뒤 상태 확인\n예: 물 마시는 양 관찰"}
+                placeholderTextColor={colors.placeholder}
+                style={[styles.input, styles.textarea, styles.planTextarea]}
+                textAlignVertical="top"
+                value={planDraft}
+              />
+              <Text style={styles.planLimitText}>
+                병원에서 들은 그대로 줄마다 하나씩, 최대 5개까지 저장해요.
+              </Text>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={isSavingPlan}
+                onPress={() => void onSavePlan(episodeId)}
+                style={[styles.planSaveButton, isSavingPlan && styles.buttonDisabled]}
+              >
+                <Text style={styles.planSaveButtonText}>
+                  {isSavingPlan ? "저장 중" : "들은 내용 저장"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {itemPlanNotice ? (
+            <Message text={itemPlanNotice.text} tone={itemPlanNotice.tone} />
+          ) : null}
+        </View>
+      ) : null}
+
+      <Text style={styles.disclaimer}>{group.report.disclaimer}</Text>
       </>
     </View>
   );
@@ -6124,15 +6129,15 @@ function formatIsoDate(date: Date) {
 
 function aiAccessCopy(access: AiAccessStatus | null) {
   if (!access) {
-    return "AI 요약 이용 가능 횟수를 확인하고 있어요.";
+    return "병원 전달본 이용 가능 횟수를 확인하고 있어요.";
   }
   if (access.reason === "unavailable") {
     return "이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
   if (access.reason === "no_credits") {
-    return "필요할 때 AI 병원 요약 1회를 추가해 바로 만들 수 있어요.";
+    return "필요할 때 병원 전달본 1회를 추가해 바로 만들 수 있어요.";
   }
-  return `AI 병원 요약 ${access.availableCredits}회를 이용할 수 있어요.`;
+  return `병원 전달본 ${access.availableCredits}회를 이용할 수 있어요.`;
 }
 
 function billingMessageTone(message: string): "success" | "error" {
@@ -6143,7 +6148,7 @@ function billingMessageTone(message: string): "success" | "error" {
 
 function aiDraftActionLabel(loading: boolean, hasDraft: boolean) {
   if (loading) return "초안 만드는 중";
-  return hasDraft ? "다시 만들기 · 1회" : "AI 요약 만들기 · 1회";
+  return hasDraft ? "다시 만들기 · 1회" : "병원 전달본 만들기 · 1회";
 }
 
 function recordSymptomText(record: HistoryRecord) {
@@ -6189,13 +6194,6 @@ function recordDateLabel(value: string) {
 function displayCheckScore(riskScore: number) {
   if (!Number.isFinite(riskScore)) return 0;
   return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
-}
-
-function getCheckScoreTone(checkScore?: number): CheckScoreTone {
-  if (checkScore === undefined) return "empty";
-  if (checkScore >= 70) return "good";
-  if (checkScore >= 45) return "watch";
-  return "alert";
 }
 
 function speciesLabel(species: Species) {
@@ -6430,6 +6428,20 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 3,
   },
+  homePrepTitle: {
+    marginTop: 7,
+    color: colors.ink,
+    fontSize: 22,
+    fontWeight: "900",
+    lineHeight: 29,
+  },
+  homePrepText: {
+    marginTop: 8,
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
   homePetProfile: {
     width: 104,
     alignItems: "center",
@@ -6470,34 +6482,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "900",
   },
-  homeInlineStatusRow: {
-    alignItems: "flex-start",
-    gap: 6,
-    marginTop: 8,
-  },
-  homeInlineStatus: {
-    alignSelf: "flex-start",
-    maxWidth: "100%",
-    borderWidth: 1,
-    borderColor: "#cfe7dc",
-    borderRadius: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.72)",
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-  },
-  homeInlineStatusDue: {
-    borderColor: "#efd79d",
-    backgroundColor: "#fff9ec",
-  },
-  homeInlineStatusOverdue: {
-    borderColor: "#e6b5a8",
-    backgroundColor: "#fff4ef",
-  },
-  homeInlineStatusText: {
-    color: colors.green,
-    fontSize: 10,
-    fontWeight: "900",
-  },
   petPhotoSlot: {
     width: 72,
     height: 72,
@@ -6520,90 +6504,6 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
-  homeScoreCard: {
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: "#bfe5d1",
-    borderRadius: 26,
-    backgroundColor: "#f5fcf8",
-    padding: 17,
-  },
-  homeScoreCardGood: {
-    borderColor: "#b8decf",
-    backgroundColor: "#f1fbf5",
-  },
-  homeScoreCardWatch: {
-    borderColor: "#efd79d",
-    backgroundColor: "#fff9ec",
-  },
-  homeScoreCardAlert: {
-    borderColor: "#e6b5a8",
-    backgroundColor: "#fff4ef",
-  },
-  homeScoreTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-  },
-  homeScoreCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  homeScoreTitle: {
-    marginTop: 7,
-    color: colors.ink,
-    fontSize: 19,
-    fontWeight: "900",
-    lineHeight: 25,
-  },
-  homeScoreBadge: {
-    width: 90,
-    minHeight: 82,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 22,
-    backgroundColor: colors.ink,
-    paddingVertical: 10,
-  },
-  homeScoreBadgeGood: {
-    backgroundColor: "#164d42",
-  },
-  homeScoreBadgeWatch: {
-    backgroundColor: "#fff4d6",
-  },
-  homeScoreBadgeAlert: {
-    backgroundColor: "#fff0ea",
-  },
-  homeScoreValue: {
-    color: "#ffffff",
-    fontSize: 34,
-    fontWeight: "900",
-    lineHeight: 38,
-  },
-  homeScoreValueWatch: {
-    color: "#8b6220",
-  },
-  homeScoreValueAlert: {
-    color: colors.danger,
-  },
-  homeScoreCaption: {
-    marginTop: 1,
-    color: "rgba(255, 255, 255, 0.82)",
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 0.3,
-  },
-  homeScoreCaptionDark: {
-    color: colors.muted,
-  },
-  homeMutedText: {
-    marginTop: 7,
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "700",
-    lineHeight: 19,
-  },
   homePrimaryAction: {
     alignSelf: "flex-start",
     alignItems: "center",
@@ -6618,15 +6518,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
-  homeFlowHeadline: {
-    marginTop: 7,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "900",
-    lineHeight: 17,
-  },
-  homeFlowLink: {
+  homeExistingRecordsLink: {
+    alignSelf: "flex-start",
     marginTop: 8,
+    paddingVertical: 4,
+  },
+  homeExistingRecordsText: {
     color: colors.green,
     fontSize: 11,
     fontWeight: "900",
@@ -6635,6 +6532,61 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
     marginBottom: 18,
+  },
+  authValuePreview: {
+    marginBottom: 18,
+    borderRadius: 20,
+    backgroundColor: "#f1f9f5",
+    padding: 15,
+  },
+  authValueEyebrow: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
+  authValueTitle: {
+    marginTop: 5,
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900",
+    lineHeight: 23,
+  },
+  valuePreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 13,
+  },
+  valuePreviewBlock: {
+    flex: 1,
+    minWidth: 0,
+    borderWidth: 1,
+    borderColor: "#d6e8df",
+    borderRadius: 14,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  valuePreviewResult: {
+    borderColor: "#b9ddcd",
+    backgroundColor: "#e8f7ef",
+  },
+  valuePreviewLabel: {
+    color: colors.muted,
+    fontSize: 9,
+    fontWeight: "900",
+  },
+  valuePreviewText: {
+    marginTop: 3,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  valuePreviewArrow: {
+    color: colors.green,
+    fontSize: 17,
+    fontWeight: "900",
   },
   tabButton: {
     flex: 1,
@@ -7149,42 +7101,26 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     lineHeight: 30,
   },
-  quickGuideList: {
-    gap: 10,
-    marginVertical: 20,
+  quickGuideDescription: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
   },
-  quickGuideItem: {
+  quickGuideValueFlow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    borderRadius: 17,
-    backgroundColor: "#f5faf7",
-    padding: 12,
+    gap: 8,
+    marginTop: 18,
   },
-  quickGuideNumber: {
-    width: 42,
-    height: 42,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 14,
-    backgroundColor: colors.greenSoft,
-  },
-  quickGuideNumberText: {
+  quickGuideResult: {
+    marginBottom: 18,
+    marginTop: 10,
     color: colors.green,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  quickGuideItemTitle: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  quickGuideItemText: {
-    marginTop: 3,
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-    lineHeight: 16,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 18,
   },
   quickGuideClose: {
     alignItems: "center",
@@ -7197,6 +7133,15 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 14,
     fontWeight: "900",
+  },
+  quickGuideLater: {
+    alignItems: "center",
+    paddingTop: 14,
+  },
+  quickGuideLaterText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
   },
   accountDeletionBox: {
     marginTop: 14,
@@ -7391,6 +7336,39 @@ const styles = StyleSheet.create({
     fontSize: 19,
     fontWeight: "900",
   },
+  petContextCard: {
+    padding: 12,
+  },
+  petContextRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  petSwitcher: {
+    gap: 7,
+    paddingTop: 10,
+    paddingRight: 8,
+  },
+  petSwitcherButton: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 999,
+    backgroundColor: "#fbfefd",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  petSwitcherButtonSelected: {
+    borderColor: colors.green,
+    backgroundColor: colors.greenSoft,
+  },
+  petSwitcherText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  petSwitcherTextSelected: {
+    color: colors.green,
+  },
   petForm: {
     marginTop: 18,
     borderTopWidth: 1,
@@ -7548,6 +7526,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
   },
+  petDetailsToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 16,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: "#fbfefd",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  petDetailsToggleText: {
+    color: colors.green,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  petDetailsToggleIcon: {
+    color: colors.green,
+    fontSize: 18,
+    fontWeight: "900",
+  },
   chipGroup: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -7612,6 +7613,20 @@ const styles = StyleSheet.create({
   observationChipRow: {
     gap: 8,
     paddingRight: 10,
+  },
+  symptomDetailsBox: {
+    gap: 10,
+    borderRadius: 18,
+    backgroundColor: "#f7faf8",
+    padding: 12,
+  },
+  symptomDetailRow: {
+    gap: 7,
+  },
+  symptomDetailPrompt: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
   },
   composerDetailBlock: {
     gap: 7,
@@ -7773,6 +7788,7 @@ const styles = StyleSheet.create({
     borderColor: "#e9a99a",
   },
   resultHeader: {
+    marginTop: 18,
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -7836,7 +7852,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   vetBriefBox: {
-    marginTop: 16,
     borderRadius: 16,
     backgroundColor: "#ffffff",
     padding: 14,
@@ -8114,30 +8129,79 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
   },
-  episodeShareButton: {
-    borderRadius: 999,
-    backgroundColor: colors.green,
-    paddingHorizontal: 13,
-    paddingVertical: 10,
+  episodeExpandedMeta: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    lineHeight: 16,
   },
-  episodeShareButtonText: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "900",
+  factualPreviewBox: {
+    marginTop: 13,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+    padding: 13,
   },
-  episodeExpandedActions: {
+  factualPreviewHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    marginTop: 13,
   },
-  episodeExpandedMeta: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.muted,
+  factualPreviewEyebrow: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  factualPreviewTitle: {
+    marginTop: 3,
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  factualPreviewShareButton: {
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  factualPreviewShareText: {
+    color: colors.green,
     fontSize: 11,
+    fontWeight: "900",
+  },
+  factualPreviewFacts: {
+    gap: 5,
+    marginTop: 11,
+  },
+  factualPreviewFact: {
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+  },
+  factualPreviewMeta: {
+    marginTop: 9,
+    color: colors.muted,
+    fontSize: 10,
     fontWeight: "800",
+  },
+  factualPreviewSourceButton: {
+    minWidth: 98,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 13,
+    backgroundColor: "#f8fcfa",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  factualPreviewSourceAction: {
+    marginTop: 5,
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
   },
   planBox: {
     marginTop: 13,
@@ -8176,58 +8240,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
   },
-  planTaskList: {
-    gap: 8,
+  planNoteList: {
+    gap: 6,
     marginTop: 11,
   },
-  planTaskRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 15,
-    backgroundColor: "#fbfefd",
-    padding: 10,
-  },
-  planTaskRowDone: {
-    borderColor: "#b8decf",
-    backgroundColor: "#eefaf4",
-  },
-  planTaskCheck: {
-    width: 24,
-    height: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#b8cfc4",
-    borderRadius: 12,
-    backgroundColor: "#ffffff",
-  },
-  planTaskCheckDone: {
-    borderColor: colors.green,
-    backgroundColor: colors.green,
-  },
-  planTaskCheckText: {
-    color: "#ffffff",
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  planTaskText: {
-    flex: 1,
+  planNoteText: {
     color: colors.ink,
-    fontSize: 13,
-    fontWeight: "800",
+    fontSize: 12,
+    fontWeight: "700",
     lineHeight: 18,
-  },
-  planTaskTextDone: {
-    color: colors.muted,
-    textDecorationLine: "line-through",
-  },
-  planTaskState: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "900",
   },
   planEmptyText: {
     marginTop: 10,
@@ -8240,7 +8261,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   planTextarea: {
-    minHeight: 112,
+    minHeight: 84,
   },
   planLimitText: {
     marginTop: 7,
@@ -8289,22 +8310,6 @@ const styles = StyleSheet.create({
   vetDraftBadgeEnabled: {
     backgroundColor: colors.green,
     color: "#ffffff",
-  },
-  vetDraftIncludes: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
-    marginTop: 11,
-  },
-  vetDraftInclude: {
-    overflow: "hidden",
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    color: colors.ink,
-    fontSize: 11,
-    fontWeight: "900",
-    paddingHorizontal: 9,
-    paddingVertical: 6,
   },
   vetDraftActions: {
     gap: 9,
@@ -8363,34 +8368,51 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
   },
-  vetDraftQuestion: {
-    marginTop: 7,
+  vetDraftFactList: {
+    gap: 4,
+    marginTop: 9,
+  },
+  vetDraftFact: {
     color: colors.muted,
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 18,
   },
-  aiFeedbackBox: {
-    marginTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    paddingTop: 12,
+  vetDraftSources: {
+    marginTop: 2,
   },
-  aiFeedbackTitle: {
+  vetDraftSourceList: {
+    gap: 8,
+    paddingRight: 8,
+    paddingTop: 7,
+  },
+  vetDraftSourceButton: {
+    minWidth: 108,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 13,
+    backgroundColor: "#f8fcfa",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  vetDraftSourceButtonDate: {
     color: colors.ink,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: "900",
   },
-  aiFeedbackHint: {
-    marginTop: 4,
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-    lineHeight: 16,
+  vetDraftSourceButtonAction: {
+    marginTop: 7,
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
   },
-  aiFeedbackLabel: {
-    marginBottom: 8,
-    marginTop: 11,
+  aiFeedbackBox: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingTop: 10,
+  },
+  aiFeedbackTitle: {
     color: colors.ink,
     fontSize: 12,
     fontWeight: "900",
@@ -8398,6 +8420,7 @@ const styles = StyleSheet.create({
   aiFeedbackScoreRow: {
     flexDirection: "row",
     gap: 6,
+    marginTop: 8,
   },
   aiFeedbackScoreButton: {
     flex: 1,
@@ -8408,54 +8431,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#fbfefd",
     paddingVertical: 9,
   },
-  aiFeedbackScoreButtonSelected: {
-    borderColor: colors.green,
-    backgroundColor: colors.green,
-  },
   aiFeedbackScoreText: {
-    color: colors.muted,
+    color: colors.ink,
     fontSize: 11,
     fontWeight: "900",
-  },
-  aiFeedbackScoreTextSelected: {
-    color: "#ffffff",
-  },
-  aiFeedbackInputRow: {
-    gap: 8,
-    marginTop: 10,
-  },
-  aiFeedbackInput: {
-    fontSize: 13,
-  },
-  aiFeedbackSaveButton: {
-    alignItems: "center",
-    borderRadius: 16,
-    backgroundColor: colors.green,
-    marginTop: 10,
-    paddingVertical: 12,
-  },
-  aiFeedbackSaveButtonText: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  episodePreviewBox: {
-    marginTop: 13,
-    borderRadius: 16,
-    backgroundColor: "#ffffff",
-    padding: 13,
-  },
-  episodePreviewTitle: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  episodePreviewText: {
-    marginTop: 7,
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
   },
   historyList: {
     gap: 10,

@@ -10,10 +10,10 @@ import {
 
 const defaults = Object.freeze({
   productId: "petflow_ai_summary_1",
-  referenceName: "AI 병원 전달 요약 1회 이용권",
+  referenceName: "병원 전달본 1회 이용권",
   locale: "ko",
-  displayName: "AI 병원 전달 요약 1회",
-  description: "보호자 기록을 병원 전달용 사실 중심 요약으로 한 번 정리합니다.",
+  displayName: "병원 전달본 1회",
+  description: "선택한 관찰 기록을 병원 전달용 사실 초안으로 한 번 정리합니다.",
   reviewNote:
     "사용자가 직접 입력한 반려동물 관찰 기록을 사실 중심의 병원 전달용 AI 초안으로 1회 정리하는 소모성 상품입니다. 진단, 처방 또는 치료 결정을 제공하지 않습니다.",
   territory: "KOR",
@@ -68,6 +68,22 @@ async function createPurchase() {
               id: appId,
             },
           },
+        },
+      },
+    }),
+  });
+}
+
+async function updatePurchase(purchaseId) {
+  return request(`/v2/inAppPurchases/${purchaseId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      data: {
+        type: "inAppPurchases",
+        id: purchaseId,
+        attributes: {
+          name: defaults.referenceName,
+          reviewNote: defaults.reviewNote,
         },
       },
     }),
@@ -170,6 +186,22 @@ async function createLocalization(versionId) {
               id: versionId,
             },
           },
+        },
+      },
+    }),
+  });
+}
+
+async function updateLocalization(localizationId) {
+  return request(`/v2/inAppPurchaseLocalizations/${localizationId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      data: {
+        type: "inAppPurchaseLocalizations",
+        id: localizationId,
+        attributes: {
+          name: defaults.displayName,
+          description: defaults.description,
         },
       },
     }),
@@ -385,6 +417,13 @@ if (!purchase) {
   );
 } else {
   const purchaseId = purchase.id;
+  if (
+    purchase.attributes?.name !== defaults.referenceName ||
+    purchase.attributes?.reviewNote !== defaults.reviewNote
+  ) {
+    actions.push("update_purchase_metadata");
+    if (apply) await updatePurchase(purchaseId);
+  }
   const availability = await getAvailability(purchaseId);
   if (!availability) {
     actions.push("enable_all_territories");
@@ -402,16 +441,22 @@ if (!purchase) {
   }
 
   const localizations = version ? await getLocalizations(version.id) : [];
-  const hasKoreanLocalization = localizations.some(
+  const koreanLocalization = localizations.find(
     (item) => item.attributes?.locale === defaults.locale,
   );
 
-  if (!hasKoreanLocalization) {
+  if (!koreanLocalization) {
     actions.push("create_ko_kr_localization");
     if (apply) {
       if (!version) throw new Error("In-app purchase version was not created.");
       await createLocalization(version.id);
     }
+  } else if (
+    koreanLocalization.attributes?.name !== defaults.displayName ||
+    koreanLocalization.attributes?.description !== defaults.description
+  ) {
+    actions.push("update_ko_kr_localization");
+    if (apply) await updateLocalization(koreanLocalization.id);
   }
 
   const productImages = version ? await getProductImages(version.id) : [];

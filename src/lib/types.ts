@@ -19,6 +19,8 @@ export type SymptomId =
   | "urination"
   | "pain";
 
+export type SymptomDetailMap = Partial<Record<SymptomId, string[]>>;
+
 export type RedFlagId = "breathing" | "collapse" | "seizure" | "bleeding";
 
 export interface PetProfile {
@@ -78,6 +80,7 @@ export interface HealthCheckInput {
   ageGroup: "young" | "adult" | "senior";
   weight?: string;
   symptoms: SymptomId[];
+  symptomDetails?: SymptomDetailMap;
   appetite: Level;
   energy: Level;
   duration: Duration;
@@ -167,19 +170,6 @@ export interface EpisodeProgress {
   sourceType: "owner";
   reviewStatus: "unreviewed";
   recordedAt: string;
-}
-
-export type HealthTrend = "stable" | "watch" | "worsening";
-
-export interface HealthFlowSummary {
-  trend: HealthTrend;
-  headline: string;
-  description: string;
-  recordCount: number;
-  repeatedSymptoms: string[];
-  highestRisk: RiskLevel | null;
-  latestRecordedAt: string | null;
-  vetBrief: string;
 }
 
 export interface VetReviewDraft {

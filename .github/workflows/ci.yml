@@ -27,6 +27,8 @@ jobs:
         run: npm run lint
       - name: Test web and shared code
         run: npm test
+      - name: Test release safeguards
+        run: npm run test:release
       - name: Build web app
         run: npm run build
       - name: Install mobile dependencies
@@ -37,6 +39,9 @@ jobs:
         working-directory: apps/mobile
       - name: Test mobile helpers
         run: npm test
+        working-directory: apps/mobile
+      - name: Test mobile release configuration
+        run: npm run test:release
         working-directory: apps/mobile
       - name: Check Expo dependency versions
         run: npm run expo:check

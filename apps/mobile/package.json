@@ -9,7 +9,8 @@
     "ios": "expo start --ios",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "npm run typecheck && npm test && npm run expo:check && npm run doctor",
+    "test:release": "vitest run scripts/release-config.test.mjs",
+    "verify": "npm run typecheck && npm test && npm run test:release && npm run expo:check && npm run doctor",
     "doctor": "npx expo-doctor",
     "expo:check": "expo install --check",
     "eas:whoami": "npx eas-cli whoami",
@@ -43,13 +44,13 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.108.2",
-    "expo": "~56.0.17",
+    "expo": "~56.0.19",
     "expo-application": "~56.0.3",
     "expo-auth-session": "~56.0.16",
     "expo-crypto": "~56.0.4",
-    "expo-file-system": "~56.0.8",
+    "expo-file-system": "~56.0.9",
     "expo-font": "~56.0.7",
-    "expo-image-picker": "~56.0.22",
+    "expo-image-picker": "~56.0.23",
     "expo-secure-store": "~56.0.4",
     "expo-web-browser": "~56.0.6",
     "react": "19.2.3",
@@ -63,6 +64,8 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
+    "brace-expansion": "5.0.9",
+    "nanoid": "3.3.18",
     "shell-quote": "1.10.0",
     "uuid": "^11.1.1"
   }

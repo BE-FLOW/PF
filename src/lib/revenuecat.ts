@@ -1,5 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
-import { resolveAiSummaryProductId } from "./ai-access";
+import {
+  revenueCatProductIds,
+  revenueCatServerConfiguration,
+} from "./billing-config";
 import { isUuid } from "./report-storage";
 import {
   recordAiCreditPurchase,
@@ -10,12 +13,8 @@ import {
 
 const revenueCatApiBaseUrl = "https://api.revenuecat.com/v1";
 
-type BillingStore =
-  | "app_store"
-  | "play_store"
-  | "revenuecat"
-  | "stripe"
-  | "paddle";
+type BillingStore = "app_store" | "play_store";
+type BillingEnvironment = "sandbox" | "production";
 
 interface RevenueCatNonSubscription {
   id?: string;
@@ -52,23 +51,7 @@ export interface RevenueCatWebhookEvent {
   commission_percentage?: number;
 }
 
-export function revenueCatProductIds() {
-  const configured = [
-    process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
-    ...(process.env.REVENUECAT_AI_SUMMARY_PRODUCT_IDS?.split(",") ?? []),
-  ]
-    .map((value) => value?.trim())
-    .filter((value): value is string => Boolean(value));
-  return new Set(
-    configured.length > 0
-      ? configured
-      : [resolveAiSummaryProductId(undefined)],
-  );
-}
-
-export function isRevenueCatConfigured() {
-  return Boolean(process.env.REVENUECAT_SECRET_API_KEY?.trim());
-}
+export { revenueCatProductIds } from "./billing-config";
 
 function billingStore(rawStore?: string): BillingStore | null {
   switch (rawStore?.toLowerCase()) {
@@ -77,14 +60,17 @@ function billingStore(rawStore?: string): BillingStore | null {
       return "app_store";
     case "play_store":
       return "play_store";
-    case "stripe":
-      return "stripe";
-    case "paddle":
-      return "paddle";
-    case "rc_billing":
-    case "revenuecat":
-    case "revenuecat_billing":
-      return "revenuecat";
+    default:
+      return null;
+  }
+}
+
+function billingEnvironment(rawEnvironment?: string): BillingEnvironment | null {
+  switch (rawEnvironment?.toLowerCase()) {
+    case "sandbox":
+      return "sandbox";
+    case "production":
+      return "production";
     default:
       return null;
   }
@@ -100,9 +86,11 @@ function eventUserId(event: RevenueCatWebhookEvent) {
 }
 
 function isoFromMilliseconds(value?: number) {
-  return Number.isFinite(value)
-    ? new Date(value as number).toISOString()
-    : new Date().toISOString();
+  if (Number.isFinite(value)) {
+    const date = new Date(value as number);
+    if (Number.isFinite(date.getTime())) return date.toISOString();
+  }
+  return new Date().toISOString();
 }
 
 function optionalNonNegativeNumber(value?: number) {
@@ -145,7 +133,8 @@ export function verifyRevenueCatWebhookAuthorization(
 
 export async function syncRevenueCatPurchases(userId: string) {
   const secretApiKey = process.env.REVENUECAT_SECRET_API_KEY?.trim();
-  if (!secretApiKey || !isUuid(userId)) {
+  const configuration = revenueCatServerConfiguration();
+  if (!secretApiKey || !configuration.productAllowlist || !isUuid(userId)) {
     return { configured: false, purchasesFound: 0, creditsRecorded: 0 };
   }
 
@@ -226,12 +215,22 @@ export async function processRevenueCatWebhook(
     return { processed: true, status: "ignored" as const };
   }
 
-  if (
-    eventType === "NON_RENEWING_PURCHASE" ||
-    eventType === "PURCHASE_REDEEMED"
-  ) {
-    const store = billingStore(event.store);
-    if (!userId || !transactionId || !store) {
+  const store = event.store ? billingStore(event.store) : null;
+  if (event.store && !store) {
+    await recordBillingEvent({
+      eventId,
+      eventType,
+      userId,
+      transactionId,
+      status: "ignored",
+      errorCode: "unsupported_store",
+    });
+    return { processed: true, status: "ignored" as const };
+  }
+
+  if (eventType === "NON_RENEWING_PURCHASE") {
+    const environment = billingEnvironment(event.environment);
+    if (!userId || !transactionId || !store || !environment) {
       await recordBillingEvent({
         eventId,
         eventType,
@@ -249,10 +248,7 @@ export async function processRevenueCatWebhook(
       originalTransactionId: event.original_transaction_id,
       productId,
       store,
-      environment:
-        event.environment?.toLowerCase() === "sandbox"
-          ? "sandbox"
-          : "production",
+      environment,
       purchasedAt: isoFromMilliseconds(
         event.purchased_at_ms ?? event.event_timestamp_ms,
       ),

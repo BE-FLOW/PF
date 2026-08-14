@@ -1,12 +1,12 @@
-# AI 요약 결제
+# 병원 전달본 결제
 
 ## 상품
 
 - 상품 ID: `petflow_ai_summary_1`
-- 이름: `AI 병원 전달 요약 1회`
+- 이름: `병원 전달본 1회`
 - 유형: 자동 갱신 없는 소모성 1회 상품
 - 기본 가격 가설: 1,900원에 가장 가까운 스토어 가격
-- 첫 AI 요약 1회는 계정당 무료
+- 첫 병원 전달본 1회는 계정당 무료
 
 원문 기록, 수정·삭제, 기본 정리와 공유는 결제와 분리합니다. 유료 상품은 사용자가
 고른 기록을 AI가 수의사 검토용 사실 초안으로 정리하는 1회 실행만 추가합니다.
@@ -14,8 +14,7 @@
 ## 플랫폼
 
 - iOS와 Android는 각 스토어의 인앱결제만 사용합니다.
-- 웹은 RevenueCat Billing 웹 결제를 사용합니다.
-- 앱에서 웹 결제를 안내하거나 연결하지 않습니다.
+- 웹은 기록 검증용 지원 화면이며 결제를 제공하지 않습니다.
 - 모든 경로는 Supabase 사용자 UUID를 RevenueCat App User ID로 사용합니다.
 - 로그인 전 구매와 익명 사용자 구매를 허용하지 않습니다.
 - RevenueCat의 거래 양도 동작은 원래 App User ID에 구매를 유지하도록 설정합니다.
@@ -25,7 +24,7 @@
 
 ## 서버 원장
 
-`billing_purchases`는 검증된 외부 거래를, `billing_events`는 중복 가능한 결제
+`billing_purchases`는 Apple·Google에서 검증된 거래를, `billing_events`는 중복 가능한 결제
 알림 결과를 보관합니다. `ai_credit_grants`와 `ai_credit_ledger`는 무료·구매
 이용권의 지급, 사용, 실패 반환, 환불과 환불 취소를 기록합니다.
 
@@ -35,7 +34,7 @@ AI 생성 전 서버가 이용권 한 개를 예약합니다. 생성 실패나 5
 않습니다.
 
 결제 직후 스토어 거래가 RevenueCat에 늦게 보이는 경우 앱이 자동으로 여러 번
-확인하고, 이용권이 확인되면 사용자가 다시 누르지 않아도 요청하던 AI 요약을
+확인하고, 이용권이 확인되면 사용자가 다시 누르지 않아도 요청하던 병원 전달본을
 이어 만듭니다. 계속 지연될 때만 `결제 반영 확인`을 보조 경로로 제공합니다.
 
 앱의 결제 완료 반영은 `/api/billing/sync`가 RevenueCat 고객 정보를 확인하는
@@ -56,7 +55,7 @@ AI 생성 전 서버가 이용권 한 개를 예약합니다. 생성 실패나 5
 - 구매창 열기·닫기
 - 결제 시작·취소·실패·반영 지연
 - 결제 반영 확인
-- 생성한 AI 요약 공유
+- 생성한 병원 전달본 공유
 
 관찰 내용, 사진·영상과 이메일은 넣지 않습니다. 실제 결제 완료는
 클라이언트 이벤트가 아니라 검증된 `billing_purchases`, 실제 AI 생성과 비용은
@@ -64,8 +63,20 @@ AI 생성 전 서버가 이용권 한 개를 예약합니다. 생성 실패나 5
 `supabase/management.sql`을 실행하면 일별 구매창 진입, 구매, 반복 구매,
 생성·공유, 매출과 AI 비용을 함께 확인할 수 있습니다.
 
-계정 삭제 시 결제수단 정보가 아니라 PetFlow의 거래 식별자와 이용권 원장만
-사용자 데이터와 함께 삭제합니다. 결제수단은 Apple·Google·웹 결제사가 관리합니다.
+최근 30일의 첫 유료 검증 상태만 빠르게 확인할 때는 다음 읽기 전용 명령을
+사용합니다. 무료 이용권으로 만든 전달본은 `유료 전달본 생성`에서 제외됩니다.
+
+```powershell
+npm run metrics:paid-validation
+npm run metrics:paid-validation -- --days=14
+```
+
+명령은 `.env.local`의 `SUPABASE_SERVICE_ROLE_KEY`와 `SUPABASE_URL` 또는
+`NEXT_PUBLIC_SUPABASE_URL`을 읽습니다. 다른 환경 파일은
+`--env-file=파일경로`로 지정합니다. 키와 사용자 식별자는 출력하지 않습니다.
+
+계정 삭제 시 RevenueCat 고객 정보와 PetFlow의 거래 식별자·이용권 원장을
+사용자 데이터와 함께 삭제합니다. 결제수단은 Apple·Google이 관리합니다.
 
 ## 환경변수
 
@@ -75,13 +86,6 @@ AI 생성 전 서버가 이용권 한 개를 예약합니다. 생성 실패나 5
 REVENUECAT_SECRET_API_KEY
 REVENUECAT_WEBHOOK_AUTH_TOKEN
 REVENUECAT_AI_SUMMARY_PRODUCT_ID=petflow_ai_summary_1
-```
-
-웹:
-
-```text
-NEXT_PUBLIC_REVENUECAT_WEB_API_KEY
-NEXT_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID=petflow_ai_summary_1
 ```
 
 앱:
@@ -96,13 +100,13 @@ EXPO_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID=petflow_ai_summary_1
 
 1. Apple Paid Apps 계약, 세금 및 은행 정보가 활성 상태입니다.
 2. Google Payments 판매자 계정이 활성 상태입니다.
-3. Apple·Google·RevenueCat Billing에 같은 상품 ID와 현지화 가격이 있습니다.
-4. RevenueCat의 Apple·Google 앱 자격 증명과 웹 Stripe 계정이 연결돼 있습니다.
+3. Apple·Google에 같은 상품 ID와 현지화 가격이 있습니다.
+4. RevenueCat의 Apple·Google 앱 자격 증명이 유효합니다.
 5. 현재 Offering에 1회 상품이 포함돼 있습니다.
 6. RevenueCat 공개 키는 Vercel·EAS에, 비밀 키와 웹훅 토큰은 Vercel에 있습니다.
 7. RevenueCat Pro 웹훅은 `/api/billing/revenuecat/webhook`으로 전송되며
    Authorization 값이 서버 토큰과 같습니다.
-8. Apple Sandbox, Google 라이선스 테스터, 웹 테스트 결제에서 구매·취소·재시도·
+8. Apple Sandbox와 Google 라이선스 테스터에서 구매·취소·재시도·
    결제 반영 확인·AI 실패 반환을 검증했습니다.
 9. 환불된 미사용 이용권은 회수되고, 이미 생성한 기록과 요약은 유지됩니다.
 

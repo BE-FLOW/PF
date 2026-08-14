@@ -1,6 +1,9 @@
 import {
   durationLabels,
+  formatSymptomSummary,
   levelLabels,
+  selectedSymptomDetailLabels,
+  symptomDetailQuestions,
   symptomLabels,
 } from "./analysis";
 import { buildEpisodeReport } from "./episode-report";
@@ -9,24 +12,8 @@ import type {
   EpisodePlan,
   EpisodeProgress,
   HistoryRecord,
-  RiskLevel,
   VetReviewDraft,
 } from "./types";
-
-const riskLabels: Record<RiskLevel, string> = {
-  watch: "관찰",
-  soon: "진료 권장",
-  urgent: "즉시 상담",
-};
-
-const conditionChangeLabels: Record<
-  EpisodeProgress["conditionChange"],
-  string
-> = {
-  better: "좋아짐",
-  same: "비슷함",
-  worse: "나빠짐",
-};
 
 const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
   timeZone: "Asia/Seoul",
@@ -44,19 +31,14 @@ function sortRecords(records: HistoryRecord[]) {
   );
 }
 
-function displayCheckScore(riskScore: number) {
-  if (!Number.isFinite(riskScore)) return 0;
-  return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
-}
-
 export function formatVetReviewDraft(
   draft: Omit<VetReviewDraft, "copyText">,
 ) {
   return [
-    `[PetFlow 수의사 검토용 보고서 초안]`,
+    `[PetFlow 병원 전달본]`,
     draft.title,
     `생성 시각: ${dateTimeFormatter.format(new Date(draft.generatedAt))}`,
-    `상태: AI/앱 정리 초안 · 수의사 확인 전`,
+    `상태: AI 정리 · 수의사 확인 전`,
     "",
     "[요약]",
     draft.overview,
@@ -73,11 +55,15 @@ export function formatVetReviewDraft(
     "[첨부 자료]",
     ...draft.mediaSummary.map((item) => `- ${item}`),
     "",
-    "[병원 계획과 이어진 기록]",
+    "[병원에서 들은 내용 · 보호자 기록]",
     ...draft.planAndProgress.map((item) => `- ${item}`),
-    "",
-    "[수의사에게 확인할 질문]",
-    ...draft.questionsForVet.map((item) => `- ${item}`),
+    ...(draft.questionsForVet.length
+      ? [
+          "",
+          "[추가로 확인하면 좋은 사실]",
+          ...draft.questionsForVet.map((item) => `- ${item}`),
+        ]
+      : []),
     "",
     "[제출 메모]",
     draft.submissionNote,
@@ -110,26 +96,40 @@ export function buildVetReviewDraft(
   const repeatedLine = report.repeatedSymptoms.length
     ? `반복 관찰: ${report.repeatedSymptoms.join(", ")}`
     : "반복 관찰: 아직 뚜렷한 반복 기록 없음";
-  const redFlagCount = ordered.reduce(
-    (total, record) => total + record.input.redFlags.length,
-    0,
-  );
+  const latestSymptomSummary = latest?.input.symptoms.length
+    ? formatSymptomSummary(latest.input)
+    : "선택한 주요 증상 없음";
+  const latestOwnerNote = latest?.input.note.trim() || "입력한 메모 없음";
+  const missingIntakeQuestions = [
+    ...new Set(ordered.flatMap((record) => record.input.symptoms)),
+  ]
+    .filter((symptom) =>
+      ordered
+        .filter((record) => record.input.symptoms.includes(symptom))
+        .every(
+          (record) => selectedSymptomDetailLabels(record.input, symptom).length === 0,
+        ),
+    )
+    .map(
+      (symptom) =>
+        `${symptomLabels[symptom]}: ${symptomDetailQuestions[symptom].reportPrompt}`,
+    )
+    .slice(0, 2);
   const timeline = ordered.length
     ? ordered.map((record) => {
         const symptoms = record.input.symptoms.length
-          ? record.input.symptoms
-              .map((symptom) => symptomLabels[symptom])
-              .join(", ")
+          ? formatSymptomSummary(record.input)
           : "선택한 주요 증상 없음";
         const mediaLabel = formatReportMediaSummary(record.media ?? []);
         return [
           dateTimeFormatter.format(new Date(record.result.createdAt)),
+          record.input.note.trim()
+            ? `보호자 메모 ${record.input.note.trim()}`
+            : "",
           `증상 ${symptoms}`,
           `식욕 ${levelLabels[record.input.appetite]}`,
           `활력 ${levelLabels[record.input.energy]}`,
           `기간 ${durationLabels[record.input.duration]}`,
-          `CHECK SCORE ${displayCheckScore(record.result.riskScore)}`,
-          `앱 안내 ${riskLabels[record.result.riskLevel]}`,
           mediaLabel ? `첨부 ${mediaLabel}` : "",
         ]
           .filter(Boolean)
@@ -144,66 +144,38 @@ export function buildVetReviewDraft(
     : ["첨부 사진·영상 없음"];
   const planLines = plan?.tasks.length
     ? plan.tasks.map(
-        (task) =>
-          `보호자 기록 병원 계획: ${task.completedAt ? "완료" : "진행 중"} · ${task.text}`,
+        (task) => `보호자가 옮긴 병원 안내: ${task.text}`,
       )
-    : ["보호자가 입력한 병원 계획은 아직 없습니다."];
-  const completedFollowUps = report.followUpCheckpoints.filter(
-    (checkpoint) => checkpoint.recordedAt,
-  );
-  const progressLines = completedFollowUps.length
-    ? completedFollowUps.map((checkpoint) => {
-        if (checkpoint.conditionChange) {
-          return `${checkpoint.followUpDay}일 전후 관찰: ${conditionChangeLabels[checkpoint.conditionChange]} · 식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
-        }
-        const source = checkpoint.source === "health-record"
-          ? `${dateTimeFormatter.format(new Date(checkpoint.recordedAt!))} 일반 건강 기록에서 자동 연결 · `
-          : "";
-        return `${checkpoint.followUpDay}일 전후 관찰: ${source}식욕 ${levelLabels[checkpoint.appetite ?? "normal"]} · 활력 ${levelLabels[checkpoint.energy ?? "normal"]} · 보호자 기록/확인 전`;
-      })
-    : ["같은 흐름에 자동 연결된 기록은 아직 없습니다."];
+    : ["보호자가 옮긴 병원 안내 없음"];
   const generatedAt = options.generatedAt ?? new Date().toISOString();
-  const completedProgressDays = completedFollowUps.length
-    ? completedFollowUps
-        .map((checkpoint) => `${checkpoint.followUpDay}일 전후`)
-        .join(", ")
-    : "없음";
   const draftWithoutCopy: Omit<VetReviewDraft, "copyText"> = {
-    title: `${latest?.input.petName || petName} 수의사 검토용 보고서 초안`,
+    title: `${latest?.input.petName || petName} 병원 전달본`,
     generatedAt,
     source: options.source ?? "local",
     reviewStatus: "unreviewed",
     overview:
-      `${report.periodLabel} 동안 보호자 관찰 ${report.recordCount}회를 묶어 정리했습니다. ` +
-      `가장 높은 앱 안내는 ${report.highestRiskLabel}이며, 이 문서는 수의사 검토 전 초안입니다.`,
+      `${report.periodLabel} 동안 보호자가 남긴 관찰 ${report.recordCount}회를 시간순으로 정리했습니다. ` +
+      "이 문서는 수의사 확인 전 초안입니다.",
     handoffNote:
-      `다른 병원에 처음 전달할 때는 ${report.periodLabel}의 관찰 ${report.recordCount}회, ` +
-      `가장 높은 앱 안내 ${report.highestRiskLabel}, 이어진 기록 시점 ${completedProgressDays}, ` +
-      "보호자가 입력한 병원 계획이 수의사 확인 전 정보임을 함께 설명해 주세요.",
+      `다른 병원에서도 바로 확인할 수 있도록 ${report.periodLabel}의 관찰 ${report.recordCount}회 중 ` +
+      `가장 최근 보호자 메모는 ` +
+      `"${latestOwnerNote}"이며, 최근 선택 증상은 ${latestSymptomSummary}입니다. ` +
+      "병원 안내는 보호자가 옮겨 적은 정보로 구분했습니다.",
     keyObservations: [
+      `가장 최근 보호자 메모: ${latestOwnerNote}`,
       repeatedLine,
+      `가장 최근 증상 상세: ${latestSymptomSummary}`,
       `식욕 변화 ${report.appetiteChangeCount}회 · 활력 변화 ${report.energyChangeCount}회`,
-      redFlagCount
-        ? `위험 신호 입력 ${redFlagCount}회가 있어 병원에 먼저 공유가 필요합니다.`
-        : "입력된 위험 신호는 없습니다.",
-      latest
-        ? `가장 최근 CHECK SCORE는 ${displayCheckScore(latest.result.riskScore)}점입니다.`
-        : "아직 CHECK SCORE 기록이 없습니다.",
-      `이어진 기록 시점: ${completedProgressDays}`,
       report.mediaCount
         ? `첨부 자료 ${report.mediaCount}개가 있으며 사진·영상 내용은 판독 전입니다.`
         : "첨부 사진·영상은 없습니다.",
     ],
     timeline,
     mediaSummary,
-    planAndProgress: [...planLines, ...progressLines],
-    questionsForVet: [
-      "이 변화가 재진 또는 추가 확인이 필요한 흐름인지 확인해 주세요.",
-      "다음 상담 전 보호자가 계속 기록해야 할 항목이 무엇인지 알려주세요.",
-      "초기와 장기 변화 중 특히 주의해서 볼 내용이 있는지 확인해 주세요.",
-    ],
+    planAndProgress: planLines,
+    questionsForVet: missingIntakeQuestions,
     submissionNote:
-      "보호자가 입력한 관찰과 병원 계획, 같은 흐름에 이어진 기록을 제출용으로 정리한 초안입니다. 다른 병원 전달 시 병원에서 확인한 내용은 별도로 구분해 주세요.",
+      "보호자가 입력한 관찰과 직접 옮긴 병원 안내를 정리한 초안입니다. 병원에서 확인한 내용과 보호자 관찰을 구분해 검토해 주세요.",
     disclaimer:
       "이 초안은 진단, 처방, 약물명, 용량, 치료 계획을 생성하지 않으며 수의사의 확인된 진료기록을 대신하지 않습니다.",
   };

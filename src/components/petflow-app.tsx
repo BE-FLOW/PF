@@ -24,7 +24,6 @@ import {
   toggleDailyObservation,
 } from "@/lib/analysis";
 import { buildEpisodeReport } from "@/lib/episode-report";
-import { summarizeHealthFlow } from "@/lib/health-flow";
 import {
   buildRecordCalendar,
   isRecordDateInRange,
@@ -77,7 +76,6 @@ import type {
   EpisodePlan,
   EpisodeProgress,
   HealthCheckInput,
-  HealthFlowSummary,
   HistoryRecord,
   Level,
   PetEpisode,
@@ -363,7 +361,7 @@ function recordDateLabel(value: string) {
 
 function aiDraftActionLabel(loading: boolean, hasDraft: boolean) {
   if (loading) return "초안 만드는 중...";
-  return hasDraft ? "다시 만들기 · 1회" : "AI 요약 만들기 · 1회";
+  return hasDraft ? "다시 만들기 · 1회" : "병원 전달본 만들기 · 1회";
 }
 
 function formatFileSize(bytes: number) {
@@ -632,8 +630,8 @@ function SideNav({
     { id: "home", label: "홈", icon: "home" },
     ...(canUseApp
       ? [
-          { id: "check" as const, label: "건강 기록", icon: "plus" as const },
-          { id: "history" as const, label: "건강 흐름", icon: "history" as const },
+          { id: "check" as const, label: "병원 준비", icon: "plus" as const },
+          { id: "history" as const, label: "전달본", icon: "history" as const },
         ]
       : []),
   ];
@@ -703,7 +701,7 @@ function MobileNav({
       </button>
       <button className={view === "check" ? "active" : ""} onClick={onStart}>
         <Icon name="plus" size={21} />
-        건강 기록
+        병원 준비
       </button>
       <button
         className={
@@ -714,7 +712,7 @@ function MobileNav({
         onClick={() => setView("history", { history: "replace" })}
       >
         <Icon name="history" size={20} />
-        건강 흐름
+        전달본
       </button>
     </nav>
   );
@@ -725,7 +723,7 @@ type HomeStage = "account" | "pet" | "record";
 const homeStageSteps: Array<{ id: HomeStage; label: string }> = [
   { id: "account", label: "계정" },
   { id: "pet", label: "아이 등록" },
-  { id: "record", label: "첫 기록" },
+  { id: "record", label: "병원 준비" },
 ];
 
 function HomeSteps({ current }: { current: HomeStage }) {
@@ -765,7 +763,7 @@ function HomeSetup({
         <p className="eyebrow">PET FLOW HOME</p>
         <h1>
           {loginStage
-            ? "건강 기록을 이어서 관리해요"
+            ? "병원에서 설명할 내용을 준비해요"
             : "함께 기록할 아이를 알려주세요"}
         </h1>
       </header>
@@ -785,7 +783,7 @@ function HomeSetup({
           <p>
             {loginStage
               ? "기존 계정은 로그인, 처음이라면 회원가입을 선택해요."
-              : "기본 정보만 등록하면 바로 건강 기록을 남길 수 있어요."}
+              : "기본 정보만 등록하면 바로 병원 준비를 시작할 수 있어요."}
           </p>
           {loginStage ? (
             <div className="home-auth-actions">
@@ -818,8 +816,6 @@ function HomeView({
   onStart,
   onHistory,
   onProfile,
-  flow,
-  flowLoading,
   activeEpisode,
   vaccinations,
   onAccount,
@@ -833,8 +829,6 @@ function HomeView({
   onStart: () => void;
   onHistory: () => void;
   onProfile: () => void;
-  flow: HealthFlowSummary;
-  flowLoading: boolean;
   activeEpisode?: PetEpisode;
   vaccinations: VaccinationRecord[];
   onAccount: () => void;
@@ -963,11 +957,10 @@ function HomeView({
           <p className="eyebrow">현재 상태</p>
           <h2>{riskLabel[recent.result.riskLevel]}</h2>
           <p>
-            {formatDate(recent.result.createdAt)} · 최근 14일 {flow.recordCount}회
+            {formatDate(recent.result.createdAt)} · 전달본에 포함할 수 있어요
           </p>
-          {!flowLoading && <strong className="home-flow-summary">{flow.headline}</strong>}
           <button className="text-button flow-link" onClick={onHistory}>
-            건강 흐름 보기
+            전달본 준비
           </button>
         </div>
         <div
@@ -1535,18 +1528,10 @@ function CheckView({
   loading: boolean;
   error: string;
 }) {
-  const allNormal =
-    input.symptoms.length === 0 &&
-    input.appetite === "normal" &&
-    input.energy === "normal" &&
-    input.duration === "today" &&
-    input.redFlags.length === 0 &&
-    !input.note;
   const totalMediaCount = existingMedia.length + mediaFiles.length;
-  const hasContent = !allNormal || totalMediaCount > 0;
   const recordDateTitle =
     recordDateKey === toRecordDateKey(new Date())
-      ? "오늘 기록"
+      ? "병원 가기 전 문진 준비"
       : `${formatRecordDateKey(recordDateKey)} 기록`;
   const profileDetails = [
     input.species === "dog"
@@ -1620,9 +1605,9 @@ function CheckView({
           </span>
           <em>정보 수정</em>
         </button>
-        <section className="record-composer" aria-label="건강 기록 작성">
+        <section className="record-composer" aria-label="병원 가기 전 문진 준비">
           <label className="composer-prompt" htmlFor="record-note">
-            오늘 {input.petName || "반려동물"}는 어땠나요?
+            언제부터 무엇이 달랐나요?
           </label>
           <textarea
             id="record-note"
@@ -1630,7 +1615,7 @@ function CheckView({
             maxLength={1000}
             value={input.note}
             onChange={(event) => setInput({ ...input, note: event.target.value })}
-            placeholder="한 줄, 사진 한 장만 남겨도 충분해요."
+            placeholder="예: 어제 저녁부터 밥을 남기고 두 번 토했어요."
           />
 
           <div className="composer-media">
@@ -1821,7 +1806,7 @@ function CheckView({
             ) : (
               <>
                 <Icon name="check" size={17} />{" "}
-                {isEditing ? "수정 저장" : hasContent ? "기록하기" : "평소처럼 기록"}
+                {isEditing ? "수정 저장" : "저장하고 전달본 보기"}
               </>
             )}
           </button>
@@ -1916,11 +1901,11 @@ function ResultView({
   }
   async function createResultVetDraft() {
     if (!record.episodeId) {
-      setVetDraftError("계정에 연결된 건강 기록에서만 AI 요약을 만들 수 있어요.");
+      setVetDraftError("계정에 연결된 건강 기록에서만 병원 전달본을 만들 수 있어요.");
       return;
     }
     if (!canUseAiReport && aiAccess?.reason !== "no_credits") {
-      setVetDraftError("AI 요약 이용 가능 횟수를 확인하지 못했어요.");
+      setVetDraftError("병원 전달본 이용 가능 횟수를 확인하지 못했어요.");
       return;
     }
     setVetDraftState("loading");
@@ -1928,7 +1913,7 @@ function ResultView({
     const payload = await onCreateVetDraft(record.episodeId);
     if (!payload.draft) {
       setVetDraftState("failed");
-      setVetDraftError(payload.error ?? "AI 병원 요약을 만들지 못했어요.");
+      setVetDraftError(payload.error ?? "병원 전달본을 만들지 못했어요.");
       return;
     }
     setVetDraft(payload.draft);
@@ -1941,7 +1926,7 @@ function ResultView({
       setVetDraftState("copied");
     } catch {
       setVetDraftState("failed");
-      setVetDraftError("AI 요약을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
+      setVetDraftError("병원 전달본을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
     }
   }
   return (
@@ -2075,9 +2060,9 @@ function ResultView({
           <section className="result-card vet-draft-card result-vet-draft-card">
             <div className="episode-plan-head">
               <div>
-                <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
+                <span className="episode-plan-step">AI 정리 · 수의사 확인 전</span>
                 <h3>
-                  <Icon name="spark" size={18} /> AI 병원 요약
+                  <Icon name="spark" size={18} /> 병원 전달본
                 </h3>
                 <p>
                   이 기록이 연결된 같은 Episode의 관찰, 병원 안내, 경과를 수의사가 보기
@@ -2094,11 +2079,11 @@ function ResultView({
             </div>
             {!record.episodeId ? (
               <p className="plan-empty">
-                서버에 저장되고 같은 건강 흐름에 연결된 기록에서 만들 수 있어요.
+                서버에 저장된 같은 반려동물의 기록에서 만들 수 있어요.
               </p>
             ) : !canUseAiReport && aiAccess?.reason !== "no_credits" ? (
               <div className="vet-draft-locked">
-                <strong>AI 요약 이용 가능 횟수를 확인하지 못했어요.</strong>
+                <strong>병원 전달본 이용 가능 횟수를 확인하지 못했어요.</strong>
                 <p>잠시 후 다시 시도해 주세요.</p>
               </div>
             ) : (
@@ -2142,12 +2127,14 @@ function ResultView({
                         <li key={item}>{item}</li>
                       ))}
                     </ul>
-                    <div className="vet-draft-questions">
-                      <span>수의사에게 확인할 질문</span>
-                      {vetDraft.questionsForVet.slice(0, 2).map((item) => (
-                        <p key={item}>{item}</p>
-                      ))}
-                    </div>
+                    {vetDraft.questionsForVet.length ? (
+                      <div className="vet-draft-questions">
+                        <span>진료 중 추가 확인</span>
+                        {vetDraft.questionsForVet.slice(0, 2).map((item) => (
+                          <p key={item}>{item}</p>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </>
@@ -2156,7 +2143,7 @@ function ResultView({
               <p className="share-error" role="alert">{vetDraftError}</p>
             )}
             <p className="plan-safety-note">
-              AI 요약은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을
+              AI로 정리한 전달본은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을
               만들지 않으며 수의사 확인 전 자료로 표시됩니다.
             </p>
           </section>
@@ -2188,7 +2175,7 @@ function ResultView({
             </button>
             <button className="secondary-button" onClick={onRestart}>
               <Icon name="plus" size={17} />{" "}
-              {record.episodeId ? "경과 이어 기록" : "새 기록 남기기"}
+              새 변화 남기기
             </button>
             <button className="secondary-button" onClick={() => onEdit(record)}>
               수정
@@ -2208,7 +2195,6 @@ function ResultView({
 
 function HistoryView({
   history,
-  flow,
   episodes,
   onBack,
   onSelect,
@@ -2218,7 +2204,6 @@ function HistoryView({
   onOpenReport,
 }: {
   history: HistoryRecord[];
-  flow: HealthFlowSummary;
   episodes: PetEpisode[];
   onBack: () => void;
   onSelect: (record: HistoryRecord) => void;
@@ -2309,8 +2294,8 @@ function HistoryView({
           <h1>기록 달력</h1>
           <p>
             {history.length
-              ? `최근 14일 ${flow.recordCount}회 · ${flow.headline}`
-              : "날짜를 확인하고 오늘 기록을 시작해요."}
+              ? "날짜나 기간을 골라 병원 전달본으로 묶어요."
+              : "날짜를 누르면 바로 기록할 수 있어요."}
           </p>
         </div>
       </div>
@@ -2450,7 +2435,7 @@ function HistoryView({
             disabled={!selectionReady || selectedRecords.length === 0}
           >
             <Icon name="spark" size={15} />
-            {selectedEpisode ? "요약 · AI 요약" : "선택 요약"}
+            {selectedEpisode ? "요약 · 전달본" : "선택 요약"}
           </button>
         </div>
       </section>
@@ -2467,7 +2452,6 @@ function EpisodeReportView({
   onBack,
   onSelectRecord,
   onSavePlan,
-  onTogglePlanTask,
   onCreateVetDraft,
   canUseAiReport,
   aiAccess,
@@ -2480,11 +2464,6 @@ function EpisodeReportView({
   onBack: () => void;
   onSelectRecord: (record: HistoryRecord) => void;
   onSavePlan: (episodeId: string, tasks: string[]) => Promise<string>;
-  onTogglePlanTask: (
-    episodeId: string,
-    taskId: string,
-    completed: boolean,
-  ) => Promise<string>;
   onCreateVetDraft: (
     episodeId: string,
     reportIds?: string[],
@@ -2503,11 +2482,6 @@ function EpisodeReportView({
         selection.episode?.startedAt,
       ),
     [petName, plan, progress, selection.episode?.startedAt, selection.records],
-  );
-  const completedPlanTaskCount = plan?.tasks.filter((task) => task.completedAt).length ?? 0;
-  const totalPlanTaskCount = plan?.tasks.length ?? 0;
-  const completedFollowUps = report.followUpCheckpoints.filter(
-    (checkpoint) => checkpoint.recordedAt,
   );
   const [shareState, setShareState] = useState<
     "idle" | "shared" | "copied" | "failed"
@@ -2558,7 +2532,7 @@ function EpisodeReportView({
     if (!selection.episode) return;
     const tasks = planDraft.map((task) => task.trim()).filter(Boolean);
     if (!tasks.length) {
-      setPlanError("병원에서 받은 계획을 한 가지 이상 적어 주세요.");
+      setPlanError("병원에서 들은 내용을 한 가지 이상 적어 주세요.");
       return;
     }
     setPlanBusy(true);
@@ -2572,26 +2546,13 @@ function EpisodeReportView({
     setEditingPlan(false);
   }
 
-  async function togglePlanTask(taskId: string, completed: boolean) {
-    if (!selection.episode) return;
-    setPlanBusy(true);
-    setPlanError("");
-    const message = await onTogglePlanTask(
-      selection.episode.id,
-      taskId,
-      completed,
-    );
-    setPlanBusy(false);
-    if (message) setPlanError(message);
-  }
-
   async function createVetDraft() {
     if (!selection.episode) {
       setVetDraftError("계정에 연결된 Episode 기록에서만 초안을 만들 수 있어요.");
       return;
     }
     if (!canUseAiReport && aiAccess?.reason !== "no_credits") {
-      setVetDraftError("AI 요약 이용 가능 횟수를 확인하지 못했어요.");
+      setVetDraftError("병원 전달본 이용 가능 횟수를 확인하지 못했어요.");
       return;
     }
     setVetDraftState("loading");
@@ -2602,7 +2563,7 @@ function EpisodeReportView({
     );
     if (!result.draft) {
       setVetDraftState("failed");
-      setVetDraftError(result.error ?? "AI 병원 요약을 만들지 못했어요.");
+      setVetDraftError(result.error ?? "병원 전달본을 만들지 못했어요.");
       return;
     }
     setVetDraft(result.draft);
@@ -2616,7 +2577,7 @@ function EpisodeReportView({
       setVetDraftState("copied");
     } catch {
       setVetDraftState("failed");
-      setVetDraftError("AI 요약을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
+      setVetDraftError("병원 전달본을 복사하지 못했어요. 브라우저 권한을 확인해 주세요.");
     }
   }
 
@@ -2640,12 +2601,12 @@ function EpisodeReportView({
   return (
     <div className="content-wrap">
       <div className="page-heading">
-        <button className="back-button" onClick={onBack} aria-label="건강 흐름으로">
+        <button className="back-button" onClick={onBack} aria-label="기록 달력으로">
           <Icon name="arrow" size={20} />
         </button>
         <div>
           <p className="eyebrow">VET SHARE</p>
-          <h1>병원 전달 요약</h1>
+          <h1>병원 전달본</h1>
           <p>이 기록 묶음만 간결하게 정리했어요.</p>
         </div>
       </div>
@@ -2686,22 +2647,21 @@ function EpisodeReportView({
       <section className="result-card vet-draft-card">
         <div className="episode-plan-head">
           <div>
-            <span className="episode-plan-step">AI DRAFT · VET REVIEW</span>
+            <span className="episode-plan-step">AI 정리 · 수의사 확인 전</span>
             <h3>
-              <Icon name="spark" size={18} /> AI 병원 요약
+              <Icon name="spark" size={18} /> 병원 전달본
             </h3>
             <p>
-              기록해 둔 관찰, 병원 계획, 초기·장기 경과를 자동으로 묶어 다른 병원에도 바로 전달해요.
+              보호자 메모와 사진, 선택한 사실을 수의사가 빠르게 읽도록 정리해요.
             </p>
           </div>
           <span className="vet-draft-badge">AI 작성 · 확인 전</span>
         </div>
 
-        <div className="vet-draft-includes" aria-label="AI 요약 자동 포함 자료">
+        <div className="vet-draft-includes" aria-label="병원 전달본 자동 포함 자료">
           <span>자동 포함</span>
           <strong>관찰 {report.recordCount}회</strong>
-          <strong>계획 {completedPlanTaskCount}/{totalPlanTaskCount}개</strong>
-          <strong>연결 기록 {completedFollowUps.length}회</strong>
+          <strong>기록 기간 {report.periodLabel}</strong>
           <strong>첨부 {report.mediaCount}개</strong>
           <strong>다른 병원 첫 설명</strong>
         </div>
@@ -2712,7 +2672,7 @@ function EpisodeReportView({
           </p>
         ) : !canUseAiReport && aiAccess?.reason !== "no_credits" ? (
           <div className="vet-draft-locked">
-            <strong>AI 요약 이용 가능 횟수를 확인하지 못했어요.</strong>
+            <strong>병원 전달본 이용 가능 횟수를 확인하지 못했어요.</strong>
             <p>잠시 후 다시 시도해 주세요.</p>
           </div>
         ) : (
@@ -2761,12 +2721,14 @@ function EpisodeReportView({
                   <span>첨부 자료</span>
                   <p>{vetDraft.mediaSummary.slice(0, 2).join(" · ")}</p>
                 </div>
-                <div className="vet-draft-questions">
-                  <span>확인 질문</span>
-                  {vetDraft.questionsForVet.slice(0, 2).map((item) => (
-                    <p key={item}>{item}</p>
-                  ))}
-                </div>
+                {vetDraft.questionsForVet.length ? (
+                  <div className="vet-draft-questions">
+                    <span>추가로 확인하면 좋은 사실</span>
+                    {vetDraft.questionsForVet.slice(0, 2).map((item) => (
+                      <p key={item}>{item}</p>
+                    ))}
+                  </div>
+                ) : null}
                 {vetDraft.usageId && (
                   <div className="ai-feedback-box">
                     <span>사용자 피드백</span>
@@ -2823,7 +2785,7 @@ function EpisodeReportView({
           <p className="share-error" role="alert">{vetDraftError}</p>
         )}
         <p className="plan-safety-note">
-          AI 요약은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
+          AI로 정리한 전달본은 보호자 기록 정리용입니다. 진단·처방·약물명·용량·치료 계획을 만들지 않으며,
           수의사 확인 전 정보로 표시합니다.
         </p>
       </section>
@@ -2839,8 +2801,8 @@ function EpisodeReportView({
               <strong>{report.petProfile}</strong>
             </div>
             <div>
-              <span>가장 높은 앱 안내</span>
-              <strong>{report.highestRiskLabel}</strong>
+              <span>기록 기간</span>
+              <strong>{report.periodLabel}</strong>
             </div>
             <div>
               <span>식욕 변화</span>
@@ -2889,13 +2851,13 @@ function EpisodeReportView({
                     <small>
                       식욕 {item.appetite} · 활력 {item.energy} · {item.duration}
                     </small>
+                    {item.note && <small>보호자 메모: {item.note}</small>}
                     {item.mediaCount > 0 && (
                       <small>
                         첨부 {formatReportMediaCount(item.imageCount, item.videoCount)}
                       </small>
                     )}
                   </span>
-                  <em>{item.riskLabel}</em>
                 </button>
               );
             })}
@@ -2906,41 +2868,32 @@ function EpisodeReportView({
       <section className="result-card episode-plan-card" id="episode-plan">
         <div className="episode-plan-head">
           <div>
-            <span className="episode-plan-step">SOAP-LOOP · P</span>
             <h3>
-              <Icon name="clipboard" size={18} /> 병원에서 받은 계획
+              <Icon name="clipboard" size={18} /> 병원에서 들은 내용
             </h3>
-            <p>병원에서 들은 내용을 짧은 할 일로 옮겨 적고 하나씩 체크해요.</p>
+            <p>들은 내용을 그대로 남기면 다음 전달본에 자동으로 이어져요.</p>
           </div>
           <span className="plan-source-badge">보호자 기록 · 수의사 확인 전</span>
         </div>
 
         {!selection.episode ? (
           <p className="plan-empty">
-            계정에 연결된 건강 기록부터 남기면 병원 계획을 이어서 관리할 수 있어요.
+            계정에 연결된 기록부터 남기면 병원에서 들은 내용을 이어둘 수 있어요.
           </p>
         ) : plan && !editingPlan ? (
           <>
             <div className="plan-task-list">
               {plan.tasks.map((task) => (
-                <button
-                  key={task.id}
-                  className={`plan-task ${task.completedAt ? "completed" : ""}`}
-                  onClick={() => togglePlanTask(task.id, !task.completedAt)}
-                  disabled={planBusy}
-                >
-                  <span className="plan-check">
-                    {task.completedAt && <Icon name="check" size={14} />}
-                  </span>
+                <div key={task.id} className="plan-task">
                   <span>{task.text}</span>
-                </button>
+                </div>
               ))}
             </div>
             <button
               className="text-button plan-edit-button"
               onClick={() => setEditingPlan(true)}
             >
-              계획 항목 수정
+              들은 내용 수정
             </button>
           </>
         ) : (
@@ -2953,8 +2906,8 @@ function EpisodeReportView({
                   maxLength={160}
                   placeholder={
                     index === 0
-                      ? "예: 3일 뒤 상태를 다시 확인하기"
-                      : "다음 계획을 짧게 적어 주세요"
+                      ? "예: 3일 뒤 다시 오라고 안내받음"
+                      : "들은 내용을 짧게 적어 주세요"
                   }
                   onChange={(event) =>
                     setPlanDraft((current) =>
@@ -2968,7 +2921,7 @@ function EpisodeReportView({
                   <button
                     type="button"
                     className="plan-remove"
-                    aria-label={`${index + 1}번 계획 삭제`}
+                    aria-label={`${index + 1}번 내용 삭제`}
                     onClick={() =>
                       setPlanDraft((current) =>
                         current.filter((_, itemIndex) => itemIndex !== index),
@@ -2987,7 +2940,7 @@ function EpisodeReportView({
                   className="secondary-button compact"
                   onClick={() => setPlanDraft((current) => [...current, ""])}
                 >
-                  <Icon name="plus" size={14} /> 항목 추가
+                  <Icon name="plus" size={14} /> 내용 추가
                 </button>
               )}
               {plan && (
@@ -3010,7 +2963,7 @@ function EpisodeReportView({
                 disabled={planBusy}
               >
                 <Icon name="check" size={14} />
-                {planBusy ? "저장 중..." : "계획 저장"}
+                {planBusy ? "저장 중..." : "들은 내용 저장"}
               </button>
             </div>
           </div>
@@ -3078,7 +3031,6 @@ export function PetFlowApp() {
     "home",
   );
   const [loading, setLoading] = useState(false);
-  const [flowLoading, setFlowLoading] = useState(false);
   const [error, setError] = useState("");
   const [appNotice, setAppNotice] = useState<{
     tone: "success" | "error";
@@ -3273,10 +3225,6 @@ export function PetFlowApp() {
   const editingProfileVaccinationKey = editingProfileVaccinations
     .map((record) => `${record.id}:${record.updatedAt}`)
     .join("|");
-  const healthFlow = useMemo(
-    () => summarizeHealthFlow(visibleHistory, profile.name || "반려동물"),
-    [profile.name, visibleHistory],
-  );
   const activeEpisode = useMemo(
     () => episodes.find(
       (episode) => episode.petId === selectedPetId && episode.status === "open",
@@ -3545,29 +3493,22 @@ export function PetFlowApp() {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !nextProfile.id) return;
     const loadSequence = ++historyLoadSequenceRef.current;
-    setFlowLoading(true);
     setEpisodes([]);
     setPlans([]);
     setProgress([]);
-    try {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) return;
-      const timeline = await fetchPetHistory(
-        nextProfile,
-        data.session.access_token,
-      );
-      if (loadSequence !== historyLoadSequenceRef.current) return;
-      setEpisodes(timeline.episodes);
-      setPlans(timeline.plans);
-      setProgress(timeline.progress);
-      setHistory((current) =>
-        mergePetHistory(current, timeline.records, nextProfile.id as string),
-      );
-    } finally {
-      if (loadSequence === historyLoadSequenceRef.current) {
-        setFlowLoading(false);
-      }
-    }
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) return;
+    const timeline = await fetchPetHistory(
+      nextProfile,
+      data.session.access_token,
+    );
+    if (loadSequence !== historyLoadSequenceRef.current) return;
+    setEpisodes(timeline.episodes);
+    setPlans(timeline.plans);
+    setProgress(timeline.progress);
+    setHistory((current) =>
+      mergePetHistory(current, timeline.records, nextProfile.id as string),
+    );
   }
   async function loadVaccinationsForPets(
     petIds: string[],
@@ -4041,7 +3982,7 @@ export function PetFlowApp() {
 
   async function deleteRecord(record: HistoryRecord) {
     const confirmed = window.confirm(
-      "이 기록을 삭제할까요?\n삭제하면 병원 전달 요약에서도 빠져요.",
+      "이 기록을 삭제할까요?\n삭제하면 사실 요약과 병원 전달본에서도 빠져요.",
     );
     if (!confirmed) return;
 
@@ -4371,7 +4312,7 @@ export function PetFlowApp() {
         },
         body: JSON.stringify({ tasks }),
       });
-      if (!response.ok) return "병원에서 받은 계획을 저장하지 못했어요.";
+      if (!response.ok) return "병원에서 들은 내용을 저장하지 못했어요.";
       const payload = (await response.json()) as { plan: EpisodePlan };
       setPlans((current) => {
         const exists = current.some((plan) => plan.id === payload.plan.id);
@@ -4383,45 +4324,7 @@ export function PetFlowApp() {
       });
       return "";
     } catch {
-      return "병원에서 받은 계획을 저장하지 못했어요.";
-    }
-  }
-  async function togglePlanTask(
-    episodeId: string,
-    taskId: string,
-    completed: boolean,
-  ) {
-    const supabase = getSupabaseBrowserClient();
-    try {
-      const { data } = supabase
-        ? await supabase.auth.getSession()
-        : { data: { session: null } };
-      if (!data.session) return "로그인 상태를 다시 확인해 주세요.";
-      const response = await fetch(`/api/episodes/${episodeId}/plan`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${data.session.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ taskId, completed }),
-      });
-      if (!response.ok) return "계획 체크 상태를 저장하지 못했어요.";
-      const completedAt = completed ? new Date().toISOString() : null;
-      setPlans((current) =>
-        current.map((plan) =>
-          plan.episodeId === episodeId
-            ? {
-                ...plan,
-                tasks: plan.tasks.map((task) =>
-                  task.id === taskId ? { ...task, completedAt } : task,
-                ),
-              }
-            : plan,
-        ),
-      );
-      return "";
-    } catch {
-      return "계획 체크 상태를 저장하지 못했어요.";
+      return "병원에서 들은 내용을 저장하지 못했어요.";
     }
   }
 
@@ -4542,6 +4445,12 @@ export function PetFlowApp() {
         setBillingMessage(error);
         return { purchased: false, error };
       }
+      if (!current.access.purchaseAvailable || !isWebBillingAvailable()) {
+        const error =
+          "병원 전달본 결제는 iOS 또는 Android 앱에서 이용해 주세요.";
+        setBillingMessage(error);
+        return { purchased: false, error };
+      }
       const minimumCredits = current.access.availableCredits + 1;
 
       void recordWebMonetizationEvent("purchase_started", context);
@@ -4577,7 +4486,7 @@ export function PetFlowApp() {
       billingPendingMinimumCreditsRef.current = null;
       removeLocalStorageItem(billingPendingStorageKey(user.id));
       setBillingPurchasePending(false);
-      setBillingMessage("AI 병원 요약 1회를 추가했어요.");
+      setBillingMessage("병원 전달본 1회를 추가했어요.");
       return { purchased: true };
     } catch {
       void recordWebMonetizationEvent("purchase_failed", context);
@@ -4617,8 +4526,8 @@ export function PetFlowApp() {
       setBillingMessage(
         synced.error ||
           (synced.access?.availableCredits
-            ? `AI 병원 요약 ${synced.access.availableCredits}회를 확인했어요.`
-            : "추가된 AI 요약 이용권이 없어요."),
+            ? `병원 전달본 ${synced.access.availableCredits}회를 확인했어요.`
+            : "추가된 병원 전달본 이용권이 없어요."),
       );
     } finally {
       billingOperationInFlightRef.current = false;
@@ -4629,12 +4538,12 @@ export function PetFlowApp() {
   async function createVetDraft(episodeId: string, reportIds?: string[]) {
     if (!aiAccess?.enabled) {
       if (aiAccess?.reason !== "no_credits") {
-        return { error: "AI 요약 이용 가능 횟수를 확인하지 못했어요." };
+        return { error: "병원 전달본 이용 가능 횟수를 확인하지 못했어요." };
       }
       const purchase = await purchaseAiCredit("report");
       if (!purchase.purchased) {
         return {
-          error: purchase.error || "AI 병원 요약 1회 이용권이 필요해요.",
+          error: purchase.error || "병원 전달본 1회 이용권이 필요해요.",
         };
       }
     }
@@ -4660,12 +4569,12 @@ export function PetFlowApp() {
       };
       if (!response.ok || !payload.draft) {
         if (payload.access) setAiAccess(payload.access);
-        return { error: payload.error ?? "AI 병원 요약을 만들지 못했어요." };
+        return { error: payload.error ?? "병원 전달본을 만들지 못했어요." };
       }
       setAiAccess(await fetchAiAccessStatus(data.session.access_token));
       return { draft: payload.draft };
     } catch {
-      return { error: "AI 병원 요약을 만들지 못했어요." };
+      return { error: "병원 전달본을 만들지 못했어요." };
     }
   }
   async function submitAiReportFeedback(input: AiReportFeedbackInput) {
@@ -4801,8 +4710,6 @@ export function PetFlowApp() {
             onAccount={() => setView("account", { history: "replace" })}
             onLogin={() => openAuth("login")}
             onSignup={() => openAuth("signup")}
-            flow={healthFlow}
-            flowLoading={flowLoading}
             activeEpisode={activeEpisode}
             vaccinations={selectedPetVaccinations}
           />
@@ -4895,7 +4802,6 @@ export function PetFlowApp() {
           <HistoryView
             key={selectedPetId ?? "local-history"}
             history={visibleHistory}
-            flow={healthFlow}
             episodes={episodes}
             onBack={() => setView("home", { history: "replace" })}
             onStart={startNew}
@@ -4939,7 +4845,6 @@ export function PetFlowApp() {
             }
             onBack={() => setView("history", { history: "replace" })}
             onSavePlan={savePlan}
-            onTogglePlanTask={togglePlanTask}
             onCreateVetDraft={createVetDraft}
             canUseAiReport={Boolean(aiAccess?.enabled)}
             aiAccess={aiAccess}

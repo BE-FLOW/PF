@@ -1,5 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
+import { revenueCatServerConfiguration } from "./billing-config";
+import { deleteRevenueCatCustomer } from "./revenuecat-customer";
 import type {
   AiAccessStatus,
   AiReportFeedbackInput,
@@ -139,7 +141,7 @@ export interface BillingPurchaseInput {
   transactionId: string;
   originalTransactionId?: string | null;
   productId: string;
-  store: "app_store" | "play_store" | "revenuecat" | "stripe" | "paddle";
+  store: "app_store" | "play_store";
   environment: "sandbox" | "production";
   purchasedAt: string;
   credits?: number;
@@ -560,6 +562,8 @@ export async function deleteAccount(
       return null;
     }
 
+    if (!(await deleteRevenueCatCustomer(user.id))) return null;
+
     const mediaRows = (await mediaResponse.json()) as Array<{
       storage_path: string | null;
     }>;
@@ -624,7 +628,7 @@ async function buildAiCreditStatus(userId: string): Promise<AiAccessStatus> {
       Number(row.purchased_credits),
       Number(row.used_total),
       {
-        billingConfigured: Boolean(process.env.REVENUECAT_SECRET_API_KEY),
+        billingConfigured: revenueCatServerConfiguration().ready,
         productId: process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
       },
     );
@@ -995,7 +999,7 @@ async function savedHealthReportForRequest(
   requestId: string,
 ): Promise<HealthReportSaveResult | null> {
   const response = await supabaseRequest(
-    `health_reports?user_id=eq.${account.userId}&client_id=eq.${requestId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&limit=1`,
+    `health_reports?user_id=eq.${account.userId}&client_id=eq.${requestId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,symptom_details,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&limit=1`,
     { method: "GET" },
   );
   if (!response?.ok) return null;
@@ -1114,7 +1118,7 @@ export async function updateHealthReport(
     const result = analyzeLocally(canonicalInput);
 
     const response = await supabaseRequest(
-      `health_reports?id=eq.${report.id}&user_id=eq.${userId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at`,
+      `health_reports?id=eq.${report.id}&user_id=eq.${userId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,symptom_details,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at`,
       {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
@@ -1124,6 +1128,7 @@ export async function updateHealthReport(
           owner_note: canonicalInput.note.trim().slice(0, 1000) || null,
           age_group: canonicalInput.ageGroup,
           symptoms: canonicalInput.symptoms,
+          symptom_details: canonicalInput.symptomDetails ?? {},
           appetite: canonicalInput.appetite,
           energy: canonicalInput.energy,
           duration: canonicalInput.duration,
@@ -1554,7 +1559,7 @@ export async function getPetHealthHistory(
   if (!owner) return null;
   try {
     const reports = await fetchAllSupabaseRows<DisplayHealthReport>(
-      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc`,
+      `health_reports?user_id=eq.${owner.userId}&pet_id=eq.${owner.petId}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,symptom_details,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.desc`,
     );
     if (!reports) return null;
     const mediaRows = await fetchAllSupabaseRows<ReportMediaRow>(
@@ -1678,7 +1683,7 @@ export async function getEpisodeVetReviewBundle(
           { method: "GET" },
         ),
         fetchAllSupabaseRows<DisplayHealthReport>(
-          `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc`,
+          `health_reports?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=id,pet_id,episode_id,species,breed,owner_note,age_group,symptoms,symptom_details,appetite,energy,duration,red_flags,risk_level,risk_score,analysis_source,created_at&order=created_at.asc`,
         ),
         fetchAllSupabaseRows<ReportMediaRow>(
           `health_report_media?user_id=eq.${userId}&pet_id=eq.${episode.petId}&episode_id=eq.${episode.id}&select=${reportMediaSelect}&order=created_at.asc`,
@@ -1771,32 +1776,6 @@ export async function saveEpisodePlan(
     return rows[0] ? toEpisodePlan(rows[0]) : null;
   } catch {
     return null;
-  }
-}
-
-export async function setEpisodePlanTaskCompletion(
-  accessToken: string | null,
-  episodeId: string | null,
-  taskId: string | null,
-  completed: boolean,
-): Promise<boolean> {
-  if (!isUuid(episodeId) || !isUuid(taskId)) return false;
-  const userId = await getAuthenticatedUserId(accessToken);
-  if (!userId) return false;
-  try {
-    const response = await supabaseRequest("rpc/set_plan_task_completion", {
-      method: "POST",
-      body: JSON.stringify({
-        target_user_id: userId,
-        target_episode_id: episodeId,
-        target_task_id: taskId,
-        is_completed: completed,
-      }),
-    });
-    if (!response?.ok) return false;
-    return (await response.json()) === true;
-  } catch {
-    return false;
   }
 }
 

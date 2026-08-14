@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEpisodeReport,
+  formatSymptomSummary,
   hasDailyObservation,
   toggleDailyObservation,
+  toggleSymptomDetail,
   type AnalysisResult,
   type HealthCheckInput,
   type HistoryRecord,
@@ -37,9 +39,26 @@ describe("daily observation composer", () => {
     expect(cleared.energy).toBe("normal");
     expect(cleared.petName).toBe("보리");
   });
+
+  it("adds one-tap intake facts and clears them with the symptom", () => {
+    const withVomiting = toggleDailyObservation(base, "vomiting");
+    const detailed = toggleSymptomDetail(withVomiting, "vomiting", "repeated");
+
+    expect(formatSymptomSummary(detailed)).toBe("구토 (짧은 시간에 반복)");
+    const cleared = toggleDailyObservation(detailed, "vomiting");
+    expect(cleared.symptomDetails).toEqual({});
+  });
+
+  it("replaces mutually exclusive intake facts in one tap", () => {
+    const withVomiting = toggleDailyObservation(base, "vomiting");
+    const once = toggleSymptomDetail(withVomiting, "vomiting", "once");
+    const repeated = toggleSymptomDetail(once, "vomiting", "repeated");
+
+    expect(repeated.symptomDetails?.vomiting).toEqual(["repeated"]);
+  });
 });
 
-describe("episode follow-up flow", () => {
+describe("hospital handoff flow", () => {
   function record(createdAt: string): HistoryRecord {
     const result: AnalysisResult = {
       id: `record-${createdAt}`,
@@ -61,7 +80,7 @@ describe("episode follow-up flow", () => {
     };
   }
 
-  it("uses normal health records as follow-up checkpoints", () => {
+  it("keeps legacy checkpoints internal and shares only the factual timeline", () => {
     const report = buildEpisodeReport(
       [
         record("2026-06-10T00:00:00.000Z"),
@@ -79,6 +98,19 @@ describe("episode follow-up flow", () => {
         .filter((checkpoint) => checkpoint.recordedAt)
         .map((checkpoint) => checkpoint.followUpDay),
     ).toEqual([3, 7]);
-    expect(report.shareText).toContain("건강 기록 자동 연결");
+    expect(report.shareText).not.toContain("건강 기록 자동 연결");
+    expect(report.shareText).not.toContain("초기·장기 경과");
+    expect(report.shareText).not.toContain("앱 안내 단계");
+  });
+
+  it("puts the owner's one-line observation in the shared handoff", () => {
+    const input = { ...base, note: "어제 저녁부터 두 번 토했어요." };
+    const result: AnalysisResult = {
+      ...record("2026-06-10T00:00:00.000Z").result,
+      id: "record-with-note",
+    };
+    const report = buildEpisodeReport([{ input, result }], "보리");
+
+    expect(report.shareText).toContain("보호자 메모: 어제 저녁부터 두 번 토했어요.");
   });
 });
