@@ -61,6 +61,12 @@ describe("mobile release configuration", () => {
     expect(packageJson.scripts["submit:ios:testflight-external"]).toContain(
       "--internal false",
     );
+    expect(packageJson.scripts["submit:ios:testflight-internal"]).not.toContain(
+      "--execute true",
+    );
+    expect(packageJson.scripts["submit:ios:testflight-external"]).not.toContain(
+      "--execute true",
+    );
   });
 
   it("parses shared App Store script options", () => {
