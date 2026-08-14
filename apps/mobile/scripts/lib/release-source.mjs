@@ -71,12 +71,38 @@ export function findExactFinishedEasBuild(
       String(build.appBuildVersion) === String(buildNumber) &&
       build.status === "FINISHED",
   );
-  if (matches.length !== 1) {
+  if (matches.length === 0) {
     throw new Error(
-      `EAS iOS ${version} (${buildNumber}): expected one finished build, found ${matches.length}.`,
+      `EAS iOS ${version} (${buildNumber}): expected a finished build, found none.`,
     );
   }
-  return matches[0];
+  if (matches.length === 1) return matches[0];
+
+  const signatures = new Set(
+    matches.map((build) =>
+      JSON.stringify({
+        gitCommitHash: build.gitCommitHash ?? null,
+        fingerprint: build.fingerprint?.hash ?? null,
+        distribution: build.distribution ?? null,
+        buildProfile: build.buildProfile ?? null,
+        sdkVersion: build.sdkVersion ?? null,
+      }),
+    ),
+  );
+  const hasVerifiableSource = matches.every(
+    (build) => build.gitCommitHash && build.fingerprint?.hash,
+  );
+  if (!hasVerifiableSource || signatures.size !== 1) {
+    throw new Error(
+      `EAS iOS ${version} (${buildNumber}): found ${matches.length} conflicting finished builds.`,
+    );
+  }
+
+  return matches.toSorted(
+    (left, right) =>
+      Date.parse(right.completedAt ?? right.updatedAt ?? right.createdAt ?? 0) -
+      Date.parse(left.completedAt ?? left.updatedAt ?? left.createdAt ?? 0),
+  )[0];
 }
 
 export function verifyBuildCoversMain(repoRoot, easBuild, currentCommit) {

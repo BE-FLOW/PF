@@ -10,6 +10,7 @@ import {
   validateRemoteScreenshotAssets,
   validateScreenshotManifest,
 } from "./lib/ios-release-guard.mjs";
+import { findExactFinishedEasBuild } from "./lib/release-source.mjs";
 import {
   hasStatus as hasGooglePlayStatus,
   parseArgs as parseGooglePlayArgs,
@@ -91,6 +92,42 @@ describe("mobile release configuration", () => {
     expect(() => selectExactValidBuild(builds, "26")).toThrow(
       "expected one valid build",
     );
+  });
+
+  it("accepts only source-identical duplicate EAS builds", () => {
+    const common = {
+      status: "FINISHED",
+      appVersion: "1.0",
+      appBuildVersion: "27",
+      gitCommitHash: "commit-27",
+      fingerprint: { hash: "fingerprint-27" },
+      distribution: "STORE",
+      buildProfile: "production",
+      sdkVersion: "56.0.0",
+    };
+    const older = {
+      ...common,
+      id: "older",
+      completedAt: "2026-08-14T06:08:35.944Z",
+    };
+    const newer = {
+      ...common,
+      id: "newer",
+      completedAt: "2026-08-14T06:12:25.739Z",
+    };
+
+    expect(
+      findExactFinishedEasBuild([older, newer], {
+        version: "1.0",
+        buildNumber: "27",
+      }).id,
+    ).toBe("newer");
+    expect(() =>
+      findExactFinishedEasBuild(
+        [older, { ...newer, fingerprint: { hash: "different" } }],
+        { version: "1.0", buildNumber: "27" },
+      ),
+    ).toThrow("conflicting finished builds");
   });
 
   it("allows only App Store assets to change after the release build", () => {
