@@ -49,12 +49,12 @@ export async function PUT(
   }
 
   const tasks = body.tasks.map((task) => task.trim());
-  const plan = await saveEpisodePlan(accessToken, episodeId, tasks);
-  if (!plan) {
+  const saved = await saveEpisodePlan(accessToken, episodeId, tasks);
+  if (!saved) {
     return NextResponse.json(
       { error: "병원에서 들은 내용을 저장하지 못했어요." },
       { status: 400 },
     );
   }
-  return NextResponse.json({ plan });
+  return NextResponse.json(saved);
 }

@@ -9,6 +9,7 @@ export const monetizationEventNames = [
   "purchase_sync_delayed",
   "purchase_history_checked",
   "ai_summary_shared",
+  "factual_summary_shared",
 ] as const;
 
 export type MonetizationEventName = (typeof monetizationEventNames)[number];

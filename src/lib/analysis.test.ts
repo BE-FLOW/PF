@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeLocally,
+  detectEmergencyRedFlags,
   formatSymptomSummary,
   hasDailyObservation,
   deriveAgeGroup,
@@ -24,7 +25,29 @@ const base: HealthCheckInput = {
 
 describe("analyzeLocally", () => {
   it("keeps a normal daily check in watch mode", () => {
-    expect(analyzeLocally(base).riskLevel).toBe("watch");
+    const result = analyzeLocally(base);
+    expect(result.riskLevel).toBe("watch");
+    expect(result.headline).toBe("입력된 정보만 사실대로 정리했어요");
+    expect(result.summary).toContain("평가하지 않았어요");
+    expect(result.summary).not.toContain("평소 상태");
+    expect(result.vetBrief).not.toContain("성견·성묘");
+    expect(result.vetBrief).not.toContain("오늘부터");
+    expect(result.vetBrief).not.toContain("평소와 같음");
+  });
+
+  it("keeps a note-only record factual without a reassuring assessment", () => {
+    const result = analyzeLocally({
+      ...base,
+      note: "산책 뒤 모습을 사진으로 남겼어요.",
+    });
+
+    expect(result.summary).toContain("메모는 입력한 원문으로만 정리");
+    expect(result.summary).toContain("이미지가 있다면 그 내용도 판독하지 않았어요");
+    expect(result.summary).not.toContain("큰 위험 신호는 보이지");
+    expect(result.summary).not.toContain("차분히 관찰");
+    expect(result.observations).toContain(
+      "첨부 사진·영상: PetFlow가 내용을 판독하지 않음",
+    );
   });
 
   it("always elevates a red flag to urgent", () => {
@@ -47,6 +70,38 @@ describe("analyzeLocally", () => {
   it("derives the lifecycle from a four-digit birth year", () => {
     expect(deriveAgeGroup("2026-01-01", new Date("2026-06-12"))).toBe("young");
     expect(deriveAgeGroup("2016-01-01", new Date("2026-06-12"))).toBe("senior");
+  });
+
+  it("includes lifecycle wording only when the birth date is known and valid", () => {
+    const known = analyzeLocally({ ...base, birthDate: "2021-05-02" });
+    const invalidLegacy = analyzeLocally({
+      ...base,
+      birthDate: "not-a-date",
+      ageGroup: "adult",
+    });
+
+    expect(known.vetBrief).toContain("성견·성묘");
+    expect(invalidLegacy.vetBrief).not.toContain("성견·성묘");
+  });
+
+  it("matches only explicit Korean emergency phrases deterministically", () => {
+    expect(detectEmergencyRedFlags("호흡이 매우 힘들고 갑자기 쓰러졌어요.")).toEqual([
+      "breathing",
+      "collapse",
+    ]);
+    expect(detectEmergencyRedFlags("경련이 계속되고 피가 멈추지 않아요.")).toEqual([
+      "seizure",
+      "bleeding",
+    ]);
+    expect(detectEmergencyRedFlags("경련은 없고 피는 멈췄어요.")).toEqual([]);
+
+    const urgent = analyzeLocally({
+      ...base,
+      note: "숨을 못 쉬고 있어요.",
+    });
+    expect(urgent.riskLevel).toBe("urgent");
+    expect(urgent.summary).toContain("즉시 확인이 필요한 표현");
+    expect(urgent.summary).not.toContain("진단");
   });
 
   it("reuses a saved pet profile without asking again", () => {

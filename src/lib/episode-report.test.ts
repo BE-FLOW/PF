@@ -195,5 +195,33 @@ describe("buildEpisodeReport", () => {
     expect(report.shareText).toContain("[첨부 자료 · 보호자 저장]");
     expect(report.shareText).toContain("사진 1개, 영상 1개");
     expect(report.shareText).toContain("내용을 판독하지 않았습니다");
+    expect(report.shareText).toContain("텍스트 공유에는 사진·영상 파일이 포함되지");
+  });
+
+  it("does not turn unanswered defaults or an unknown birth date into facts", () => {
+    const report = buildEpisodeReport([
+      record("2026-06-10T00:00:00.000Z", {
+        birthDate: undefined,
+        symptoms: [],
+        appetite: "normal",
+        energy: "normal",
+        duration: "today",
+        note: "",
+      }),
+    ]);
+
+    expect(report.petProfile).not.toContain("성견");
+    expect(report.highestRiskLabel).toBe("정보 미평가");
+    expect(report.timeline[0]).toMatchObject({
+      symptoms: "입력되지 않아 평가하지 않음",
+      appetite: "입력되지 않아 평가하지 않음",
+      energy: "입력되지 않아 평가하지 않음",
+      duration: "입력되지 않아 평가하지 않음",
+      riskLabel: "정보 미평가",
+    });
+    expect(report.shareText).toContain("반복 관찰: 입력 없음");
+    expect(report.shareText).toContain("식욕 변화 입력 없음");
+    expect(report.shareText).not.toContain("평소와 같음");
+    expect(report.shareText).not.toContain("오늘부터");
   });
 });

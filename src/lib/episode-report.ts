@@ -2,6 +2,8 @@ import {
   ageGroupLabels,
   durationLabels,
   formatSymptomSummary,
+  hasAssessableObservation,
+  hasKnownValidBirthDate,
   levelLabels,
   symptomLabels,
 } from "./analysis";
@@ -33,14 +35,6 @@ const dayFormatter = new Intl.DateTimeFormat("ko-KR", {
   year: "numeric",
   month: "long",
   day: "numeric",
-});
-
-const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
-  timeZone: "Asia/Seoul",
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
 });
 
 const followUpDays: FollowUpDay[] = [3, 7, 14, 30, 60, 90];
@@ -186,6 +180,9 @@ export function buildEpisodeReport(
   const first = ordered[0];
   const latest = ordered.at(-1);
   const petName = latest?.input.petName || fallbackPetName;
+  const latestObservationAt = latest
+    ? new Date(latest.result.createdAt)
+    : new Date();
   const petProfile = latest
     ? [
         latest.input.species === "dog"
@@ -194,7 +191,9 @@ export function buildEpisodeReport(
             ? "고양이"
             : "기타",
         latest.input.breed,
-        ageGroupLabels[latest.input.ageGroup],
+        hasKnownValidBirthDate(latest.input.birthDate, latestObservationAt)
+          ? ageGroupLabels[latest.input.ageGroup]
+          : undefined,
         latest.input.weight,
       ]
         .filter(Boolean)
@@ -218,7 +217,10 @@ export function buildEpisodeReport(
     .sort((a, b) => b[1] - a[1])
     .map(([symptom, count]) => `${symptomLabels[symptom]} ${count}회`)
     .slice(0, 3);
-  const highestRisk = ordered.reduce<RiskLevel>(
+  const assessableRecords = ordered.filter((record) =>
+    hasAssessableObservation(record.input),
+  );
+  const highestRisk = assessableRecords.reduce<RiskLevel>(
     (highest, record) =>
       riskWeight[record.result.riskLevel] > riskWeight[highest]
         ? record.result.riskLevel
@@ -236,15 +238,26 @@ export function buildEpisodeReport(
     return {
       id: record.result.id,
       recordedAt: record.result.createdAt,
-      dateLabel: dateTimeFormatter.format(new Date(record.result.createdAt)),
+      dateLabel: dayFormatter.format(new Date(record.result.createdAt)),
       note: record.input.note.trim(),
       symptoms: record.input.symptoms.length
         ? formatSymptomSummary(record.input)
-        : "선택한 주요 증상 없음",
-      appetite: levelLabels[record.input.appetite],
-      energy: levelLabels[record.input.energy],
-      duration: durationLabels[record.input.duration],
-      riskLabel: riskLabels[record.result.riskLevel],
+        : "입력되지 않아 평가하지 않음",
+      appetite:
+        record.input.appetite === "normal"
+          ? "입력되지 않아 평가하지 않음"
+          : levelLabels[record.input.appetite],
+      energy:
+        record.input.energy === "normal"
+          ? "입력되지 않아 평가하지 않음"
+          : levelLabels[record.input.energy],
+      duration:
+        record.input.duration === "today"
+          ? "입력되지 않아 평가하지 않음"
+          : durationLabels[record.input.duration],
+      riskLabel: hasAssessableObservation(record.input)
+        ? riskLabels[record.result.riskLevel]
+        : "정보 미평가",
       ...counts,
     };
   });
@@ -256,7 +269,7 @@ export function buildEpisodeReport(
     );
   const mediaCount = timeline.reduce((total, item) => total + item.mediaCount, 0);
   const disclaimer =
-    "이 요약은 보호자가 입력한 관찰과 앱의 안전 분류를 정리한 자료이며, 수의사의 진단이나 확인된 진료기록이 아닙니다.";
+    "이 요약은 보호자가 입력한 관찰을 정리한 자료이며, 수의사의 진단이나 확인된 진료기록이 아닙니다.";
   const timelineText = timeline.length
     ? timeline
         .map(
@@ -280,6 +293,7 @@ export function buildEpisodeReport(
     ? [
         ...mediaSummary,
         "사진·영상은 보호자가 저장한 참고 자료이며 PetFlow가 내용을 판독하지 않았습니다.",
+        "텍스트 공유에는 사진·영상 파일이 포함되지 않으므로 필요한 파일은 각각 따로 공유해 주세요.",
       ].join("\n")
     : "첨부 자료 없음";
   const shareText = [
@@ -287,8 +301,8 @@ export function buildEpisodeReport(
     `반려동물: ${petName} / ${petProfile}`,
     `기록 기간: ${periodLabel}`,
     `기록 횟수: ${timeline.length}회`,
-    `반복 관찰: ${repeatedSymptoms.length ? repeatedSymptoms.join(", ") : "없음"}`,
-    `식욕 변화 ${appetiteChangeCount}회 / 활력 변화 ${energyChangeCount}회`,
+    `반복 관찰: ${repeatedSymptoms.length ? repeatedSymptoms.join(", ") : "입력 없음"}`,
+    `식욕 변화 ${appetiteChangeCount ? `${appetiteChangeCount}회` : "입력 없음"} / 활력 변화 ${energyChangeCount ? `${energyChangeCount}회` : "입력 없음"}`,
     "",
     "[보호자 관찰 기록]",
     timelineText,
@@ -309,7 +323,9 @@ export function buildEpisodeReport(
     petProfile,
     periodLabel,
     recordCount: timeline.length,
-    highestRiskLabel: riskLabels[highestRisk],
+    highestRiskLabel: assessableRecords.length
+      ? riskLabels[highestRisk]
+      : "정보 미평가",
     repeatedSymptoms,
     appetiteChangeCount,
     energyChangeCount,

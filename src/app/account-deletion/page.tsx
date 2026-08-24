@@ -6,7 +6,7 @@ export default function AccountDeletionPage() {
       <div className="privacy-sheet">
         <p className="eyebrow">PETFLOW ACCOUNT</p>
         <h1>계정 및 데이터 삭제 안내</h1>
-        <p>시행일: 2026년 7월 28일</p>
+        <p>시행일: 2026년 8월 18일</p>
 
         <section>
           <h2>대상 앱</h2>
@@ -32,7 +32,7 @@ export default function AccountDeletionPage() {
             <li>반려동물 프로필, 건강 기록, 사진과 동영상 첨부 파일</li>
             <li>병원 공유용 요약, 자동 건강 흐름, 보호자가 옮긴 병원 안내</li>
             <li>병원 전달본 사용량과 피드백</li>
-            <li>PetFlow에 저장된 구매 거래 식별자와 병원 전달본 이용권 원장</li>
+            <li>과거 테스트 결제 기록이 있는 경우 해당 거래 식별자와 이용권 원장</li>
           </ul>
         </section>
 

@@ -1,3 +1,5 @@
+import { formatRecordObservationDate } from "./record-calendar";
+
 export type Species = "dog" | "cat" | "other";
 export type PetSex = "unknown" | "male" | "female" | "neutered-male" | "spayed-female";
 export type Level = "normal" | "slight" | "low" | "none";
@@ -190,7 +192,12 @@ export interface EpisodeReport {
 
 export interface AiAccessStatus {
   enabled: boolean;
-  reason: "active" | "no_credits" | "unavailable";
+  reason:
+    | "active"
+    | "daily_limit"
+    | "attempt_limit"
+    | "no_credits"
+    | "unavailable";
   availableCredits: number;
   complimentaryCredits: number;
   purchasedCredits: number;
@@ -198,6 +205,11 @@ export interface AiAccessStatus {
   billingConfigured: boolean;
   purchaseAvailable: boolean;
   productId: string;
+  freeRelease: boolean;
+  dailyLimit: number;
+  attemptsToday: number;
+  dailyAttemptLimit: number;
+  resetsAt: string | null;
 }
 
 export interface AiReportFeedbackInput {
@@ -460,6 +472,47 @@ export const riskLabels: Record<RiskLevel, string> = {
   urgent: "즉시 상담",
 };
 
+const emergencyPhrasePatterns: Record<RedFlagId, readonly RegExp[]> = {
+  breathing: [
+    /(?:숨|호흡)(?:을|이)?\s*(?:거의\s*)?(?:못\s*(?:쉬|쉰)|안\s*(?:쉬|쉰)|멎|멈췄)/u,
+    /(?:숨쉬기|호흡)(?:가|이)?\s*(?:매우|너무|심하게|몹시)\s*(?:힘들|어렵)/u,
+  ],
+  collapse: [
+    /(?:갑자기\s*)?쓰러(?:졌|져\s*있|진\s*채)/u,
+    /의식(?:이|을)?\s*(?:없|잃|돌아오지\s*않|희미|흐려)/u,
+    /(?:불러도|깨워도|건드려도)\s*(?:전혀\s*)?반응(?:이)?\s*없/u,
+    /기절(?:했|한\s*채)/u,
+  ],
+  seizure: [
+    /(?:전신\s*)?경련(?:이|을)?\s*(?:있|해|하|반복|계속|중)/u,
+    /발작(?:이|을)?\s*(?:있|해|하|반복|계속|중)/u,
+    /(?:온몸|몸)(?:이)?\s*(?:뻣뻣해지며|심하게\s*떨며)\s*(?:의식|반응)(?:이)?\s*없/u,
+  ],
+  bleeding: [
+    /(?:피|출혈)(?:가|이)?\s*(?:계속\s*)?(?:멈추지\s*않|안\s*멈(?:추|춰)|계속\s*(?:나|흐르)|쏟아)/u,
+    /지혈(?:이)?\s*(?:안\s*되|되지\s*않)/u,
+  ],
+};
+
+export function detectEmergencyRedFlags(text: string): RedFlagId[] {
+  const normalized = text.normalize("NFKC").replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  return (Object.keys(emergencyPhrasePatterns) as RedFlagId[]).filter((flag) =>
+    emergencyPhrasePatterns[flag].some((pattern) => pattern.test(normalized)),
+  );
+}
+
+export function hasAssessableObservation(input: HealthCheckInput) {
+  return Boolean(
+    input.symptoms.length ||
+      input.redFlags.length ||
+      detectEmergencyRedFlags(input.note).length ||
+      input.appetite !== "normal" ||
+      input.energy !== "normal" ||
+      input.duration !== "today",
+  );
+}
+
 export const reportMediaBucket = "petflow-report-media";
 export const petPhotoBucket = "petflow-pet-photos";
 export const maxReportMediaFiles = 4;
@@ -570,14 +623,6 @@ const dayFormatter = new Intl.DateTimeFormat("ko-KR", {
   day: "numeric",
 });
 
-const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
-  timeZone: "Asia/Seoul",
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
 const followUpDays: FollowUpDay[] = [3, 7, 14, 30, 60, 90];
 const followUpUpperBounds = [5, 11, 22, 45, 75, Number.POSITIVE_INFINITY];
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
@@ -598,6 +643,16 @@ export function deriveAgeGroup(
   if (age < 1) return "young";
   if (age >= 8) return "senior";
   return "adult";
+}
+
+function hasKnownValidBirthDate(value: string | undefined, now = new Date()) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value &&
+    parsed.getTime() <= now.getTime()
+  );
 }
 
 export function profileToHealthInput(profile: PetProfile): HealthCheckInput {
@@ -725,6 +780,9 @@ export function buildEpisodeReport(
   const first = ordered[0];
   const latest = ordered.at(-1);
   const petName = latest?.input.petName || fallbackPetName;
+  const latestObservationAt = latest
+    ? new Date(latest.result.createdAt)
+    : new Date();
   const petProfile = latest
     ? [
         latest.input.species === "dog"
@@ -733,7 +791,9 @@ export function buildEpisodeReport(
             ? "고양이"
             : "기타",
         latest.input.breed,
-        ageGroupLabels[latest.input.ageGroup],
+        hasKnownValidBirthDate(latest.input.birthDate, latestObservationAt)
+          ? ageGroupLabels[latest.input.ageGroup]
+          : "",
         latest.input.weight,
       ]
         .filter(Boolean)
@@ -776,14 +836,23 @@ export function buildEpisodeReport(
     return {
       id: record.result.id,
       recordedAt: record.result.createdAt,
-      dateLabel: dateTimeFormatter.format(new Date(record.result.createdAt)),
+      dateLabel: formatRecordObservationDate(record.result.createdAt),
       note: record.input.note.trim(),
       symptoms: record.input.symptoms.length
         ? formatSymptomSummary(record.input)
-        : "선택한 주요 증상 없음",
-      appetite: levelLabels[record.input.appetite],
-      energy: levelLabels[record.input.energy],
-      duration: durationLabels[record.input.duration],
+        : "입력되지 않아 평가하지 않음",
+      appetite:
+        record.input.appetite === "normal"
+          ? "입력되지 않아 평가하지 않음"
+          : levelLabels[record.input.appetite],
+      energy:
+        record.input.energy === "normal"
+          ? "입력되지 않아 평가하지 않음"
+          : levelLabels[record.input.energy],
+      duration:
+        record.input.duration === "today"
+          ? "입력되지 않아 평가하지 않음"
+          : durationLabels[record.input.duration],
       riskLabel: riskLabels[record.result.riskLevel],
       ...counts,
     };
@@ -829,14 +898,15 @@ export function buildEpisodeReport(
     `반려동물: ${petName} / ${petProfile}`,
     `기록 기간: ${periodLabel}`,
     `기록 횟수: ${timeline.length}회`,
-    `반복 관찰: ${repeatedSymptoms.length ? repeatedSymptoms.join(", ") : "없음"}`,
-    `식욕 변화 ${appetiteChangeCount}회 / 활력 변화 ${energyChangeCount}회`,
+    `반복 관찰: ${repeatedSymptoms.length ? repeatedSymptoms.join(", ") : "입력 없음"}`,
+    `${appetiteChangeCount ? `식욕 변화 ${appetiteChangeCount}회` : "식욕 변화 입력 없음"} / ${energyChangeCount ? `활력 변화 ${energyChangeCount}회` : "활력 변화 입력 없음"}`,
     "",
     "[보호자 관찰 기록]",
     timelineText,
     "",
     "[첨부 자료 · 보호자 저장]",
     mediaText,
+    "텍스트 공유에는 사진·영상 파일이 포함되지 않습니다. 파일은 앱에서 각각 따로 공유해 주세요.",
     "",
     "[병원에서 들은 내용 · 보호자 기록]",
     planText,

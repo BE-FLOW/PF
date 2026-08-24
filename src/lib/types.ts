@@ -55,7 +55,12 @@ export interface AccountProfile {
 
 export interface AiAccessStatus {
   enabled: boolean;
-  reason: "active" | "no_credits" | "unavailable";
+  reason:
+    | "active"
+    | "daily_limit"
+    | "attempt_limit"
+    | "no_credits"
+    | "unavailable";
   availableCredits: number;
   complimentaryCredits: number;
   purchasedCredits: number;
@@ -63,6 +68,11 @@ export interface AiAccessStatus {
   billingConfigured: boolean;
   purchaseAvailable: boolean;
   productId: string;
+  freeRelease: boolean;
+  dailyLimit: number;
+  attemptsToday: number;
+  dailyAttemptLimit: number;
+  resetsAt: string | null;
 }
 
 export interface AiReportFeedbackInput {

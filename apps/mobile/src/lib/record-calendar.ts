@@ -11,6 +11,12 @@ const koreanDateFormatter = new Intl.DateTimeFormat("en-CA", {
   month: "2-digit",
   day: "2-digit",
 });
+const koreanObservationDateFormatter = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
 
 function partsToDateKey(parts: Intl.DateTimeFormatPart[]) {
   const values = new Map(parts.map((part) => [part.type, part.value]));
@@ -37,6 +43,12 @@ export function toRecordDateKey(value: string | Date) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return partsToDateKey(koreanDateFormatter.formatToParts(date));
+}
+
+export function formatRecordObservationDate(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "날짜 확인 필요";
+  return koreanObservationDateFormatter.format(date);
 }
 
 export function monthKeyFromDate(value: string | Date) {

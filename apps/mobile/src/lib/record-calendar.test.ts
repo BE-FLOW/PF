@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildRecordCalendar,
+  formatRecordObservationDate,
   isRecordDateInRange,
   monthKeyFromDate,
   normalizeRecordDateRange,
@@ -13,6 +14,15 @@ describe("record calendar", () => {
   it("uses the Korean calendar day for stored timestamps", () => {
     expect(toRecordDateKey("2026-07-20T16:30:00.000Z")).toBe("2026-07-21");
     expect(monthKeyFromDate("2026-07-20T16:30:00.000Z")).toBe("2026-07");
+  });
+
+  it("shows observation timestamps as a Korea date without false time precision", () => {
+    expect(formatRecordObservationDate("2026-07-20T03:00:00.000Z")).toBe(
+      "2026년 7월 20일",
+    );
+    expect(formatRecordObservationDate("2026-07-20T16:30:00.000Z")).toBe(
+      "2026년 7월 21일",
+    );
   });
 
   it("builds a stable six-week calendar and normalizes ranges", () => {

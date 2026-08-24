@@ -20,6 +20,7 @@ apps/mobile/node_modules
 apps/mobile/.expo/
 apps/mobile/dist/
 apps/mobile/web-build/
+apps/mobile/.tmp-free-export-*/
 apps/mobile/*.aab
 apps/mobile/*.apk
 apps/mobile/*.ipa
@@ -60,3 +61,4 @@ next-env.d.ts
 
 # Supabase CLI local project state
 supabase/.temp/
+supabase/.branches/

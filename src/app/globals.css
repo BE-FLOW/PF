@@ -698,11 +698,8 @@ p {
   margin-top: 10px;
 }
 .home-score-card {
-  --score: 0;
-  --score-bg: #1f5b55;
-  --score-accent: #78d9c8;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 104px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 14px;
   margin-top: 16px;
@@ -712,20 +709,18 @@ p {
   background: linear-gradient(135deg, #f7fcf9, #edf8f2);
 }
 .home-score-card.soon {
-  --score-bg: #66543a;
-  --score-accent: #e8b86c;
   border-color: #f0d8b8;
   background: linear-gradient(135deg, #fffaf1, #fff3df);
 }
 .home-score-card.urgent {
-  --score-bg: #6c4744;
-  --score-accent: #df8d80;
   border-color: #edd0ca;
   background: linear-gradient(135deg, #fff9f7, #fff0ed);
 }
+.home-score-card.unassessed {
+  border-color: #d9dfdc;
+  background: linear-gradient(135deg, #fafbfa, #f1f3f2);
+}
 .home-score-card.empty {
-  --score-bg: #73827d;
-  --score-accent: #aab8b2;
   border-style: dashed;
 }
 .home-score-copy h2 {
@@ -748,59 +743,6 @@ p {
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.home-score-badge {
-  justify-self: center;
-  align-self: center;
-  width: 104px;
-  min-height: 88px;
-  border-radius: 24px;
-  padding: 14px 15px 17px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  position: relative;
-  overflow: hidden;
-  color: #fff;
-  background:
-    radial-gradient(circle at 90% 18%, rgba(255, 255, 255, 0.18), transparent 3rem),
-    var(--score-bg);
-  box-shadow: 0 14px 30px rgba(31, 75, 63, 0.18);
-}
-.home-score-badge::before {
-  content: "";
-  position: absolute;
-  left: 15px;
-  right: 15px;
-  bottom: 13px;
-  height: 6px;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    var(--score-accent) calc(var(--score) * 1%),
-    rgba(255, 255, 255, 0.18) 0
-  );
-}
-.home-score-badge strong,
-.home-score-badge span {
-  position: relative;
-  z-index: 1;
-}
-.home-score-badge strong {
-  display: block;
-  font-size: 37px;
-  line-height: 1;
-  letter-spacing: -1px;
-}
-.home-score-badge span {
-  margin-top: 0;
-  color: rgba(255, 255, 255, 0.66);
-  font-size: 9px;
-  font-weight: 900;
-  position: relative;
-  letter-spacing: -0.2px;
 }
 .flow-summary {
   margin-bottom: 18px;
@@ -1626,8 +1568,6 @@ p {
   align-items: start;
 }
 .risk-card {
-  --risk-ring-accent: #78d9c8;
-  --risk-ring-inner: #1c4036;
   position: sticky;
   top: 24px;
   padding: 28px;
@@ -1638,48 +1578,13 @@ p {
   box-shadow: 0 18px 45px rgba(24, 63, 52, 0.2);
 }
 .risk-card.urgent {
-  --risk-ring-accent: #df8d80;
-  --risk-ring-inner: #5f3936;
   background: linear-gradient(160deg, #704642, #4b302d);
 }
 .risk-card.soon {
-  --risk-ring-accent: #e8b86c;
-  --risk-ring-inner: #5d4b33;
   background: linear-gradient(160deg, #73532e, #4b3b26);
 }
-.risk-ring {
-  --score: 30;
-  width: 142px;
-  height: 142px;
-  margin: 8px auto 18px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: conic-gradient(
-    var(--risk-ring-accent) calc(var(--score) * 1%),
-    rgba(255, 255, 255, 0.12) 0
-  );
-  position: relative;
-}
-.risk-ring::before {
-  content: "";
-  position: absolute;
-  inset: 10px;
-  border-radius: 50%;
-  background: var(--risk-ring-inner);
-}
-.risk-score {
-  position: relative;
-  z-index: 1;
-}
-.risk-score strong {
-  display: block;
-  font-size: 37px;
-  line-height: 1;
-}
-.risk-score span {
-  color: rgba(255, 255, 255, 0.58);
-  font-size: 10px;
+.risk-card.unassessed {
+  background: linear-gradient(160deg, #5d6663, #3f4745);
 }
 .risk-label {
   display: inline-flex;
@@ -2101,12 +2006,6 @@ p {
   color: var(--mint-dark);
   font-size: 11px;
   font-weight: 800;
-}
-.ai-billing-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
 }
 .account-deletion-panel {
   display: grid;
@@ -3123,6 +3022,9 @@ p {
 .history-risk.urgent {
   color: #c2564f;
 }
+.history-risk.unassessed {
+  color: #6f7b77;
+}
 
 .mobile-nav {
   display: none;
@@ -3312,29 +3214,10 @@ p {
     content: none;
   }
   .home-score-card {
-    grid-template-columns: minmax(0, 1fr) 92px;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
     padding: 17px;
     align-items: center;
-  }
-  .home-score-badge {
-    width: 92px;
-    min-height: 82px;
-    padding: 12px 13px 16px;
-    border-radius: 20px;
-    justify-self: center;
-  }
-  .home-score-badge::before {
-    left: 13px;
-    right: 13px;
-    bottom: 11px;
-    height: 5px;
-  }
-  .home-score-badge strong {
-    font-size: 35px;
-  }
-  .home-score-badge span {
-    font-size: 8px;
   }
   .home-score-copy h2 {
     font-size: 18px;

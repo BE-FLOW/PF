@@ -4,44 +4,40 @@ import { readJsonBody } from "@/lib/api-request";
 import { extractResponseOutputText } from "@/lib/openai-response";
 import { isUuid, storedReportToHistoryRecord } from "@/lib/report-storage";
 import {
-  completeAiReportUsage,
+  completeFreeAiReportUsage,
   getAiAccessStatusForUser,
   getAiReportAccess,
+  getEpisodeSourceRevisionForUser,
   getEpisodeVetReviewBundle,
-  recordAiReportUsage,
-  reserveAiReportUsage,
+  getStoredFreeAiReportRequest,
+  reserveFreeAiReportUsage,
 } from "@/lib/supabase-admin";
 import {
   buildVetReviewDraft,
   formatVetReviewDraft,
 } from "@/lib/vet-review-report";
 import { vetDraftSystemPrompt } from "@/lib/vet-draft-prompt";
+import {
+  buildVetDraftRequestFingerprint,
+  maxVetDraftReportIds,
+  normalizeVetDraftReportIds,
+  reportIdsFromSearchParams,
+  vetDraftIdempotencyKey,
+} from "@/lib/vet-draft-request";
+import {
+  vetDraftGroundingViolation,
+  vetDraftSafetyViolation,
+} from "@/lib/vet-draft-safety";
 import type { VetReviewDraft } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 async function completeUsageWithRetry(
-  input: Parameters<typeof completeAiReportUsage>[0],
+  input: Parameters<typeof completeFreeAiReportUsage>[0],
 ) {
-  if (await completeAiReportUsage(input)) return true;
+  if (await completeFreeAiReportUsage(input)) return true;
   await new Promise((resolve) => setTimeout(resolve, 120));
-  return completeAiReportUsage(input);
-}
-
-function cleanStringArray(value: unknown, minItems: number, maxItems: number) {
-  if (!Array.isArray(value)) return null;
-  const items = value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim().slice(0, 320))
-    .filter(Boolean)
-    .slice(0, maxItems);
-  return items.length >= minItems ? items : null;
-}
-
-function cleanString(value: unknown, fallback: string, maxLength: number) {
-  return typeof value === "string" && value.trim()
-    ? value.trim().slice(0, maxLength)
-    : fallback;
+  return completeFreeAiReportUsage(input);
 }
 
 interface OpenAiUsage {
@@ -60,14 +56,8 @@ async function requestedReportIds(request: Request): Promise<RequestedReportIds>
     return { error: { status: parsed.status, error: parsed.error } };
   }
   if (parsed.value.reportIds === undefined) return { ids: [] };
-  const reportIds = parsed.value.reportIds;
-  if (
-    !Array.isArray(reportIds) ||
-    reportIds.length > 60 ||
-    !reportIds.every(
-      (value): value is string => typeof value === "string" && isUuid(value),
-    )
-  ) {
+  const reportIds = normalizeVetDraftReportIds(parsed.value.reportIds);
+  if (!reportIds) {
     return {
       error: {
         status: 400,
@@ -75,7 +65,7 @@ async function requestedReportIds(request: Request): Promise<RequestedReportIds>
       },
     };
   }
-  return { ids: [...new Set(reportIds)] };
+  return { ids: reportIds };
 }
 
 async function enrichWithOpenAI(
@@ -87,6 +77,7 @@ async function enrichWithOpenAI(
   usage?: OpenAiUsage;
   errorCode?: string;
 }> {
+  if (!baseDraft.keyObservations.length) return { draft: baseDraft };
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -97,48 +88,31 @@ async function enrichWithOpenAI(
       body: JSON.stringify({
         model,
         store: false,
-        max_output_tokens: 1800,
+        max_output_tokens: 240,
         reasoning: { effort: "low" },
         text: {
           verbosity: "low",
           format: {
             type: "json_schema",
-            name: "petflow_vet_review_draft",
+            name: "petflow_vet_review_selection",
             strict: true,
             schema: {
               type: "object",
               additionalProperties: false,
               properties: {
-                overview: { type: "string" },
-                handoffNote: { type: "string" },
-                keyObservations: {
+                keyObservationIndexes: {
                   type: "array",
-                  items: { type: "string" },
-                  minItems: 2,
-                  maxItems: 5,
-                },
-                planAndProgress: {
-                  type: "array",
-                  items: { type: "string" },
+                  items: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: baseDraft.keyObservations.length - 1,
+                  },
                   minItems: 1,
-                  maxItems: 6,
+                  maxItems: Math.min(5, baseDraft.keyObservations.length),
+                  uniqueItems: true,
                 },
-                mediaSummary: {
-                  type: "array",
-                  items: { type: "string" },
-                  minItems: 1,
-                  maxItems: 5,
-                },
-                submissionNote: { type: "string" },
               },
-              required: [
-                "overview",
-                "handoffNote",
-                "keyObservations",
-                "mediaSummary",
-                "planAndProgress",
-                "submissionNote",
-              ],
+              required: ["keyObservationIndexes"],
             },
           },
         },
@@ -158,16 +132,9 @@ async function enrichWithOpenAI(
               {
                 type: "input_text",
                 text: JSON.stringify({
-                  title: baseDraft.title,
-                  overview: baseDraft.overview,
-                  handoffNote: baseDraft.handoffNote,
-                  keyObservations: baseDraft.keyObservations,
-                  timeline: baseDraft.timeline,
-                  mediaSummary: baseDraft.mediaSummary,
-                  planAndProgress: baseDraft.planAndProgress,
-                  missingObservableContext: baseDraft.questionsForVet,
-                  submissionNote: baseDraft.submissionNote,
-                  disclaimer: baseDraft.disclaimer,
+                  keyObservations: baseDraft.keyObservations.map(
+                    (text, index) => ({ index, text }),
+                  ),
                 }),
               },
             ],
@@ -182,35 +149,29 @@ async function enrichWithOpenAI(
     const outputText = extractResponseOutputText(data);
     if (!outputText) return { errorCode: "openai_empty_response" };
     const generated = JSON.parse(outputText) as Record<string, unknown>;
-    const overview = cleanString(generated.overview, baseDraft.overview, 500);
-    const keyObservations =
-      cleanStringArray(generated.keyObservations, 2, 5) ??
-      baseDraft.keyObservations;
-    const handoffNote = cleanString(
-      generated.handoffNote,
-      baseDraft.handoffNote,
-      700,
-    );
-    const planAndProgress =
-      cleanStringArray(generated.planAndProgress, 1, 6) ??
-      baseDraft.planAndProgress;
-    const mediaSummary =
-      cleanStringArray(generated.mediaSummary, 1, 5) ?? baseDraft.mediaSummary;
-    const submissionNote = cleanString(
-      generated.submissionNote,
-      baseDraft.submissionNote,
-      500,
-    );
+    const indexes = Array.isArray(generated.keyObservationIndexes)
+      ? [
+          ...new Set(
+            generated.keyObservationIndexes.filter(
+              (value): value is number =>
+                typeof value === "number" &&
+                Number.isSafeInteger(value) &&
+                value >= 0 &&
+                value < baseDraft.keyObservations.length,
+            ),
+          ),
+        ].slice(0, 5)
+      : [];
+    const keyObservations = indexes.length
+      ? indexes.map((index) => baseDraft.keyObservations[index])
+      : baseDraft.keyObservations;
     const draftWithoutCopy: Omit<VetReviewDraft, "copyText"> = {
       ...baseDraft,
       source: "openai",
-      overview,
-      handoffNote,
       keyObservations,
-      mediaSummary,
-      planAndProgress,
+      mediaSummary: baseDraft.mediaSummary,
+      planAndProgress: baseDraft.planAndProgress,
       questionsForVet: baseDraft.questionsForVet,
-      submissionNote,
     };
     return {
       draft: {
@@ -222,6 +183,82 @@ async function enrichWithOpenAI(
   } catch {
     return { errorCode: "openai_request_failed" };
   }
+}
+
+function storedDraftResponse(input: {
+  draft: VetReviewDraft;
+  usageId: string;
+  requestId: string;
+  reportIds: string[];
+  recovered: boolean;
+}) {
+  return NextResponse.json({
+    draft: { ...input.draft, usageId: input.usageId },
+    requestId: input.requestId,
+    reportIds: input.reportIds,
+    recovered: input.recovered,
+  });
+}
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ episodeId: string }> },
+) {
+  const { episodeId } = await context.params;
+  if (!isUuid(episodeId)) {
+    return NextResponse.json(
+      { error: "선택한 기록을 다시 확인해 주세요." },
+      { status: 400 },
+    );
+  }
+  const access = await getAiReportAccess(accessTokenFromRequest(request));
+  if (!access) {
+    return NextResponse.json({ error: "로그인이 필요해요." }, { status: 401 });
+  }
+
+  const url = new URL(request.url);
+  const rawRequestId = url.searchParams.get("requestId")?.trim();
+  if (rawRequestId && !isUuid(rawRequestId)) {
+    return NextResponse.json(
+      { error: "병원 전달본 요청 번호를 다시 확인해 주세요." },
+      { status: 400 },
+    );
+  }
+  const selection = reportIdsFromSearchParams(url.searchParams);
+  if ("error" in selection) {
+    return NextResponse.json({ error: selection.error }, { status: 400 });
+  }
+  const sourceRevision = await getEpisodeSourceRevisionForUser(
+    access.userId,
+    episodeId,
+  );
+  if (sourceRevision === null) {
+    return NextResponse.json(
+      { error: "선택한 건강 흐름을 확인하지 못했어요." },
+      { status: 404 },
+    );
+  }
+  const stored = await getStoredFreeAiReportRequest({
+    userId: access.userId,
+    episodeId,
+    requestId: rawRequestId?.toLowerCase(),
+    sourceRevision,
+    selectedReportIds: selection.provided ? selection.ids : undefined,
+    succeededOnly: true,
+  });
+  if (!stored?.draft) {
+    return NextResponse.json(
+      { error: "저장된 병원 전달본이 아직 없어요." },
+      { status: 404 },
+    );
+  }
+  return storedDraftResponse({
+    draft: stored.draft,
+    usageId: stored.usageId,
+    requestId: stored.requestId,
+    reportIds: stored.reportIds,
+    recovered: true,
+  });
 }
 
 export async function POST(
@@ -241,9 +278,13 @@ export async function POST(
   }
   const access = await getAiReportAccess(accessToken);
   if (!access) {
+    return NextResponse.json({ error: "로그인이 필요해요." }, { status: 401 });
+  }
+  const requestId = vetDraftIdempotencyKey(request);
+  if (!requestId) {
     return NextResponse.json(
-      { error: "로그인이 필요해요." },
-      { status: 401 },
+      { error: "병원 전달본 요청 번호가 필요해요. 다시 시도해 주세요." },
+      { status: 400 },
     );
   }
   const requested = await requestedReportIds(request);
@@ -254,19 +295,6 @@ export async function POST(
     );
   }
   const reportIds = requested.ids;
-  if (!access.status.enabled) {
-    const unavailable = access.status.reason === "unavailable";
-    return NextResponse.json(
-      {
-        error: unavailable
-          ? "병원 전달본 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
-          : "병원 전달본 1회 이용권이 필요해요.",
-        access: access.status,
-      },
-      { status: unavailable ? 503 : 429 },
-    );
-  }
-
   const bundle = await getEpisodeVetReviewBundle(accessToken, episodeId);
   if (!bundle) {
     return NextResponse.json(
@@ -290,18 +318,51 @@ export async function POST(
       { status: 400 },
     );
   }
+  if (reports.length > maxVetDraftReportIds) {
+    return NextResponse.json(
+      {
+        error: `병원 전달본은 한 번에 최대 ${maxVetDraftReportIds}개 기록으로 만들 수 있어요. 날짜 범위를 좁혀 주세요.`,
+      },
+      { status: 400 },
+    );
+  }
 
+  const includedReportIds = reports.map((report) => report.id).sort();
+  const requestFingerprint = buildVetDraftRequestFingerprint(
+    episodeId,
+    includedReportIds,
+    bundle.sourceRevision,
+  );
+  if (!requestFingerprint) {
+    return NextResponse.json(
+      { error: "병원 전달본 요청을 다시 확인해 주세요." },
+      { status: 400 },
+    );
+  }
+  const previous = await getStoredFreeAiReportRequest({
+    userId: access.userId,
+    episodeId,
+    requestId,
+    sourceRevision: bundle.sourceRevision,
+  });
+  if (previous && previous.requestFingerprint !== requestFingerprint) {
+    return NextResponse.json(
+      { error: "같은 요청 번호를 다른 기록 범위에 사용할 수 없어요." },
+      { status: 409 },
+    );
+  }
+  if (previous?.status === "succeeded" && previous.draft) {
+    return storedDraftResponse({
+      draft: previous.draft,
+      usageId: previous.usageId,
+      requestId,
+      reportIds: previous.reportIds,
+      recovered: true,
+    });
+  }
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || "gpt-5.4-mini-2026-03-17";
   if (!apiKey) {
-    await recordAiReportUsage({
-      userId: access.userId,
-      petId: bundle.pet.id,
-      episodeId: bundle.episode.id,
-      status: "failed",
-      model,
-      errorCode: "openai_unconfigured",
-    });
     return NextResponse.json(
       { error: "병원 전달본을 잠시 만들 수 없어요." },
       { status: 503 },
@@ -319,23 +380,79 @@ export async function POST(
     isPartialSelection ? [] : bundle.progress,
     { episodeStartedAt: bundle.episode.startedAt },
   );
-  const reservation = await reserveAiReportUsage({
+  const reservation = await reserveFreeAiReportUsage({
     userId: access.userId,
     petId: bundle.episode.petId,
     episodeId: bundle.episode.id,
     model,
+    requestId,
+    requestFingerprint,
+    sourceRevision: bundle.sourceRevision,
+    reportIds: includedReportIds,
   });
-  if (!reservation.usageId) {
+
+  if (reservation.state === "succeeded" && reservation.usageId && reservation.draft) {
+    return storedDraftResponse({
+      draft: reservation.draft,
+      usageId: reservation.usageId,
+      requestId,
+      reportIds: includedReportIds,
+      recovered: true,
+    });
+  }
+  if (reservation.state === "conflict") {
+    return NextResponse.json(
+      { error: "같은 요청 번호를 다른 기록 범위에 사용할 수 없어요." },
+      { status: 409 },
+    );
+  }
+  if (reservation.state === "pending") {
+    return NextResponse.json(
+      { error: "병원 전달본을 만들고 있어요. 잠시 후 다시 확인해 주세요." },
+      { status: 409, headers: { "Retry-After": "3" } },
+    );
+  }
+  if (reservation.state === "stale_source") {
+    return NextResponse.json(
+      { error: "기록이 방금 바뀌었어요. 최신 내용으로 다시 확인해 주세요." },
+      { status: 409, headers: { "Retry-After": "1" } },
+    );
+  }
+  if (reservation.state === "limit") {
     const latestAccess =
       (await getAiAccessStatusForUser(access.userId)) ?? access.status;
     return NextResponse.json(
       {
         access: latestAccess,
-        error: reservation.unavailable
-          ? "병원 전달본 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
-          : "병원 전달본 1회 이용권이 필요해요.",
+        error:
+          "오늘의 AI 병원 전달본 공정사용 한도에 도달했어요. 한국 시간 자정에 다시 사용할 수 있어요.",
       },
-      { status: reservation.unavailable ? 503 : 429 },
+      { status: 429 },
+    );
+  }
+  if (reservation.state === "attempt_limit") {
+    const latestAccess =
+      (await getAiAccessStatusForUser(access.userId)) ?? access.status;
+    return NextResponse.json(
+      {
+        access: latestAccess,
+        error:
+          "오늘 반복 요청 안전 한도에 도달했어요. 한국 시간 자정에 다시 사용할 수 있어요.",
+      },
+      { status: 429 },
+    );
+  }
+  if (
+    reservation.state !== "reserved" ||
+    !reservation.usageId ||
+    !reservation.reservationToken
+  ) {
+    return NextResponse.json(
+      {
+        access: access.status,
+        error: "병원 전달본 이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      },
+      { status: 503 },
     );
   }
 
@@ -344,6 +461,7 @@ export async function POST(
     await completeUsageWithRetry({
       usageId: reservation.usageId,
       userId: access.userId,
+      reservationToken: reservation.reservationToken,
       status: "failed",
       model,
       errorCode: result.errorCode ?? "openai_failed",
@@ -354,28 +472,41 @@ export async function POST(
     );
   }
 
+  const safetyViolation = vetDraftSafetyViolation(result.draft);
+  const groundingViolation = vetDraftGroundingViolation(
+    result.draft,
+    localDraft,
+  );
+  const fallbackReason = safetyViolation ?? groundingViolation;
+  const safeDraft = fallbackReason ? localDraft : result.draft;
   const usageCompleted = await completeUsageWithRetry({
     usageId: reservation.usageId,
     userId: access.userId,
+    reservationToken: reservation.reservationToken,
     status: "succeeded",
     model,
     promptTokens: result.usage?.input_tokens ?? null,
     completionTokens: result.usage?.output_tokens ?? null,
     totalTokens: result.usage?.total_tokens ?? null,
+    errorCode: fallbackReason
+      ? `unsafe_generated_fallback_${fallbackReason}`
+      : null,
+    draft: safeDraft,
   });
   if (!usageCompleted) {
     return NextResponse.json(
       {
         error:
-          "병원 전달본 처리 상태를 확정하지 못했어요. 이용권은 자동으로 복구되니 잠시 후 다시 시도해 주세요.",
+          "병원 전달본 저장을 마치지 못했어요. 같은 요청으로 다시 시도하면 중복 생성되지 않아요.",
       },
       { status: 503 },
     );
   }
-  return NextResponse.json({
-    draft: {
-      ...result.draft,
-      usageId: reservation.usageId,
-    },
+  return storedDraftResponse({
+    draft: safeDraft,
+    usageId: reservation.usageId,
+    requestId,
+    reportIds: includedReportIds,
+    recovered: false,
   });
 }

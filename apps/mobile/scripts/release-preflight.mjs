@@ -5,10 +5,26 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
   appStoreConnectDefaults,
-  createAppStoreConnectClient,
   findKeyPath,
   parseArgs,
 } from "./lib/app-store-connect.mjs";
+import {
+  googlePlayFeatureGraphic,
+  googlePlayScreenshotSets,
+  validateGooglePlayFeatureGraphic,
+  validateGooglePlayScreenshotSets,
+} from "./lib/google-play-screenshot-guard.mjs";
+import { IOS_SCREENSHOT_FILES } from "./lib/ios-release-guard.mjs";
+import {
+  findExactFinishedEasBuild,
+  readEasBuilds,
+  verifyBuildCoversMain,
+} from "./lib/release-source.mjs";
+import {
+  assertScreenshotCapturedAfterBuild,
+  readScreenshotManifest,
+  validateStampedScreenshotSet,
+} from "./lib/store-screenshot-guard.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDir, "..");
@@ -96,6 +112,44 @@ function ensureFiles(relativePaths) {
   ensure(!missing.length, `missing files: ${missing.join(", ")}`);
 }
 
+function ensureLatestProductionStoreBuild(builds, easBuild) {
+  ensure(easBuild.buildProfile === "production", "screenshot build is not production");
+  ensure(easBuild.distribution === "STORE", "screenshot build is not a store build");
+  const latest = builds
+    .filter(
+      (build) =>
+        build.status === "FINISHED" &&
+        build.buildProfile === "production" &&
+        build.distribution === "STORE",
+    )
+    .toSorted(
+      (left, right) =>
+        Date.parse(right.completedAt ?? right.updatedAt ?? right.createdAt ?? 0) -
+        Date.parse(left.completedAt ?? left.updatedAt ?? left.createdAt ?? 0),
+    )[0];
+  ensure(latest?.id === easBuild.id, "screenshot manifest does not target the latest store build");
+}
+
+function readEasEnvironmentVariableNames(environment, scope) {
+  const output = run(
+    "npx",
+    [
+      "eas-cli",
+      "env:list",
+      environment,
+      "--scope",
+      scope,
+      "--format",
+      "short",
+    ],
+    mobileRoot,
+  );
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*([A-Z][A-Z0-9_]*)=/)?.[1] ?? null)
+    .filter(Boolean);
+}
+
 record("앱 버전과 식별자", () => {
   const expectedPackageVersion = /^\d+\.\d+$/.test(expo.version)
     ? `${expo.version}.0`
@@ -125,6 +179,27 @@ record("공통 앱 자산", () => {
     "assets/brand-icon.png",
     "assets/fonts/Pretendard-LICENSE.txt",
   ]);
+});
+
+record("무료 공개 런타임", () => {
+  ensure(
+    !packageJson.dependencies?.["react-native-purchases"],
+    "react-native-purchases must not be bundled in the free release",
+  );
+  ensure(
+    !fs.existsSync(path.join(mobileRoot, "src/lib/billing.ts")),
+    "mobile billing runtime must not exist in the free release",
+  );
+  ensure(
+    !expo.android?.permissions?.includes("com.android.vending.BILLING"),
+    "Android BILLING permission must not be requested",
+  );
+  ensure(
+    expo.android?.blockedPermissions?.includes("com.android.vending.BILLING"),
+    "Android BILLING permission removal guard is missing",
+  );
+  ensure(expo.plugins?.includes("expo-font"), "expo-font config plugin is missing");
+  context.releaseMode = "free";
 });
 
 record("EAS 업로드 제외 규칙", () => {
@@ -197,6 +272,101 @@ if (platform === "all" || platform === "ios") {
   });
 }
 
+function validateIosReleaseScreenshots(currentCommit) {
+  ensure(currentCommit, "current Git commit is unavailable");
+  const directory = path.join(mobileRoot, "store", "app-store", "iphone-6-7");
+  const { manifest } = readScreenshotManifest(directory);
+  const buildNumber = String(manifest.buildNumber ?? "");
+  ensure(buildNumber, "iOS screenshot build number is missing");
+  const stamped = validateStampedScreenshotSet({
+    directory,
+    expected: {
+      version: expo.version,
+      buildNumber,
+      gitCommit: manifest.gitCommit,
+      platform: "ios",
+      displayType: "APP_IPHONE_67",
+      width: 1290,
+      height: 2796,
+      expectedFileNames: IOS_SCREENSHOT_FILES,
+    },
+  });
+  const builds = readEasBuilds(mobileRoot, "ios");
+  const easBuild = findExactFinishedEasBuild(builds, {
+    version: expo.version,
+    buildNumber,
+    platform: "ios",
+  });
+  ensureLatestProductionStoreBuild(builds, easBuild);
+  const source = verifyBuildCoversMain(repoRoot, easBuild, currentCommit);
+  ensure(
+    stamped.manifest.gitCommit === source.buildCommit,
+    "iOS screenshot manifest does not match the selected EAS build commit",
+  );
+  assertScreenshotCapturedAfterBuild(stamped.manifest, easBuild, stamped.files);
+  return { buildNumber, easBuild, source, stampedSets: [stamped] };
+}
+
+function validateAndroidReleaseScreenshots(currentCommit) {
+  ensure(currentCommit, "current Git commit is unavailable");
+  const featureGraphic = googlePlayFeatureGraphic(mobileRoot);
+  const manifests = googlePlayScreenshotSets(mobileRoot).map(
+    ({ directory }) => readScreenshotManifest(directory).manifest,
+  );
+  manifests.push(readScreenshotManifest(featureGraphic.directory).manifest);
+  const buildNumbers = new Set(
+    manifests.map((manifest) => String(manifest.buildNumber ?? "")),
+  );
+  const gitCommits = new Set(manifests.map((manifest) => manifest.gitCommit ?? ""));
+  ensure(
+    buildNumbers.size === 1 && !buildNumbers.has(""),
+    "Google Play screenshot manifests must use one build number",
+  );
+  ensure(
+    gitCommits.size === 1 && !gitCommits.has(""),
+    "Google Play screenshot manifests must use one build commit",
+  );
+  const [buildNumber] = buildNumbers;
+  const [manifestCommit] = gitCommits;
+  const stampedSets = validateGooglePlayScreenshotSets(mobileRoot, {
+    version: expo.version,
+    buildNumber,
+    gitCommit: manifestCommit,
+  });
+  const stampedFeatureGraphic = validateGooglePlayFeatureGraphic(mobileRoot, {
+    version: expo.version,
+    buildNumber,
+    gitCommit: manifestCommit,
+  });
+  const builds = readEasBuilds(mobileRoot, "android");
+  const easBuild = findExactFinishedEasBuild(builds, {
+    version: expo.version,
+    buildNumber,
+    platform: "android",
+  });
+  ensureLatestProductionStoreBuild(builds, easBuild);
+  const source = verifyBuildCoversMain(repoRoot, easBuild, currentCommit);
+  ensure(
+    manifestCommit === source.buildCommit,
+    "Google Play screenshot manifests do not match the selected EAS build commit",
+  );
+  for (const stamped of stampedSets) {
+    assertScreenshotCapturedAfterBuild(stamped.manifest, easBuild, stamped.files);
+  }
+  assertScreenshotCapturedAfterBuild(
+    stampedFeatureGraphic.manifest,
+    easBuild,
+    stampedFeatureGraphic.files,
+  );
+  return {
+    buildNumber,
+    easBuild,
+    source,
+    stampedSets,
+    stampedFeatureGraphic,
+  };
+}
+
 const branch = record("main 브랜치", () => {
   const value = run("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
   ensure(value === "main", `release must run from main, found ${value}`);
@@ -223,28 +393,19 @@ record("Expo 계정", () => {
   context.easAccount = account.split(/\r?\n/)[0];
 });
 
-record("모바일 결제 환경 변수", () => {
-  const output = run(
-    "npx",
-    ["eas-cli", "env:list", "production", "--format", "short"],
-    mobileRoot,
-  );
-  const requiredNames = [
-    "EXPO_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID",
-    ...(platform === "all" || platform === "android"
-      ? ["EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY"]
-      : []),
-    ...(platform === "all" || platform === "ios"
-      ? ["EXPO_PUBLIC_REVENUECAT_IOS_API_KEY"]
-      : []),
+record("무료 공개 EAS 환경", () => {
+  const variableNames = [
+    ...readEasEnvironmentVariableNames("production", "project"),
+    ...readEasEnvironmentVariableNames("production", "account"),
   ];
-  const missing = requiredNames.filter(
-    (name) => !new RegExp(`^${name}=\\S+`, "m").test(output),
+  const billingVariables = variableNames.filter((name) =>
+    /REVENUECAT|PURCHASE|BILLING/.test(name),
   );
   ensure(
-    missing.length === 0,
-    `missing EAS production variables: ${missing.join(", ")}`,
+    billingVariables.length === 0,
+    `billing variables remain in EAS production: ${billingVariables.join(", ")}`,
   );
+  context.easProductionBillingVariables = 0;
 });
 
 if (platform === "all" || platform === "android") {
@@ -283,29 +444,24 @@ if (platform === "all" || platform === "ios") {
     );
     context.iosRemoteVersion = output.split(/\r?\n/).filter(Boolean).at(-1);
   });
+}
 
-  await recordAsync("iOS 인앱결제 상품", async () => {
-    const { request } = createAppStoreConnectClient();
-    const query = new URLSearchParams({
-      "filter[productId]": "petflow_ai_summary_1",
-      limit: "10",
-    });
-    const response = await request(
-      `/v1/apps/${appStoreConnectDefaults.appId}/inAppPurchasesV2?${query}`,
-    );
-    const purchase = response?.data?.[0];
-    ensure(Boolean(purchase), "petflow_ai_summary_1 is missing");
-    ensure(
-      purchase.attributes?.inAppPurchaseType === "CONSUMABLE",
-      `unexpected product type: ${purchase.attributes?.inAppPurchaseType ?? "missing"}`,
-    );
-    ensure(
-      ["READY_TO_SUBMIT", "WAITING_FOR_REVIEW", "IN_REVIEW", "APPROVED"].includes(
-        purchase.attributes?.state,
-      ),
-      `product is not releasable: ${purchase.attributes?.state ?? "missing"}`,
-    );
-    context.iosInAppPurchaseState = purchase.attributes.state;
+if (platform === "all" || platform === "android") {
+  record("Google Play 현재 빌드 스크린샷", () => {
+    const validated = validateAndroidReleaseScreenshots(context.commit);
+    context.androidScreenshotBuild = validated.buildNumber;
+    context.androidScreenshotCommit = validated.source.buildCommit;
+    context.androidScreenshotSets = validated.stampedSets.length;
+    context.androidFeatureGraphic = true;
+  });
+}
+
+if (platform === "all" || platform === "ios") {
+  record("App Store 현재 빌드 스크린샷", () => {
+    const validated = validateIosReleaseScreenshots(context.commit);
+    context.iosScreenshotBuild = validated.buildNumber;
+    context.iosScreenshotCommit = validated.source.buildCommit;
+    context.iosScreenshotSets = validated.stampedSets.length;
   });
 }
 
@@ -316,12 +472,49 @@ if (!skipDeployment && context.apiBaseUrl && context.commit) {
     const health = await response.json();
     ensure(response.ok && health.status === "ok", "production health check failed");
     ensure(health.database === "connected", `database is ${health.database}`);
-    ensure(health.billing === "configured", `billing is ${health.billing}`);
     ensure(
-      typeof health.version === "string" && context.commit.startsWith(health.version),
+      health.releaseMode === "free",
+      `release mode is ${health.releaseMode ?? "unknown"}`,
+    );
+    ensure(
+      health.freeReleaseSchema === "ready",
+      `free-release schema is ${health.freeReleaseSchema ?? "unknown"}`,
+    );
+    ensure(
+      health.freeAi?.enabled === true &&
+        health.freeAi?.generationConfigured === true &&
+        Number.isSafeInteger(health.freeAi?.dailyLimit) &&
+        health.freeAi.dailyLimit >= 1 &&
+        Number.isSafeInteger(health.freeAi?.dailyAttemptLimit) &&
+        health.freeAi.dailyAttemptLimit >= health.freeAi.dailyLimit,
+      "free AI fair-use configuration is invalid",
+    );
+    ensure(
+      /^[0-9a-f]{12}$/i.test(health.version ?? "") &&
+        context.commit.startsWith(health.version),
       `deployed ${health.version} does not match ${context.commit.slice(0, 12)}`,
     );
+    for (const billingPath of [
+      "/api/billing/events",
+      "/api/billing/sync",
+      "/api/billing/revenuecat/webhook",
+    ]) {
+      const billingResponse = await fetch(
+        new URL(billingPath, context.apiBaseUrl),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        },
+      );
+      ensure(
+        billingResponse.status === 410,
+        `${billingPath} returned ${billingResponse.status}; expected 410`,
+      );
+    }
     context.deployedVersion = health.version;
+    context.freeAiDailyLimit = health.freeAi.dailyLimit;
+    context.billingRoutesDisabled = true;
   });
 }
 

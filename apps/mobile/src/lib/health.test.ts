@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEpisodeReport,
+  detectEmergencyRedFlags,
   formatSymptomSummary,
   hasDailyObservation,
   toggleDailyObservation,
@@ -55,6 +56,18 @@ describe("daily observation composer", () => {
     const repeated = toggleSymptomDetail(once, "vomiting", "repeated");
 
     expect(repeated.symptomDetails?.vomiting).toEqual(["repeated"]);
+  });
+
+  it("matches explicit emergency wording without treating negations as alerts", () => {
+    expect(detectEmergencyRedFlags("숨을 못 쉬고 의식이 없어요.")).toEqual([
+      "breathing",
+      "collapse",
+    ]);
+    expect(detectEmergencyRedFlags("경련이 반복되고 출혈이 안 멈춰요.")).toEqual([
+      "seizure",
+      "bleeding",
+    ]);
+    expect(detectEmergencyRedFlags("경련은 없고 출혈은 멈췄어요.")).toEqual([]);
   });
 });
 
@@ -112,5 +125,45 @@ describe("hospital handoff flow", () => {
     const report = buildEpisodeReport([{ input, result }], "보리");
 
     expect(report.shareText).toContain("보호자 메모: 어제 저녁부터 두 번 토했어요.");
+  });
+
+  it("does not invent adult age or default observations in a factual handoff", () => {
+    const input = { ...base, note: "사진만 저장했어요." };
+    const result: AnalysisResult = {
+      ...record("2026-06-10T00:00:00.000Z").result,
+      id: "record-with-defaults",
+    };
+    const report = buildEpisodeReport([
+      { input, result, media: [] },
+    ], "보리");
+
+    expect(report.petProfile).not.toContain("성견·성묘");
+    expect(report.shareText).not.toContain("평소와 같음");
+    expect(report.shareText).not.toContain("오늘부터");
+    expect(report.shareText).not.toContain("식욕 변화 0회");
+    expect(report.shareText).not.toContain("활력 변화 0회");
+    expect(report.shareText).toContain("입력되지 않아 평가하지 않음");
+    expect(report.shareText).toContain(
+      "텍스트 공유에는 사진·영상 파일이 포함되지 않습니다",
+    );
+  });
+
+  it("includes the age group when a valid birth date was actually recorded", () => {
+    const input = { ...base, birthDate: "2021-05-02" };
+    const report = buildEpisodeReport([
+      { input, result: record("2026-06-10T00:00:00.000Z").result },
+    ], "보리");
+
+    expect(report.petProfile).toContain("성견·성묘");
+  });
+
+  it("shows an observation date in Korea without inventing a time", () => {
+    const report = buildEpisodeReport(
+      [record("2026-06-10T03:00:00.000Z")],
+      "보리",
+    );
+
+    expect(report.timeline[0]?.dateLabel).toBe("2026년 6월 10일");
+    expect(report.shareText).not.toMatch(/오전|오후|\d{1,2}:\d{2}/);
   });
 });

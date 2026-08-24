@@ -11,7 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -46,3 +46,13 @@ jobs:
       - name: Check Expo dependency versions
         run: npm run expo:check
         working-directory: apps/mobile
+      - name: Check Expo project health
+        run: npm run doctor
+        working-directory: apps/mobile
+      - name: Start local Supabase
+        run: npx supabase start
+      - name: Test database contracts
+        run: npm run db:test
+      - name: Stop local Supabase
+        if: always()
+        run: npx supabase stop --no-backup

@@ -1,154 +1,119 @@
-# 병원 전달본 결제
+# 과거 결제 아키텍처 (현재 비활성)
 
-## 상품
+> **2026-08-18 상태:** 이 문서는 향후 재검토를 위해 보존한 과거 설계 자료다.
+> Android·iOS 무료 공개판의 요구사항이나 출시 체크리스트가 아니다. 현재 제품 계약은
+> [`product-direction.md`](product-direction.md)의 `2026-08-18 무료 공개 결정`을 따른다.
+
+## 현재 무료 공개 규칙
+
+- 기록 조회·수정·삭제·기본 공유와 AI 병원 전달본을 결제 없이 제공한다.
+- 앱과 스토어 설명에 상품, 가격, 구매, 복원, 남은 이용권 또는 결제 유도를 노출하지
+  않는다.
+- Android와 iOS 앱은 RevenueCat을 초기화하거나 상품 조회, 구매, 복원, 결제 동기화를
+  실행하지 않는다.
+- 무료 공개 앱과 배포 환경에는 RevenueCat 키를 넣지 않는다.
+- 서버 공정사용 한도는 비용과 악용 방지에 필요한 범위로만 사용한다. 한도와 초기화
+  시점을 명확히 알리고 결제·참여코드·클라이언트 플래그로 우회하지 않는다.
+- 스토어에 과거 상품이 남아 있어도 무료 공개 앱 버전에 포함하거나 심사 대상으로
+  연결하지 않는다.
+
+## 보존하는 서버 자산
+
+아래 자산은 삭제·재작성에 따른 데이터 손상을 피하고 향후 별도 유료 제품 결정에서
+다시 검토할 수 있도록 서버에만 격리해 보존할 수 있다.
+
+- `billing_purchases`: Apple·Google 검증 거래 원장
+- `billing_events`: 중복 가능한 결제 알림 처리 이력
+- `ai_credit_grants`, `ai_credit_ledger`: 과거 무료·구매 이용권 호환 원장
+- `monetization_events`: 무료판의 최소 `ai_summary_shared`·`factual_summary_shared`
+  품질 신호와 과거 구매
+  흐름 이벤트가 함께 남는 호환 테이블
+- `/api/billing/events`, `/api/billing/sync`, `/api/billing/revenuecat/webhook`:
+  과거 동기화·웹훅 경로(무료 공개 모드에서는 `410 Gone`으로 비활성)
+- RevenueCat 연동 모듈과 스토어 상태 확인 스크립트
+
+이 자산은 무료 앱의 AI 권한, 앱 시작, 병원 전달본 생성, 스토어 심사 또는 운영
+헬스체크의 전제가 되어서는 안 된다. 무료 공개 모드의 결제 API는 요청 본문·인증·웹훅을
+처리하기 전에 `410 Gone`을 반환하고, DB는 기존 서비스 역할 제한을 유지한다. 계정
+탈퇴 시 해당 사용자에게 남아 있는 과거 DB 거래 식별자와 원장 행도 함께 삭제한다.
+무료판 탈퇴 경로는 보존된 RevenueCat 모듈을 호출하지 않으므로 배포 환경의 호환
+비밀키나 RevenueCat 장애에 의존하지 않는다.
+
+## 2026-07 유료 가설 기록
+
+아래 내용은 폐기된 과거 가설이며 현재 사용자에게 표시하거나 판매하지 않는다.
 
 - 상품 ID: `petflow_ai_summary_1`
-- 이름: `병원 전달본 1회`
-- 유형: 자동 갱신 없는 소모성 1회 상품
-- 기본 가격 가설: 1,900원에 가장 가까운 스토어 가격
-- 첫 병원 전달본 1회는 계정당 무료
+- 당시 이름: `병원 전달본 1회`
+- 당시 유형: 자동 갱신 없는 소모성 1회 상품
+- 당시 가격 가설: 1,900원에 가장 가까운 스토어 가격
+- 당시 정책: 계정당 첫 1회 무료 후 검증된 거래로 1회 이용권 지급
+- 당시 플랫폼: iOS·Android 스토어 인앱결제와 RevenueCat 원장 동기화
 
-원문 기록, 수정·삭제, 기본 정리와 공유는 결제와 분리합니다. 유료 상품은 사용자가
-고른 기록을 AI가 수의사 검토용 사실 초안으로 정리하는 1회 실행만 추가합니다.
+당시 설계는 Supabase 사용자 UUID를 RevenueCat App User ID로 사용하고, 로그인 전
+구매와 익명 구매를 허용하지 않았다. 동일 거래·이벤트는 한 번만 반영하고, AI 생성
+실패나 멈춘 예약은 반환하며, 환불된 미사용 이용권만 회수하도록 설계했다. 카드번호와
+결제수단 정보는 PetFlow 서버에 저장하지 않았다.
 
-## 플랫폼
+과거 앱은 결제 직후 `/api/billing/sync`로 RevenueCat 고객 정보를 확인하고 웹훅으로
+환불·취소를 보완하는 흐름을 전제로 했다. 이 흐름과 `결제 반영 확인` UI는 무료 공개
+앱에서 실행하거나 노출하지 않는다.
 
-- iOS와 Android는 각 스토어의 인앱결제만 사용합니다.
-- 웹은 기록 검증용 지원 화면이며 결제를 제공하지 않습니다.
-- 모든 경로는 Supabase 사용자 UUID를 RevenueCat App User ID로 사용합니다.
-- 로그인 전 구매와 익명 사용자 구매를 허용하지 않습니다.
-- RevenueCat의 거래 양도 동작은 원래 App User ID에 구매를 유지하도록 설정합니다.
-  OAuth 연결 뒤에도 Supabase 사용자 UUID가 같으므로 기록과 이용권이 함께 이어집니다.
-- 소모성 상품에 스토어 복원 UI를 사용하지 않습니다. `결제 반영 확인`은 현재
-  Supabase 계정의 RevenueCat 고객 정보와 서버 원장만 조용히 새로고침합니다.
+## 호환 환경변수
 
-## 서버 원장
+아래 목록은 과거 코드와 배포 구성을 해석하기 위한 아카이브다. 무료 공개판의
+`.env.example`과 `apps/mobile/.env.example`에는 이 이름을 넣지 않으며 실제 배포
+환경에서도 설정하지 않는다. 서버에 남은 상품 ID 기본값은 과거 원장 호환용
+메타데이터일 뿐 결제 런타임을 활성화하지 않는다.
 
-`billing_purchases`는 Apple·Google에서 검증된 거래를, `billing_events`는 중복 가능한 결제
-알림 결과를 보관합니다. `ai_credit_grants`와 `ai_credit_ledger`는 무료·구매
-이용권의 지급, 사용, 실패 반환, 환불과 환불 취소를 기록합니다.
-
-AI 생성 전 서버가 이용권 한 개를 예약합니다. 생성 실패나 5분 이상 멈춘 예약은
-같은 이용권으로 반환합니다. 동일 거래와 동일 이벤트는 한 번만 처리됩니다. 환불
-시 아직 사용하지 않은 이용권만 회수하며 이미 생성된 사용자 기록은 삭제하지
-않습니다.
-
-결제 직후 스토어 거래가 RevenueCat에 늦게 보이는 경우 앱이 자동으로 여러 번
-확인하고, 이용권이 확인되면 사용자가 다시 누르지 않아도 요청하던 병원 전달본을
-이어 만듭니다. 계속 지연될 때만 `결제 반영 확인`을 보조 경로로 제공합니다.
-
-앱의 결제 완료 반영은 `/api/billing/sync`가 RevenueCat 고객 정보를 확인하는
-경로가 기본입니다. 따라서 웹훅이 잠시 지연돼도 정상 구매는 앱에서 복구할 수
-있습니다. 다만 앱을 열지 않은 상태의 환불·취소를 자동 반영하려면 RevenueCat
-웹훅을 운영 환경에 연결해야 합니다. 구매·환불 반영이 일시 실패하거나 환불
-알림이 구매 알림보다 먼저 도착하면 서버는 성공으로 삼키지 않고 재시도 응답을
-보냅니다.
-
-`billing_purchases`는 웹훅이 제공하는 경우 구매 통화 금액, USD 환산 금액,
-국가 코드, 세금·스토어 수수료 추정 비율을 함께 저장합니다. 카드번호나 결제수단
-정보는 저장하지 않습니다.
-
-## 매출 검증
-
-`monetization_events`에는 다음 최소 흐름만 저장합니다.
-
-- 구매창 열기·닫기
-- 결제 시작·취소·실패·반영 지연
-- 결제 반영 확인
-- 생성한 병원 전달본 공유
-
-관찰 내용, 사진·영상과 이메일은 넣지 않습니다. 실제 결제 완료는
-클라이언트 이벤트가 아니라 검증된 `billing_purchases`, 실제 AI 생성과 비용은
-`ai_report_usage`를 기준으로 계산합니다. Supabase SQL Editor에서
-`supabase/management.sql`을 실행하면 일별 구매창 진입, 구매, 반복 구매,
-생성·공유, 매출과 AI 비용을 함께 확인할 수 있습니다.
-
-최근 30일의 첫 유료 검증 상태만 빠르게 확인할 때는 다음 읽기 전용 명령을
-사용합니다. 무료 이용권으로 만든 전달본은 `유료 전달본 생성`에서 제외됩니다.
-
-```powershell
-npm run metrics:paid-validation
-npm run metrics:paid-validation -- --days=14
-```
-
-명령은 `.env.local`의 `SUPABASE_SERVICE_ROLE_KEY`와 `SUPABASE_URL` 또는
-`NEXT_PUBLIC_SUPABASE_URL`을 읽습니다. 다른 환경 파일은
-`--env-file=파일경로`로 지정합니다. 키와 사용자 식별자는 출력하지 않습니다.
-
-계정 삭제 시 RevenueCat 고객 정보와 PetFlow의 거래 식별자·이용권 원장을
-사용자 데이터와 함께 삭제합니다. 결제수단은 Apple·Google이 관리합니다.
-
-## 환경변수
-
-서버:
+서버 호환 변수:
 
 ```text
 REVENUECAT_SECRET_API_KEY
 REVENUECAT_WEBHOOK_AUTH_TOKEN
-REVENUECAT_AI_SUMMARY_PRODUCT_ID=petflow_ai_summary_1
+REVENUECAT_AI_SUMMARY_PRODUCT_ID
+NEXT_PUBLIC_REVENUECAT_WEB_API_KEY
+NEXT_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID
 ```
 
-앱:
+앱 호환 변수:
 
 ```text
 EXPO_PUBLIC_REVENUECAT_IOS_API_KEY
 EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY
-EXPO_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID=petflow_ai_summary_1
+EXPO_PUBLIC_REVENUECAT_AI_SUMMARY_PRODUCT_ID
 ```
 
-## 출시 조건
+변수 이름이 남아 있다는 이유로 무료 빌드에 값을 넣거나 결제 기능을 켜지 않는다.
 
-1. Apple Paid Apps 계약, 세금 및 은행 정보가 활성 상태입니다.
-2. Google Payments 판매자 계정이 활성 상태입니다.
-3. Apple·Google에 같은 상품 ID와 현지화 가격이 있습니다.
-4. RevenueCat의 Apple·Google 앱 자격 증명이 유효합니다.
-5. 현재 Offering에 1회 상품이 포함돼 있습니다.
-6. RevenueCat 공개 키는 Vercel·EAS에, 비밀 키와 웹훅 토큰은 Vercel에 있습니다.
-7. RevenueCat Pro 웹훅은 `/api/billing/revenuecat/webhook`으로 전송되며
-   Authorization 값이 서버 토큰과 같습니다.
-8. Apple Sandbox와 Google 라이선스 테스터에서 구매·취소·재시도·
-   결제 반영 확인·AI 실패 반환을 검증했습니다.
-9. 환불된 미사용 이용권은 회수되고, 이미 생성한 기록과 요약은 유지됩니다.
+## 무료 출시 검증
 
-상품이나 키가 준비되지 않은 빌드에서는 결제 버튼을 숨기고 무료 이용권만
-사용합니다. 가격은 코드에 고정하지 않고 스토어가 반환한 현지화 문자열만
-표시합니다.
+1. 앱 화면과 접근성 텍스트에 상품·가격·구매·복원·남은 이용권 문구가 없다.
+2. 앱 시작, 로그인, 기록 저장과 AI 전달본 생성 중 RevenueCat 초기화·상품 조회·결제
+   동기화 네트워크 요청이 발생하지 않는다.
+3. 새 로그인 계정이 결제 없이 AI 병원 전달본을 만들고 공유할 수 있다.
+4. 공정사용 한도에 도달해도 원문 기록과 기본 사실 전달본을 계속 사용할 수 있다.
+5. App Store Connect와 Google Play 제출 버전에 인앱결제 상품을 연결하지 않는다.
+6. 스토어 설명과 심사 메모에 `무료`, `자동 결제 없음`이 설치본 동작과 일치한다.
+7. 과거 billing API는 무료 모드에서 `410 Gone`을 반환하고, 과거 테이블은 RLS·서비스
+   역할 경계를 유지하며 앱 번들에서 호출되지 않는다.
 
-RevenueCat 웹훅은 Pro 플랜 기능입니다. 유료 출시 전에는 Pro 웹훅을 연결해
-환불을 자동 반영하거나, 동일 수준의 환불 대조 운영 절차를 별도로 마련해야 합니다.
+## 유료 기능 재도입 조건
 
-## Apple 상품 확인
+다음 조건이 모두 충족돼도 자동으로 유료 기능을 켜지 않는다. 먼저
+`product-direction.md`에 범위·가격·무료 기본권·환불·취소·복원 정책을 포함한 새
+제품 결정을 기록해야 한다.
 
-```powershell
-npm --prefix apps/mobile run configure:ios:iap
-npm --prefix apps/mobile run status:ios:iap
-```
+1. 사업자 등록과 세무·정산 책임을 확인한다.
+2. Apple Paid Apps 계약, 세금·은행 정보와 Google Payments 판매자 계정을 활성화한다.
+3. 무료판의 실제 병원 사용과 다음 방문 재사용 근거를 검토한다.
+4. Apple·Google 상품, RevenueCat 자격 증명과 서버 웹훅을 별도 운영 환경에서 검증한다.
+5. 구매·취소·재시도·지연 동기화·환불·환불 취소·AI 실패 반환을 양 플랫폼 sandbox에서
+   검증한다.
+6. 사용자 소유 기록, 수정·삭제, 기본 내보내기와 계정 탈퇴를 결제벽 밖에 유지한다.
+7. 새 네이티브 빌드와 실제 결제 화면이 준비된 뒤에만 스토어 메타데이터를 갱신한다.
 
-두 명령은 `petflow_ai_summary_1`의 이름, 한국 가격, 판매 지역, 심사용 화면을
-확인합니다. 상품 상태가 `READY_TO_SUBMIT`이어도 RevenueCat 연결과 새 네이티브
-빌드가 끝나기 전에는 앱 심사에 첨부하지 않습니다.
+## 아카이브 도구
 
-최신 결제창을 실제 기기에서 1290×2796 PNG로 캡처해
-`apps/mobile/store/app-store/iap/ai-summary-purchase.png`에 둔 뒤, 빌드 QA
-manifest를 만든 경우에만 다음 명령을 사용합니다.
-
-```powershell
-npm --prefix apps/mobile run upload:ios:iap-review
-```
-
-## Google 상품 확인
-
-```powershell
-npm --prefix apps/mobile run status:android:iap
-npm --prefix apps/mobile run configure:android:iap
-node apps/mobile/scripts/configure-android-iap.mjs --apply
-```
-
-첫 명령은 읽기 전용 상태 확인입니다. 두 번째 명령은 변경 예정 항목만 보여주며,
-`--apply`가 있을 때만 `petflow_ai_summary_1`을 1,900원 기준의 단건 상품으로
-생성하고 구매 옵션을 활성화합니다. 기존 상품은 자동으로 덮어쓰지 않습니다.
-
-서비스 계정에는 대상 앱 보기와 `Manage store presence` 권한이 필요합니다.
-실제 판매 전에는 Google Payments 판매자 프로필, 세금 및 지급 설정도 완료돼야
-합니다. 설정 명령이 `결제 프로필이 앱에 연결되지 않았습니다`로 중단되면
-Play Console의 결제 프로필을 먼저 연결한 뒤 같은 명령을 다시 실행합니다.
+과거 IAP 구성·상태·유료 지표 스크립트는 무료 공개판에서 제거했다. 별도 유료 재도입
+결정이 내려지기 전에는 저장소에 결제 구성 명령을 복원하거나 실행하지 않는다.

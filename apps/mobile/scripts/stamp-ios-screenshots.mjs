@@ -4,8 +4,6 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
   IOS_SCREENSHOT_FILES,
-  IOS_IAP_REVIEW_SCREENSHOT,
-  readPngSize,
   sha256File,
   validateScreenshotFiles,
 } from "./lib/ios-release-guard.mjs";
@@ -30,7 +28,6 @@ const screenshotDir = path.resolve(
   args.get("--dir") || path.join(mobileRoot, "store", "app-store", "iphone-6-7"),
 );
 const manifestPath = path.join(screenshotDir, "manifest.json");
-const iapReviewFile = path.join(mobileRoot, IOS_IAP_REVIEW_SCREENSHOT);
 
 if (!buildNumber) throw new Error("--build-number is required.");
 const expectedQaConfirmation = `IOS_BUILD_${buildNumber}_QA_PASSED`;
@@ -62,24 +59,22 @@ if (unrelated.length) {
 const easBuild = findExactFinishedEasBuild(readEasBuilds(mobileRoot), {
   version: expo.version,
   buildNumber,
+  platform: "ios",
 });
 if (easBuild.gitCommitHash !== head) {
   throw new Error(
     `EAS build ${buildNumber} was created from ${easBuild.gitCommitHash}, not current main ${head}.`,
   );
 }
+if (easBuild.buildProfile !== "production" || easBuild.distribution !== "STORE") {
+  throw new Error(`EAS build ${buildNumber} is not a production store build.`);
+}
 
 const files = IOS_SCREENSHOT_FILES.map((fileName) => path.join(screenshotDir, fileName));
 validateScreenshotFiles({ files, width: 1290, height: 2796 });
-const iapReviewSize = readPngSize(iapReviewFile);
-if (iapReviewSize.width !== 1290 || iapReviewSize.height !== 2796) {
-  throw new Error(
-    `${path.basename(iapReviewFile)} is ${iapReviewSize.width}x${iapReviewSize.height}; expected 1290x2796.`,
-  );
-}
 
 const completedAt = new Date(easBuild.completedAt ?? easBuild.updatedAt).getTime();
-const staleFiles = [...files, iapReviewFile].filter(
+const staleFiles = files.filter(
   (file) => fs.statSync(file).mtimeMs < completedAt,
 );
 if (staleFiles.length) {
@@ -94,6 +89,7 @@ const manifest = {
   version: expo.version,
   buildNumber: String(buildNumber),
   gitCommit: easBuild.gitCommitHash,
+  platform: "ios",
   displayType: "APP_IPHONE_67",
   width: 1290,
   height: 2796,
@@ -101,10 +97,6 @@ const manifest = {
   source,
   qaConfirmedAt: new Date().toISOString(),
   qaConfirmation,
-  iapReviewScreenshot: {
-    file: IOS_IAP_REVIEW_SCREENSHOT,
-    sha256: sha256File(iapReviewFile),
-  },
   files: Object.fromEntries(
     files.map((file) => [path.basename(file), sha256File(file)]),
   ),

@@ -1,6 +1,13 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
+import {
+  readPngSize,
+  sha256File,
+  validateScreenshotFiles as validateStoreScreenshotFiles,
+  validateScreenshotManifest as validateStoreScreenshotManifest,
+} from "./store-screenshot-guard.mjs";
+
+export { readPngSize, sha256File };
 
 export const IOS_SCREENSHOT_FILES = Object.freeze([
   "01-home-score.png",
@@ -9,7 +16,6 @@ export const IOS_SCREENSHOT_FILES = Object.freeze([
   "04-account-pets.png",
   "05-report-summary.png",
 ]);
-export const IOS_IAP_REVIEW_SCREENSHOT = "store/app-store/iap/ai-summary-purchase.png";
 
 export const EDITABLE_APP_STORE_STATES = new Set([
   "DEVELOPER_REJECTED",
@@ -42,99 +48,27 @@ export function assertEditableVersionState(state) {
   throw new Error(`App Store version is not editable in state ${state}.`);
 }
 
-export function readPngSize(filePath) {
-  const header = fs.readFileSync(filePath).subarray(0, 24);
-  if (
-    header.length < 24 ||
-    header.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
-  ) {
-    throw new Error(`${path.basename(filePath)} is not a valid PNG file.`);
-  }
-  return {
-    width: header.readUInt32BE(16),
-    height: header.readUInt32BE(20),
-  };
-}
-
-export function sha256File(filePath) {
-  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
-}
-
 export function md5File(filePath) {
   return crypto.createHash("md5").update(fs.readFileSync(filePath)).digest("hex");
 }
 
 export function validateScreenshotFiles({ files, width, height }) {
-  const names = files.map((file) => path.basename(file)).sort();
-  const expected = [...IOS_SCREENSHOT_FILES].sort();
-  if (JSON.stringify(names) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected screenshots ${expected.join(", ")}; found ${names.join(", ") || "none"}.`,
-    );
-  }
-
-  for (const file of files) {
-    const size = readPngSize(file);
-    if (size.width !== Number(width) || size.height !== Number(height)) {
-      throw new Error(
-        `${path.basename(file)} is ${size.width}x${size.height}; expected ${width}x${height}.`,
-      );
-    }
-  }
+  return validateStoreScreenshotFiles({
+    files,
+    expectedFileNames: IOS_SCREENSHOT_FILES,
+    width,
+    height,
+  });
 }
 
 export function validateScreenshotManifest(manifest, expected) {
-  const required = [
-    "version",
-    "buildNumber",
-    "gitCommit",
-    "displayType",
-    "width",
-    "height",
-    "capturedAt",
-    "source",
-    "qaConfirmedAt",
-    "qaConfirmation",
-    "iapReviewScreenshot",
-    "files",
-  ];
-  const missing = required.filter(
-    (key) => manifest[key] === undefined || manifest[key] === "",
-  );
-  if (missing.length) {
-    throw new Error(`Screenshot manifest is missing: ${missing.join(", ")}.`);
-  }
-
-  const comparisons = [
-    ["version", manifest.version, expected.version],
-    ["buildNumber", String(manifest.buildNumber), String(expected.buildNumber)],
-    ["gitCommit", manifest.gitCommit, expected.gitCommit],
-    ["displayType", manifest.displayType, expected.displayType],
-  ];
-  for (const [label, actual, target] of comparisons) {
-    if (actual !== target) {
-      throw new Error(`Screenshot ${label} ${actual} does not match ${target}.`);
-    }
-  }
-
-  const expectedQaConfirmation = `IOS_BUILD_${expected.buildNumber}_QA_PASSED`;
-  if (manifest.qaConfirmation !== expectedQaConfirmation) {
-    throw new Error(
-      `Screenshot QA confirmation must be ${expectedQaConfirmation}.`,
-    );
-  }
-  if (
-    manifest.iapReviewScreenshot?.file !== IOS_IAP_REVIEW_SCREENSHOT ||
-    !/^[a-f0-9]{64}$/.test(manifest.iapReviewScreenshot?.sha256 ?? "")
-  ) {
-    throw new Error("Screenshot manifest has no valid iOS purchase review image.");
-  }
-
-  for (const fileName of IOS_SCREENSHOT_FILES) {
-    if (!/^[a-f0-9]{64}$/.test(manifest.files[fileName] ?? "")) {
-      throw new Error(`Screenshot manifest has no valid SHA-256 for ${fileName}.`);
-    }
-  }
+  return validateStoreScreenshotManifest(manifest, {
+    ...expected,
+    platform: "ios",
+    width: 1290,
+    height: 2796,
+    expectedFileNames: IOS_SCREENSHOT_FILES,
+  });
 }
 
 export function validateRemoteScreenshotAssets(
@@ -170,9 +104,11 @@ export function validateRemoteScreenshotAssets(
 }
 
 export function isStoreReleaseArtifact(relativePath) {
-  return relativePath.replaceAll("\\", "/").startsWith(
+  const normalized = relativePath.replaceAll("\\", "/");
+  return [
     "apps/mobile/store/app-store/",
-  );
+    "apps/mobile/store/google-play/",
+  ].some((prefix) => normalized.startsWith(prefix));
 }
 
 export function assertRuntimeCoveredByBuild({

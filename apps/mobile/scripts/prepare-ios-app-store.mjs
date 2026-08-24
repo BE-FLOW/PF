@@ -10,7 +10,6 @@ import {
 import {
   assertEditableVersionState,
   IOS_SCREENSHOT_FILES,
-  IOS_IAP_REVIEW_SCREENSHOT,
   selectExactValidBuild,
   sha256File,
   validateScreenshotFiles,
@@ -28,47 +27,54 @@ const mobileRoot = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(mobileRoot, "..", "..");
 const require = createRequire(import.meta.url);
 const expo = require(path.join(mobileRoot, "app.config.js")).expo;
+const listingPath = path.join(mobileRoot, "store", "ko-KR", "listing.md");
+const listingSource = fs.readFileSync(listingPath, "utf8");
+
+function listingSection(title) {
+  const heading = `## ${title}`;
+  const headingStart = listingSource.indexOf(heading);
+  const bodyStart = listingSource.indexOf("\n", headingStart) + 1;
+  const nextHeading = listingSource.indexOf("\n## ", bodyStart);
+  const value =
+    headingStart >= 0 && bodyStart > 0
+      ? listingSource.slice(
+          bodyStart,
+          nextHeading >= 0 ? nextHeading : listingSource.length,
+        ).trim()
+      : "";
+  if (!value) {
+    throw new Error(`Store listing section ${title} is missing.`);
+  }
+  return value;
+}
+
+const listingDescription = listingSection("설명");
+const listingFeatures = listingSection("주요 기능");
 
 const metadata = {
-  description: `PetFlow는 보호자가 반려동물의 식욕, 활력, 증상과 병원에서 들은 안내를 짧게 기록하고 다음 상담에 보여주기 좋게 정리하는 앱입니다.
-
-짧은 글과 사진·영상으로 관찰을 남기면 기록이 날짜순 건강 흐름에 자동으로 연결됩니다. 필요한 기간을 골라 병원에 전달할 사실 요약을 만들 수 있습니다.
-
-주요 기능
-- 계정 기반 반려동물 관리
-- 날짜별 건강 기록과 사진·영상 첨부
-- 예방접종 기록과 다음 접종일 관리
-- 병원에 보여줄 건강 흐름과 사실 요약
-- 첫 1회 무료 AI 병원 전달 요약
-- 인앱결제로 한 번씩 추가하는 AI 요약
-- 기록 수정·삭제와 즉시 계정 탈퇴
-
-PetFlow는 진단이나 처방을 제공하지 않습니다. AI 요약은 로그인 사용자가 고른 기록을 정리한 수의사 검토용 초안이며, 수의사의 확인을 대신하지 않습니다.`,
-  keywords:
-    "반려동물,강아지,고양이,건강기록,병원공유,진료메모,펫케어,건강흐름,예방접종,사진기록",
-  marketingUrl: "https://pf-two-eta.vercel.app",
-  promotionalText:
-    "관찰한 변화를 짧게 남기고, 병원에 보여줄 건강 흐름과 사실 요약으로 정리해요.",
-  supportUrl: "https://pf-two-eta.vercel.app",
+  description: `${listingDescription}\n\n주요 기능\n${listingFeatures}`,
+  keywords: listingSection("키워드 후보").replace(/\s+/g, ""),
+  marketingUrl: listingSection("지원 URL"),
+  promotionalText: listingSection("한 줄 소개").replace(/\s+/g, " "),
+  supportUrl: listingSection("지원 URL"),
 };
 
 const appInfoMetadata = {
-  subtitle: "반려동물 건강 기록과 병원 공유",
-  privacyPolicyUrl: "https://pf-two-eta.vercel.app/privacy",
+  subtitle: listingSection("부제목 / 짧은 설명").replace(/\s+/g, " "),
+  privacyPolicyUrl: listingSection("개인정보 처리방침 URL"),
 };
 
-const reviewNotes = `PetFlow provides one complimentary AI Hospital Summary per account. Additional summaries are sold only through Apple's consumable in-app purchase "AI Hospital Summary - 1 Use". It is not a subscription and does not renew.
+const reviewNotes = `PetFlow is completely free in this release. The app does not initialize an in-app purchase SDK, query products, show prices, or provide purchase or restore controls. There is no external checkout, participation code, redeemable code, or paid account tier.
 
-There is no participation code, redeemable code, account tier, or external checkout in the iOS app. Each completed Apple transaction is verified by the server before one summary credit is granted. "Check Payment Status" refreshes delayed transaction delivery for the signed-in PetFlow account; it does not grant access from a client-side flag.
+Signed-in users can create AI Hospital Summaries within a server-enforced daily fair-use limit. The app shows today's remaining uses and the exact reset time. Reaching the limit never blocks original records or the basic factual summary and sharing flow.
 
 Review steps:
 1. Sign in with the review account in App Review Information.
 2. Add or select a pet and save a health record.
-3. Open Health Flow and select records in the calendar.
-4. Tap AI Hospital Summary. The first use is complimentary.
-5. After the complimentary use, the app displays the localized App Store price before presenting Apple's purchase sheet.
+3. Open the 전달본 tab and select records in the calendar.
+4. Tap 무료 병원 전달본 만들기 to create and share the free draft.
 
-The AI output is clearly labeled as an unreviewed draft. It organizes only the owner's observations and does not provide diagnosis, prescriptions, medication names, dosage, or treatment plans. Original records, editing, deletion, and basic sharing remain available without a purchase.`;
+The AI output is clearly labeled as an unreviewed draft. AI only prioritizes server-generated factual observation lines and never invents diagnoses, prescriptions, medication names, dosage, or treatment plans. Any hospital guidance entered by the owner is preserved separately and labeled as owner-reported, not veterinarian-confirmed.`;
 
 const args = parseArgs();
 const appId = args.get("--app-id") || process.env.ASC_APP_ID || appStoreConnectDefaults.appId;
@@ -107,10 +113,6 @@ function verifyLocalScreenshots(expectedCommit) {
     if (manifest.files[fileName] !== sha256File(file)) {
       throw new Error(`${fileName} changed after the screenshot manifest was stamped.`);
     }
-  }
-  const iapReviewFile = path.join(mobileRoot, IOS_IAP_REVIEW_SCREENSHOT);
-  if (manifest.iapReviewScreenshot.sha256 !== sha256File(iapReviewFile)) {
-    throw new Error("The iOS purchase review image changed after manifest stamping.");
   }
   return files;
 }
@@ -173,28 +175,6 @@ async function findReviewDetail(versionId) {
   return response.data;
 }
 
-async function verifyInAppPurchase() {
-  const query = new URLSearchParams({
-    "filter[productId]": "petflow_ai_summary_1",
-    limit: "10",
-  });
-  const response = await request(`/v1/apps/${appId}/inAppPurchasesV2?${query}`);
-  const purchase = response.data[0];
-  if (!purchase) throw new Error("The iOS AI summary in-app purchase is missing.");
-  if (purchase.attributes.inAppPurchaseType !== "CONSUMABLE") {
-    throw new Error("The iOS AI summary product must be consumable.");
-  }
-  if (![
-    "READY_TO_SUBMIT",
-    "WAITING_FOR_REVIEW",
-    "IN_REVIEW",
-    "APPROVED",
-  ].includes(purchase.attributes.state)) {
-    throw new Error(`The iOS in-app purchase is ${purchase.attributes.state}.`);
-  }
-  return purchase;
-}
-
 async function patchResource(pathname, type, id, attributes) {
   return (
     await request(pathname, {
@@ -219,7 +199,6 @@ const build = await findBuild();
 const localization = await findLocalization(version.id);
 const appInfoLocalization = await findAppInfoLocalization();
 const reviewDetail = await findReviewDetail(version.id);
-const purchase = await verifyInAppPurchase();
 
 if (execute) {
   if (!localization) throw new Error(`Could not create App Store localization ${locale}.`);
@@ -274,13 +253,8 @@ console.log(
         count: IOS_SCREENSHOT_FILES.length,
         capturedAt: manifest.capturedAt,
       },
-      inAppPurchase: {
-        id: purchase.id,
-        productId: purchase.attributes.productId,
-        state: purchase.attributes.state,
-      },
       nextStep: execute
-        ? "Upload the validated screenshots, then add the first in-app purchase and submit through App Store Connect."
+        ? "Upload the validated screenshots, then submit the free build through App Store Connect."
         : "Dry run only. Re-run with --execute true after reviewing this exact target.",
     },
     null,

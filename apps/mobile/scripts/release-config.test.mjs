@@ -15,6 +15,14 @@ import {
   hasStatus as hasGooglePlayStatus,
   parseArgs as parseGooglePlayArgs,
 } from "./lib/google-play.mjs";
+import {
+  GOOGLE_PLAY_FEATURE_GRAPHIC_DEFINITION,
+  GOOGLE_PLAY_SCREENSHOT_SET_DEFINITIONS,
+} from "./lib/google-play-screenshot-guard.mjs";
+import {
+  assertDistinctScreenshotSets,
+  assertScreenshotCapturedAfterBuild,
+} from "./lib/store-screenshot-guard.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDir, "..");
@@ -25,6 +33,14 @@ const packageJson = JSON.parse(
 );
 const easJson = JSON.parse(fs.readFileSync(path.join(mobileRoot, "eas.json"), "utf8"));
 const appConfig = require(path.join(mobileRoot, "app.config.js"));
+const releasePreflightSource = fs.readFileSync(
+  path.join(mobileRoot, "scripts", "release-preflight.mjs"),
+  "utf8",
+);
+const prepareIosSource = fs.readFileSync(
+  path.join(mobileRoot, "scripts", "prepare-ios-app-store.mjs"),
+  "utf8",
+);
 
 describe("mobile release configuration", () => {
   it("keeps the package version and store identifiers aligned", () => {
@@ -34,6 +50,59 @@ describe("mobile release configuration", () => {
     expect(packageJson.version).toBe(expectedPackageVersion);
     expect(appConfig.expo.android.package).toBe("com.beflow.petflow");
     expect(appConfig.expo.ios.bundleIdentifier).toBe("com.beflow.petflow");
+  });
+
+  it("keeps the public app free of mobile purchase code and permissions", () => {
+    expect(packageJson.dependencies["react-native-purchases"]).toBeUndefined();
+    expect(packageJson.scripts["status:ios:iap"]).toBeUndefined();
+    expect(packageJson.scripts["configure:ios:iap"]).toBeUndefined();
+    expect(packageJson.scripts["status:android:iap"]).toBeUndefined();
+    expect(packageJson.scripts["configure:android:iap"]).toBeUndefined();
+    expect(appConfig.expo.android.permissions ?? []).not.toContain(
+      "com.android.vending.BILLING",
+    );
+    expect(appConfig.expo.android.blockedPermissions).toContain(
+      "com.android.vending.BILLING",
+    );
+    expect(appConfig.expo.plugins).toContain("expo-font");
+    expect(fs.existsSync(path.join(mobileRoot, "src/lib/billing.ts"))).toBe(false);
+  });
+
+  it("requires a configured free AI backend and both fair-use limits", () => {
+    expect(releasePreflightSource).toContain(
+      'health.freeReleaseSchema === "ready"',
+    );
+    expect(releasePreflightSource).toContain(
+      "health.freeAi?.generationConfigured === true",
+    );
+    expect(releasePreflightSource).toContain(
+      "Number.isSafeInteger(health.freeAi?.dailyAttemptLimit)",
+    );
+    expect(releasePreflightSource).toContain(
+      "health.freeAi.dailyAttemptLimit >= health.freeAi.dailyLimit",
+    );
+  });
+
+  it("rejects billing variables from the EAS production environment", () => {
+    expect(releasePreflightSource).toContain(
+      'readEasEnvironmentVariableNames("production", "project")',
+    );
+    expect(releasePreflightSource).toContain(
+      'readEasEnvironmentVariableNames("production", "account")',
+    );
+    expect(releasePreflightSource).toContain(
+      "/REVENUECAT|PURCHASE|BILLING/",
+    );
+  });
+
+  it("pins the patched Metro dependency line", () => {
+    const metroConfig = require(path.join(mobileRoot, "metro.config.js"));
+
+    expect(metroConfig.resolver).toBeDefined();
+    expect(packageJson.overrides.metro).toBe("0.84.5");
+    expect(packageJson.overrides["metro-config"]).toBe("0.84.5");
+    expect(packageJson.overrides["metro-transform-worker"]).toBe("0.84.5");
+    expect(() => require.resolve("image-size")).toThrow();
   });
 
   it("keeps local credentials out of EAS build archives", () => {
@@ -54,7 +123,25 @@ describe("mobile release configuration", () => {
       "--auto-submit-with-profile production",
     );
     expect(packageJson.scripts["release:ios:review-candidate"]).not.toContain(
+      "release:preflight:ios",
+    );
+    expect(packageJson.scripts["release:ios:review-candidate"]).not.toContain(
       "--latest",
+    );
+    expect(packageJson.scripts["release:android:closed"]).not.toContain(
+      "build:android:production",
+    );
+    expect(packageJson.scripts["release:android:production"]).not.toContain(
+      "build:android:production",
+    );
+    expect(easJson.build["store-screenshot"]).toMatchObject({
+      extends: "production",
+      distribution: "internal",
+      autoIncrement: false,
+      android: { buildType: "apk" },
+    });
+    expect(packageJson.scripts["build:android:store-screenshot"]).toContain(
+      "--profile store-screenshot",
     );
     expect(packageJson.scripts["submit:ios:testflight-internal"]).toContain(
       "--internal true",
@@ -68,6 +155,34 @@ describe("mobile release configuration", () => {
     expect(packageJson.scripts["submit:ios:testflight-external"]).not.toContain(
       "--execute true",
     );
+  });
+
+  it("captures distinct 9:16 Google Play device classes at recommendation-ready sizes", () => {
+    expect(GOOGLE_PLAY_SCREENSHOT_SET_DEFINITIONS).toEqual([
+      expect.objectContaining({
+        displayType: "GOOGLE_PLAY_PHONE",
+        width: 1080,
+        height: 1920,
+        avdName: "PetFlow_Phone_API36",
+      }),
+      expect.objectContaining({
+        displayType: "GOOGLE_PLAY_TABLET_7",
+        width: 1350,
+        height: 2400,
+        avdName: "PetFlow_Tablet7_API36",
+      }),
+      expect.objectContaining({
+        displayType: "GOOGLE_PLAY_TABLET_10",
+        width: 1800,
+        height: 3200,
+        avdName: "PetFlow_Tablet10_API36",
+      }),
+    ]);
+    for (const definition of GOOGLE_PLAY_SCREENSHOT_SET_DEFINITIONS) {
+      expect(definition.height / definition.width).toBeCloseTo(16 / 9, 5);
+      expect(definition.width).toBeGreaterThanOrEqual(1080);
+      expect(definition.height).toBeLessThanOrEqual(3840);
+    }
   });
 
   it("parses shared App Store script options", () => {
@@ -130,7 +245,7 @@ describe("mobile release configuration", () => {
     ).toThrow("conflicting finished builds");
   });
 
-  it("allows only App Store assets to change after the release build", () => {
+  it("allows only store screenshot assets to change after the release build", () => {
     expect(
       assertRuntimeCoveredByBuild({
         buildCommit: "build",
@@ -139,6 +254,17 @@ describe("mobile release configuration", () => {
         changedPaths: [
           "apps/mobile/store/app-store/iphone-6-7/01-home-score.png",
           "apps/mobile/store/app-store/iphone-6-7/manifest.json",
+        ],
+      }),
+    ).toEqual({ releaseArtifactOnly: true });
+    expect(
+      assertRuntimeCoveredByBuild({
+        buildCommit: "build",
+        currentCommit: "head",
+        buildIsAncestor: true,
+        changedPaths: [
+          "apps/mobile/store/google-play/screenshots-phone/01-home-score.png",
+          "apps/mobile/store/google-play/screenshots-phone/manifest.json",
         ],
       }),
     ).toEqual({ releaseArtifactOnly: true });
@@ -174,6 +300,7 @@ describe("mobile release configuration", () => {
       version: "1.0",
       buildNumber: "25",
       gitCommit: "commit-25",
+      platform: "ios",
       displayType: "APP_IPHONE_67",
       width: 1290,
       height: 2796,
@@ -181,10 +308,6 @@ describe("mobile release configuration", () => {
       source: "physical-iphone",
       qaConfirmedAt: "2026-08-01T00:00:00.000Z",
       qaConfirmation: "IOS_BUILD_25_QA_PASSED",
-      iapReviewScreenshot: {
-        file: "store/app-store/iap/ai-summary-purchase.png",
-        sha256: "b".repeat(64),
-      },
       files,
     };
     expect(() =>
@@ -203,6 +326,54 @@ describe("mobile release configuration", () => {
         displayType: "APP_IPHONE_67",
       }),
     ).toThrow("buildNumber");
+  });
+
+  it("rejects screenshots captured before the exact EAS build", () => {
+    expect(() =>
+      assertScreenshotCapturedAfterBuild(
+        { capturedAt: "2026-08-01T00:00:00.000Z" },
+        { completedAt: "2026-08-01T00:00:01.000Z" },
+      ),
+    ).toThrow("predate EAS build");
+  });
+
+  it("rejects byte-identical Google Play device-class sets", () => {
+    const hashes = { "01-home-score.png": "a".repeat(64) };
+    expect(() =>
+      assertDistinctScreenshotSets([
+        {
+          hashes,
+          manifest: { displayType: "GOOGLE_PLAY_TABLET_7" },
+        },
+        {
+          hashes: { ...hashes },
+          manifest: { displayType: "GOOGLE_PLAY_TABLET_10" },
+        },
+      ]),
+    ).toThrow("byte-identical");
+  });
+
+  it("wires exact stamped screenshots into both release preflights", () => {
+    expect(releasePreflightSource).toContain("validateAndroidReleaseScreenshots");
+    expect(releasePreflightSource).toContain("validateIosReleaseScreenshots");
+    expect(releasePreflightSource).toContain("validateGooglePlayFeatureGraphic");
+    expect(GOOGLE_PLAY_FEATURE_GRAPHIC_DEFINITION).toMatchObject({
+      fileName: "feature-graphic-1024x500.png",
+      width: 1024,
+      height: 500,
+    });
+    expect(packageJson.scripts["stamp:android:screenshots"]).toContain(
+      "stamp-android-screenshots.mjs",
+    );
+  });
+
+  it("uses the shared Korean store listing for App Store metadata", () => {
+    expect(prepareIosSource).toContain('"store", "ko-KR", "listing.md"');
+    expect(prepareIosSource).toContain('listingSection("설명")');
+    expect(prepareIosSource).toContain('listingSection("키워드 후보")');
+    expect(prepareIosSource).not.toContain(
+      "PetFlow는 보호자가 반려동물의 식욕, 활력, 증상과",
+    );
   });
 
   it("matches every remote App Store screenshot to the local capture", () => {

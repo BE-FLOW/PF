@@ -9,7 +9,6 @@ import {
 } from "./lib/app-store-connect.mjs";
 import {
   IOS_SCREENSHOT_FILES,
-  IOS_IAP_REVIEW_SCREENSHOT,
   md5File,
   sha256File,
   validateRemoteScreenshotAssets,
@@ -105,13 +104,6 @@ await check("현재 빌드 스크린샷", () => {
       throw new Error(`${fileName} does not match its stamped hash.`);
     }
   }
-  const iapReviewFile = path.join(mobileRoot, IOS_IAP_REVIEW_SCREENSHOT);
-  if (!fs.existsSync(iapReviewFile)) {
-    throw new Error("Capture the current-build iOS purchase screen before release.");
-  }
-  if (manifest.iapReviewScreenshot.sha256 !== sha256File(iapReviewFile)) {
-    throw new Error("The iOS purchase review image does not match its stamped hash.");
-  }
   context.screenshotsCapturedAt = manifest.capturedAt;
   context.qaConfirmedAt = manifest.qaConfirmedAt;
 });
@@ -178,49 +170,9 @@ await check("App Store 스크린샷 처리 완료", async () => {
   context.remoteScreenshotCount = screenshots.data.length;
 });
 
-await check("iOS 인앱결제 상품", async () => {
-  const query = new URLSearchParams({
-    "filter[productId]": "petflow_ai_summary_1",
-    limit: "10",
-  });
-  const response = await request(`/v1/apps/${appId}/inAppPurchasesV2?${query}`);
-  const purchase = response.data[0];
-  if (!purchase) throw new Error("petflow_ai_summary_1 is missing.");
-  if (purchase.attributes.inAppPurchaseType !== "CONSUMABLE") {
-    throw new Error(`Unexpected type ${purchase.attributes.inAppPurchaseType}.`);
-  }
-  if (![
-    "READY_TO_SUBMIT",
-    "WAITING_FOR_REVIEW",
-    "IN_REVIEW",
-    "APPROVED",
-  ].includes(purchase.attributes.state)) {
-    throw new Error(`Product state is ${purchase.attributes.state}.`);
-  }
-  const versions = await request(`/v2/inAppPurchases/${purchase.id}/versions?limit=50`);
-  if (!versions.data.length) throw new Error("In-app purchase metadata version is missing.");
-  const reviewScreenshot = await request(
-    `/v2/inAppPurchases/${purchase.id}/appStoreReviewScreenshot`,
-  );
-  if (reviewScreenshot.data?.attributes?.assetDeliveryState?.state !== "COMPLETE") {
-    throw new Error("In-app purchase review screenshot is not complete.");
-  }
-  const iapReviewFile = path.join(mobileRoot, IOS_IAP_REVIEW_SCREENSHOT);
-  if (!fs.existsSync(iapReviewFile)) {
-    throw new Error("Current-build in-app purchase review screenshot is missing.");
-  }
-  if (reviewScreenshot.data.attributes.sourceFileChecksum !== md5File(iapReviewFile)) {
-    throw new Error("The remote purchase review screenshot is not from this build.");
-  }
-  const prices = await request(
-    `/v1/inAppPurchasePriceSchedules/${purchase.id}/manualPrices?limit=50`,
-  );
-  if (!prices.data.length) throw new Error("In-app purchase price is missing.");
-  context.inAppPurchaseState = purchase.attributes.state;
-});
-
 await check("운영 서버", async () => {
-  const response = await fetch("https://pf-two-eta.vercel.app/api/health", {
+  const serverOrigin = "https://pf-two-eta.vercel.app";
+  const response = await fetch(`${serverOrigin}/api/health`, {
     cache: "no-store",
   });
   const health = await response.json();
@@ -228,11 +180,40 @@ await check("운영 서버", async () => {
     !response.ok ||
     health.status !== "ok" ||
     health.database !== "connected" ||
-    health.billing !== "configured"
+    health.freeReleaseSchema !== "ready" ||
+    health.releaseMode !== "free" ||
+    health.freeAi?.enabled !== true ||
+    health.freeAi?.generationConfigured !== true ||
+    !Number.isSafeInteger(health.freeAi?.dailyLimit) ||
+    health.freeAi.dailyLimit < 1 ||
+    !Number.isSafeInteger(health.freeAi?.dailyAttemptLimit) ||
+    health.freeAi.dailyAttemptLimit < health.freeAi.dailyLimit
   ) {
     throw new Error(JSON.stringify(health));
   }
+  if (!git || health.version !== git.head.slice(0, 12)) {
+    throw new Error(
+      `Server version ${health.version ?? "unknown"} does not match main ${git?.head.slice(0, 12) ?? "unknown"}.`,
+    );
+  }
+  for (const route of [
+    "/api/billing/events",
+    "/api/billing/sync",
+    "/api/billing/revenuecat/webhook",
+  ]) {
+    const disabled = await fetch(`${serverOrigin}${route}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (disabled.status !== 410) {
+      throw new Error(`${route} returned ${disabled.status}; expected 410.`);
+    }
+  }
   context.serverVersion = health.version;
+  context.releaseMode = health.releaseMode;
+  context.freeAiDailyLimit = health.freeAi.dailyLimit;
+  context.billingRoutesDisabled = true;
 });
 
 console.log(
@@ -243,7 +224,7 @@ console.log(
       blockers,
       context,
       manualFinalStep:
-        "The first in-app purchase must be selected with this app version and submitted on appstoreconnect.apple.com.",
+        "Submit the exact validated free build through App Store Connect.",
     },
     null,
     2,

@@ -8,7 +8,7 @@ afterEach(() => {
   delete process.env.REVENUECAT_SECRET_API_KEY;
 });
 
-describe("RevenueCat customer deletion", () => {
+describe("archived RevenueCat customer cleanup utility", () => {
   it("does not block account deletion when billing is not configured", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
@@ -34,7 +34,7 @@ describe("RevenueCat customer deletion", () => {
     );
   });
 
-  it("keeps the account when RevenueCat deletion fails", async () => {
+  it("reports a provider deletion failure to an explicit maintenance caller", async () => {
     process.env.REVENUECAT_SECRET_API_KEY = "secret-api-key";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 500 }),

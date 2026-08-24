@@ -55,6 +55,19 @@ describe("buildVetReviewDraft", () => {
     expect(draft.planAndProgress.join("\n")).not.toContain("자동 연결");
   });
 
+  it("does not invent an observation time when the owner selected only a date", () => {
+    const draft = buildVetReviewDraft(
+      [record("2026-06-10T03:00:00.000Z")],
+      "보리",
+      undefined,
+      [],
+      { generatedAt: "2026-06-15T00:00:00.000Z" },
+    );
+
+    expect(draft.timeline[0]).toContain("2026년 6월 10일");
+    expect(draft.timeline[0]).not.toMatch(/오전|오후|\d{1,2}:\d{2}/);
+  });
+
   it("preserves answered symptom intake facts instead of asking them again", () => {
     const draft = buildVetReviewDraft(
       [
@@ -195,7 +208,35 @@ describe("buildVetReviewDraft", () => {
 
     expect(draft.mediaSummary.join("\n")).toContain("사진 1개");
     expect(draft.mediaSummary.join("\n")).toContain("판독하지 않았습니다");
+    expect(draft.mediaSummary.join("\n")).toContain(
+      "텍스트 공유에는 사진·영상 파일이 포함되지",
+    );
     expect(draft.copyText).toContain("[첨부 자료]");
     expect(draft.keyObservations.join("\n")).toContain("판독 전");
+  });
+
+  it("marks unanswered defaults as unassessed instead of normal facts", () => {
+    const draft = buildVetReviewDraft(
+      [
+        record("2026-06-10T00:00:00.000Z", {
+          symptoms: [],
+          appetite: "normal",
+          energy: "normal",
+          duration: "today",
+          note: "",
+        }),
+      ],
+      "보리",
+      undefined,
+      [],
+      { generatedAt: "2026-06-15T00:00:00.000Z" },
+    );
+
+    expect(draft.timeline[0]).toContain("입력되지 않아 평가하지 않음");
+    expect(draft.timeline[0]).not.toContain("평소와 같음");
+    expect(draft.timeline[0]).not.toContain("오늘부터");
+    expect(draft.keyObservations).toContain(
+      "입력된 상태 정보가 부족해 PetFlow가 상태를 평가하지 않았습니다.",
+    );
   });
 });

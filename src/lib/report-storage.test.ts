@@ -126,4 +126,29 @@ describe("report storage", () => {
     expect(JSON.stringify(stored)).not.toContain("walk.jpg");
     expect(rebuilt.media).toEqual([media]);
   });
+
+  it("keeps the age group recorded at the observation time", () => {
+    const result = analyzeLocally(input);
+    const stored = toStoredHealthReport(
+      { ...input, ageGroup: "young" },
+      result,
+      "20000000-0000-4000-8000-000000000001",
+      {
+        userId: "30000000-0000-4000-8000-000000000001",
+        petId: "40000000-0000-4000-8000-000000000001",
+        episodeId: "50000000-0000-4000-8000-000000000001",
+      },
+    );
+    const rebuilt = storedReportToHistoryRecord(stored, {
+      id: stored.pet_id ?? undefined,
+      name: "보리",
+      species: "dog",
+      breed: "말티즈",
+      birthDate: "2010-05-02",
+      sex: "neutered-male",
+      weight: "4.2kg",
+    });
+
+    expect(rebuilt.input.ageGroup).toBe("young");
+  });
 });

@@ -63,7 +63,7 @@ export function readEasBuilds(mobileRoot, platform = "ios") {
 
 export function findExactFinishedEasBuild(
   builds,
-  { version, buildNumber },
+  { version, buildNumber, platform = "ios" },
 ) {
   const matches = builds.filter(
     (build) =>
@@ -73,7 +73,7 @@ export function findExactFinishedEasBuild(
   );
   if (matches.length === 0) {
     throw new Error(
-      `EAS iOS ${version} (${buildNumber}): expected a finished build, found none.`,
+      `EAS ${platform} ${version} (${buildNumber}): expected a finished build, found none.`,
     );
   }
   if (matches.length === 1) return matches[0];
@@ -94,7 +94,7 @@ export function findExactFinishedEasBuild(
   );
   if (!hasVerifiableSource || signatures.size !== 1) {
     throw new Error(
-      `EAS iOS ${version} (${buildNumber}): found ${matches.length} conflicting finished builds.`,
+      `EAS ${platform} ${version} (${buildNumber}): found ${matches.length} conflicting finished builds.`,
     );
   }
 

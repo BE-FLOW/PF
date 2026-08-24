@@ -9,7 +9,6 @@ import {
 } from "./lib/app-store-connect.mjs";
 import {
   IOS_SCREENSHOT_FILES,
-  IOS_IAP_REVIEW_SCREENSHOT,
   sha256File,
   validateScreenshotFiles,
   validateScreenshotManifest,
@@ -71,10 +70,6 @@ for (const file of files) {
   if (manifest.files[fileName] !== sha256File(file)) {
     throw new Error(`${fileName} changed after the screenshot manifest was stamped.`);
   }
-}
-const iapReviewFile = path.join(mobileRoot, IOS_IAP_REVIEW_SCREENSHOT);
-if (manifest.iapReviewScreenshot.sha256 !== sha256File(iapReviewFile)) {
-  throw new Error("The iOS purchase review image changed after manifest stamping.");
 }
 
 console.log(

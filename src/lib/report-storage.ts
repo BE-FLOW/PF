@@ -88,6 +88,7 @@ export function storedReportToHistoryRecord(
 ): HistoryRecord {
   const input: HealthCheckInput = {
     ...profileToHealthInput(profile),
+    ageGroup: stored.age_group,
     symptoms: stored.symptoms,
     symptomDetails: stored.symptom_details ?? {},
     appetite: stored.appetite,

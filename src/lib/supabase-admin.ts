@@ -1,7 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
-import { revenueCatServerConfiguration } from "./billing-config";
-import { deleteRevenueCatCustomer } from "./revenuecat-customer";
 import type {
   AiAccessStatus,
   AiReportFeedbackInput,
@@ -14,6 +12,7 @@ import type {
   PetProfile,
   ReportMediaAttachment,
   ReportMediaKind,
+  VetReviewDraft,
 } from "./types";
 import {
   isUuid,
@@ -35,11 +34,12 @@ import {
   petPhotoExtensionFromMimeType,
 } from "./pet-photo";
 import {
-  buildAiCreditAccessStatus,
-  resolveAiSummaryProductId,
+  buildFreeAiAccessStatus,
+  freeAiServerConfiguration,
 } from "./ai-access";
 import { analyzeLocally, deriveAgeGroup } from "./analysis";
 import type { MonetizationEventInput } from "./monetization";
+import { freeReleaseProductEventId } from "./product-event";
 
 const requestTimeoutMs = 3500;
 const supabasePageSize = 500;
@@ -48,6 +48,7 @@ const maxTimelineRows = 5000;
 let adminClient: SupabaseClient | null | undefined;
 
 export type DatabaseStatus = "connected" | "unconfigured" | "error";
+export type FreeReleaseSchemaStatus = "ready" | "unconfigured" | "missing";
 
 export interface HealthReportSaveResult {
   saved: boolean;
@@ -73,6 +74,7 @@ export interface ReportOwner {
 
 export interface EpisodeVetReviewBundle {
   episode: PetEpisode;
+  sourceRevision: number;
   pet: PetProfile;
   reports: DisplayHealthReport[];
   plan?: EpisodePlan;
@@ -134,6 +136,48 @@ export interface AiReportCompletionInput {
   completionTokens?: number | null;
   totalTokens?: number | null;
   errorCode?: string | null;
+}
+
+export interface FreeAiReportReservationInput {
+  userId: string;
+  petId: string;
+  episodeId: string;
+  model: string;
+  requestId: string;
+  requestFingerprint: string;
+  sourceRevision: number;
+  reportIds: string[];
+}
+
+export interface FreeAiReportReservation {
+  usageId: string | null;
+  reservationToken: string | null;
+  state:
+    | "reserved"
+    | "succeeded"
+    | "pending"
+    | "conflict"
+    | "limit"
+    | "attempt_limit"
+    | "stale_source"
+    | "unavailable";
+  draft: VetReviewDraft | null;
+}
+
+export interface FreeAiReportCompletionInput extends AiReportCompletionInput {
+  reservationToken: string;
+  draft?: VetReviewDraft | null;
+}
+
+export interface StoredFreeAiReportRequest {
+  usageId: string;
+  requestId: string;
+  requestFingerprint: string;
+  episodeId: string;
+  sourceRevision: number;
+  reportIds: string[];
+  status: "pending" | "succeeded" | "failed";
+  draft: VetReviewDraft | null;
 }
 
 export interface BillingPurchaseInput {
@@ -562,8 +606,6 @@ export async function deleteAccount(
       return null;
     }
 
-    if (!(await deleteRevenueCatCustomer(user.id))) return null;
-
     const mediaRows = (await mediaResponse.json()) as Array<{
       storage_path: string | null;
     }>;
@@ -592,6 +634,7 @@ export async function deleteAccount(
 }
 
 function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
+  const { dailyLimit } = freeAiServerConfiguration();
   return {
     enabled: false,
     reason,
@@ -601,36 +644,42 @@ function emptyAiAccessStatus(reason: AiAccessStatus["reason"]): AiAccessStatus {
     usedTotal: 0,
     billingConfigured: false,
     purchaseAvailable: false,
-    productId: resolveAiSummaryProductId(
-      process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
-    ),
+    productId: "",
+    freeRelease: true,
+    dailyLimit,
+    attemptsToday: 0,
+    dailyAttemptLimit: dailyLimit * 3,
+    resetsAt: null,
   };
 }
 
-async function buildAiCreditStatus(userId: string): Promise<AiAccessStatus> {
+async function buildFreeAiStatus(userId: string): Promise<AiAccessStatus> {
+  const { dailyLimit, generationConfigured } = freeAiServerConfiguration();
+  if (!generationConfigured) return emptyAiAccessStatus("unavailable");
   try {
-    const response = await supabaseRequest("rpc/get_ai_credit_status", {
+    const response = await supabaseRequest("rpc/get_free_ai_access_status", {
       method: "POST",
-      body: JSON.stringify({ target_user_id: userId }),
+      body: JSON.stringify({
+        target_user_id: userId,
+        target_daily_limit: dailyLimit,
+      }),
     });
     if (!response?.ok) return emptyAiAccessStatus("unavailable");
     const rows = (await response.json()) as Array<{
-      available_credits: number;
-      complimentary_credits: number;
-      purchased_credits: number;
-      used_total: number;
+      used_today: number;
+      daily_limit: number;
+      attempts_today: number;
+      daily_attempt_limit: number;
+      resets_at: string;
     }>;
     const row = rows[0];
     if (!row) return emptyAiAccessStatus("unavailable");
-    return buildAiCreditAccessStatus(
-      Number(row.available_credits),
-      Number(row.complimentary_credits),
-      Number(row.purchased_credits),
-      Number(row.used_total),
-      {
-        billingConfigured: revenueCatServerConfiguration().ready,
-        productId: process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
-      },
+    return buildFreeAiAccessStatus(
+      Number(row.used_today),
+      Number(row.daily_limit),
+      typeof row.resets_at === "string" ? row.resets_at : null,
+      Number(row.attempts_today) || 0,
+      Number(row.daily_attempt_limit) || dailyLimit * 3,
     );
   } catch {
     return emptyAiAccessStatus("unavailable");
@@ -642,12 +691,12 @@ export async function getAiAccessStatus(
 ): Promise<AiAccessStatus | null> {
   const userId = await getAuthenticatedUserId(accessToken);
   if (!userId) return null;
-  return buildAiCreditStatus(userId);
+  return buildFreeAiStatus(userId);
 }
 
 export async function getAiAccessStatusForUser(userId: string) {
   if (!isUuid(userId)) return null;
-  return buildAiCreditStatus(userId);
+  return buildFreeAiStatus(userId);
 }
 
 export async function getAiReportAccess(
@@ -655,7 +704,26 @@ export async function getAiReportAccess(
 ): Promise<AiReportAccess | null> {
   const userId = await getAuthenticatedUserId(accessToken);
   if (!userId) return null;
-  return { userId, status: await buildAiCreditStatus(userId) };
+  return { userId, status: await buildFreeAiStatus(userId) };
+}
+
+export async function getEpisodeSourceRevisionForUser(
+  userId: string,
+  episodeId: string,
+): Promise<number | null> {
+  if (!isUuid(userId) || !isUuid(episodeId)) return null;
+  try {
+    const response = await supabaseRequest(
+      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&select=source_revision&limit=1`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{ source_revision: number }>;
+    const revision = Number(rows[0]?.source_revision);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+  } catch {
+    return null;
+  }
 }
 
 function estimatedOpenAiCostUsd(
@@ -776,6 +844,239 @@ export async function completeAiReportUsage(
   }
 }
 
+export async function getStoredFreeAiReportRequest(input: {
+  userId: string;
+  episodeId: string;
+  requestId?: string;
+  requestFingerprint?: string;
+  sourceRevision?: number;
+  selectedReportIds?: string[];
+  succeededOnly?: boolean;
+}): Promise<StoredFreeAiReportRequest | null> {
+  if (
+    !isUuid(input.userId) ||
+    !isUuid(input.episodeId) ||
+    (input.requestId !== undefined && !isUuid(input.requestId)) ||
+    (input.requestFingerprint !== undefined &&
+      !/^[0-9a-f]{64}$/.test(input.requestFingerprint)) ||
+    (input.sourceRevision !== undefined &&
+      (!Number.isSafeInteger(input.sourceRevision) || input.sourceRevision < 0)) ||
+    (input.selectedReportIds !== undefined &&
+      (input.selectedReportIds.length > 60 ||
+        !input.selectedReportIds.every(isUuid)))
+  ) {
+    return null;
+  }
+
+  const filters = [
+    `user_id=eq.${input.userId}`,
+    `episode_id=eq.${input.episodeId}`,
+    "access_mode=eq.free_daily",
+    "select=id,request_id,request_fingerprint,episode_id,source_revision,selected_report_ids,status,result",
+  ];
+  if (input.requestId) filters.push(`request_id=eq.${input.requestId}`);
+  if (input.requestFingerprint) {
+    filters.push(`request_fingerprint=eq.${input.requestFingerprint}`);
+  }
+  if (input.sourceRevision !== undefined) {
+    filters.push(`source_revision=eq.${input.sourceRevision}`);
+  }
+  if (input.selectedReportIds) {
+    const arrayLiteral = `{${input.selectedReportIds.join(",")}}`;
+    filters.push(`selected_report_ids=eq.${encodeURIComponent(arrayLiteral)}`);
+  }
+  if (input.succeededOnly) {
+    filters.push("status=eq.succeeded", "result=not.is.null");
+  }
+  filters.push("order=generated_at.desc", "limit=1");
+
+  try {
+    const response = await supabaseRequest(`ai_report_usage?${filters.join("&")}`, {
+      method: "GET",
+    });
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{
+      id: string;
+      request_id: string;
+      request_fingerprint: string;
+      episode_id: string;
+      source_revision: number;
+      selected_report_ids: unknown;
+      status: "pending" | "succeeded" | "failed";
+      result: unknown;
+    }>;
+    const row = rows[0];
+    if (
+      !row ||
+      !isUuid(row.id) ||
+      !isUuid(row.request_id) ||
+      !/^[0-9a-f]{64}$/.test(row.request_fingerprint) ||
+      !isUuid(row.episode_id) ||
+      !Number.isSafeInteger(Number(row.source_revision)) ||
+      Number(row.source_revision) < 0 ||
+      !["pending", "succeeded", "failed"].includes(row.status)
+    ) {
+      return null;
+    }
+    const reportIds = Array.isArray(row.selected_report_ids)
+      ? row.selected_report_ids.filter(
+          (value): value is string => typeof value === "string" && isUuid(value),
+        )
+      : [];
+    const draft =
+      row.result && typeof row.result === "object"
+        ? (row.result as VetReviewDraft)
+        : null;
+    return {
+      usageId: row.id,
+      requestId: row.request_id,
+      requestFingerprint: row.request_fingerprint,
+      episodeId: row.episode_id,
+      sourceRevision: Number(row.source_revision),
+      reportIds,
+      status: row.status,
+      draft,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function reserveFreeAiReportUsage(
+  input: FreeAiReportReservationInput,
+): Promise<FreeAiReportReservation> {
+  if (
+    !isUuid(input.userId) ||
+    !isUuid(input.petId) ||
+    !isUuid(input.episodeId) ||
+    !isUuid(input.requestId) ||
+    !/^[0-9a-f]{64}$/.test(input.requestFingerprint) ||
+    !Number.isSafeInteger(input.sourceRevision) ||
+    input.sourceRevision < 0 ||
+    input.reportIds.length > 60 ||
+    !input.reportIds.every(isUuid)
+  ) {
+    return {
+      usageId: null,
+      reservationToken: null,
+      state: "unavailable",
+      draft: null,
+    };
+  }
+
+  const { dailyLimit } = freeAiServerConfiguration();
+  try {
+    const response = await supabaseRequest("rpc/reserve_free_ai_report_usage", {
+      method: "POST",
+      body: JSON.stringify({
+        target_user_id: input.userId,
+        target_pet_id: input.petId,
+        target_episode_id: input.episodeId,
+        target_model: input.model,
+        target_request_id: input.requestId,
+        target_request_fingerprint: input.requestFingerprint,
+        target_source_revision: input.sourceRevision,
+        target_selected_report_ids: input.reportIds,
+        target_daily_limit: dailyLimit,
+      }),
+    });
+    if (!response?.ok) {
+      return {
+        usageId: null,
+        reservationToken: null,
+        state: "unavailable",
+        draft: null,
+      };
+    }
+    const rows = (await response.json()) as Array<{
+      usage_id: string | null;
+      reservation_state: FreeAiReportReservation["state"];
+      stored_result: unknown;
+      reservation_token: string | null;
+    }>;
+    const row = rows[0];
+    const allowedStates: FreeAiReportReservation["state"][] = [
+      "reserved",
+      "succeeded",
+      "pending",
+      "conflict",
+      "limit",
+      "attempt_limit",
+      "stale_source",
+    ];
+    if (!row || !allowedStates.includes(row.reservation_state)) {
+      return {
+        usageId: null,
+        reservationToken: null,
+        state: "unavailable",
+        draft: null,
+      };
+    }
+    return {
+      usageId:
+        typeof row.usage_id === "string" && isUuid(row.usage_id)
+          ? row.usage_id
+          : null,
+      reservationToken:
+        typeof row.reservation_token === "string" &&
+        isUuid(row.reservation_token)
+          ? row.reservation_token
+          : null,
+      state: row.reservation_state,
+      draft:
+        row.stored_result && typeof row.stored_result === "object"
+          ? (row.stored_result as VetReviewDraft)
+          : null,
+    };
+  } catch {
+    return {
+      usageId: null,
+      reservationToken: null,
+      state: "unavailable",
+      draft: null,
+    };
+  }
+}
+
+export async function completeFreeAiReportUsage(
+  input: FreeAiReportCompletionInput,
+): Promise<boolean> {
+  if (
+    !isUuid(input.usageId) ||
+    !isUuid(input.userId) ||
+    !isUuid(input.reservationToken)
+  ) {
+    return false;
+  }
+  if (input.status === "succeeded" && !input.draft) return false;
+
+  try {
+    const response = await supabaseRequest("rpc/complete_free_ai_report_usage", {
+      method: "POST",
+      body: JSON.stringify({
+        target_usage_id: input.usageId,
+        target_user_id: input.userId,
+        target_reservation_token: input.reservationToken,
+        target_status: input.status,
+        target_model: input.model,
+        target_prompt_tokens: input.promptTokens ?? null,
+        target_completion_tokens: input.completionTokens ?? null,
+        target_total_tokens: input.totalTokens ?? null,
+        target_estimated_cost_usd:
+          input.status === "succeeded"
+            ? estimatedOpenAiCostUsd(input.promptTokens, input.completionTokens)
+            : null,
+        target_error_code: input.errorCode ?? null,
+        target_result: input.status === "succeeded" ? input.draft : null,
+      }),
+    });
+    if (!response?.ok) return false;
+    return (await response.json()) === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function recordAiCreditPurchase(input: BillingPurchaseInput) {
   if (
     !isUuid(input.userId) ||
@@ -887,9 +1188,7 @@ export async function recordMonetizationEvent(
           event_name: input.eventName,
           context: input.context,
           platform: input.platform,
-          product_id: resolveAiSummaryProductId(
-            process.env.REVENUECAT_AI_SUMMARY_PRODUCT_ID,
-          ),
+          product_id: freeReleaseProductEventId,
           app_version: input.appVersion ?? null,
           app_build: input.appBuild ?? null,
         }),
@@ -1654,7 +1953,7 @@ export async function getEpisodeVetReviewBundle(
 
   try {
     const episodeResponse = await supabaseRequest(
-      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&limit=1`,
+      `episodes?id=eq.${episodeId}&user_id=eq.${userId}&select=id,pet_id,status,started_at,last_activity_at,closed_at,source_revision&limit=1`,
       { method: "GET" },
     );
     if (!episodeResponse?.ok) return null;
@@ -1665,9 +1964,14 @@ export async function getEpisodeVetReviewBundle(
       started_at: string;
       last_activity_at: string;
       closed_at: string | null;
+      source_revision: number;
     }>;
     const episodeRow = episodeRows[0];
-    if (!episodeRow) return null;
+    if (
+      !episodeRow ||
+      !Number.isSafeInteger(Number(episodeRow.source_revision)) ||
+      Number(episodeRow.source_revision) < 0
+    ) return null;
     const episode = toPetEpisode(episodeRow);
 
     const [
@@ -1723,6 +2027,7 @@ export async function getEpisodeVetReviewBundle(
 
     return {
       episode,
+      sourceRevision: Number(episodeRow.source_revision),
       pet,
       reports: reports.map((report) => ({
         ...report,
@@ -1740,7 +2045,7 @@ export async function saveEpisodePlan(
   accessToken: string | null,
   episodeId: string | null,
   tasks: string[],
-): Promise<EpisodePlan | null> {
+): Promise<{ plan: EpisodePlan; episode: PetEpisode } | null> {
   if (!isUuid(episodeId)) return null;
   const userId = await getAuthenticatedUserId(accessToken);
   const cleanedTasks = tasks.map((task) => task.trim()).filter(Boolean);
@@ -1767,13 +2072,28 @@ export async function saveEpisodePlan(
     const planId = (await savedResponse.json()) as string;
     if (!isUuid(planId)) return null;
 
-    const response = await supabaseRequest(
-      `episode_plans?id=eq.${planId}&user_id=eq.${userId}&select=id,episode_id,pet_id,source_type,review_status,reported_at,plan_tasks(id,task_text,position,completed_at)&limit=1`,
-      { method: "GET" },
-    );
-    if (!response?.ok) return null;
-    const rows = (await response.json()) as Parameters<typeof toEpisodePlan>[0][];
-    return rows[0] ? toEpisodePlan(rows[0]) : null;
+    const [planResponse, episodeResponse] = await Promise.all([
+      supabaseRequest(
+        `episode_plans?id=eq.${planId}&user_id=eq.${userId}&select=id,episode_id,pet_id,source_type,review_status,reported_at,plan_tasks(id,task_text,position,completed_at)&limit=1`,
+        { method: "GET" },
+      ),
+      supabaseRequest(
+        `episodes?id=eq.${episodeId}&user_id=eq.${userId}&select=id,pet_id,status,started_at,last_activity_at,closed_at&limit=1`,
+        { method: "GET" },
+      ),
+    ]);
+    if (!planResponse?.ok || !episodeResponse?.ok) return null;
+    const planRows = (await planResponse.json()) as Parameters<
+      typeof toEpisodePlan
+    >[0][];
+    const episodeRows = (await episodeResponse.json()) as Parameters<
+      typeof toPetEpisode
+    >[0][];
+    if (!planRows[0] || !episodeRows[0]) return null;
+    return {
+      plan: toEpisodePlan(planRows[0]),
+      episode: toPetEpisode(episodeRows[0]),
+    };
   } catch {
     return null;
   }
@@ -1831,5 +2151,26 @@ export async function checkDatabaseConnection(): Promise<DatabaseStatus> {
     return response?.ok ? "connected" : "error";
   } catch {
     return "error";
+  }
+}
+
+export async function checkFreeReleaseSchema(): Promise<FreeReleaseSchemaStatus> {
+  if (!getConfig()) return "unconfigured";
+  try {
+    const [columnResponse, versionResponse] = await Promise.all([
+      supabaseRequest("health_reports?select=id,source_revision&limit=1", {
+        method: "GET",
+        headers: { Range: "0-0" },
+      }),
+      supabaseRequest("rpc/get_free_release_schema_version", {
+        method: "POST",
+        body: "{}",
+      }),
+    ]);
+    if (!columnResponse?.ok || !versionResponse?.ok) return "missing";
+    const version = (await versionResponse.json()) as unknown;
+    return version === "202608180004" ? "ready" : "missing";
+  } catch {
+    return "missing";
   }
 }

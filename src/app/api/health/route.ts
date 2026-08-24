@@ -1,13 +1,19 @@
 import { NextResponse } from "next/server";
-import { revenueCatServerConfiguration } from "@/lib/billing-config";
-import { checkDatabaseConnection } from "@/lib/supabase-admin";
+import { freeAiServerConfiguration } from "@/lib/ai-access";
+import {
+  checkDatabaseConnection,
+  checkFreeReleaseSchema,
+} from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const database = await checkDatabaseConnection();
-  const billing = revenueCatServerConfiguration();
-  const healthy = database === "connected";
+  const [database, freeReleaseSchema] = await Promise.all([
+    checkDatabaseConnection(),
+    checkFreeReleaseSchema(),
+  ]);
+  const freeAi = freeAiServerConfiguration();
+  const healthy = database === "connected" && freeReleaseSchema === "ready";
   const version =
     process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ??
     process.env.GIT_COMMIT_SHA?.slice(0, 12) ??
@@ -16,11 +22,13 @@ export async function GET() {
     {
       status: healthy ? "ok" : "degraded",
       database,
-      billing: billing.ready ? "configured" : "unconfigured",
-      billingChecks: {
-        customerSync: billing.customerSync,
-        webhook: billing.webhook,
-        productAllowlist: billing.productAllowlist,
+      freeReleaseSchema,
+      releaseMode: "free",
+      freeAi: {
+        enabled: freeAi.freeRelease && freeAi.generationConfigured,
+        generationConfigured: freeAi.generationConfigured,
+        dailyLimit: freeAi.dailyLimit,
+        dailyAttemptLimit: freeAi.dailyAttemptLimit,
       },
       version,
       checkedAt: new Date().toISOString(),

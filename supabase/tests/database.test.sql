@@ -1,6 +1,6 @@
 begin;
 
-select plan(133);
+select plan(190);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -62,10 +62,14 @@ select col_not_null(
 select col_not_null('public', 'health_reports', 'user_id', 'report owner is required');
 select col_not_null('public', 'health_reports', 'pet_id', 'report pet is required');
 select col_not_null('public', 'health_reports', 'episode_id', 'report flow is required');
-select has_constraint(
-  'public',
-  'health_reports',
-  'health_reports_user_client_id_key',
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.health_reports'::regclass
+      and conname = 'health_reports_user_client_id_key'
+      and contype = 'u'
+  ),
   'report request ids are idempotent within an account'
 );
 select has_column('public', 'health_reports', 'owner_note', 'owner source note is stored');
@@ -133,16 +137,24 @@ select is(
   'pets has owner-only CRUD policies'
 );
 select has_column('public', 'pets', 'photo_path', 'pet profile photo path exists');
-select has_check(
-  'public',
-  'pets',
-  'pets_photo_owner_path_check',
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.pets'::regclass
+      and conname = 'pets_photo_owner_path_check'
+      and contype = 'c'
+  ),
   'pet photo paths are bound to the owner prefix'
 );
-select has_check(
-  'public',
-  'pets',
-  'pets_breed_length_check',
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.pets'::regclass
+      and conname = 'pets_breed_length_check'
+      and contype = 'c'
+  ),
   'pet breed length is constrained in the database'
 );
 select has_column(
@@ -234,10 +246,14 @@ select col_is_null(
   'phone_consented_at',
   'legacy phone consent timestamp is optional'
 );
-select has_check(
-  'public',
-  'tester_profiles',
-  'tester_profiles_nickname_trimmed_check',
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.tester_profiles'::regclass
+      and conname = 'tester_profiles_nickname_trimmed_check'
+      and contype = 'c'
+  ),
   'profile nicknames are normalized in the database'
 );
 select is(
@@ -263,6 +279,475 @@ select is(
 select has_column('public', 'episode_plans', 'source_type', 'plan source is stored');
 select has_column('public', 'episode_plans', 'review_status', 'plan review status is stored');
 select has_column('public', 'plan_tasks', 'completed_at', 'legacy completion data remains readable');
+select has_function(
+  'public',
+  'ensure_open_episode',
+  array['uuid', 'uuid', 'timestamp with time zone'],
+  'the server can open the current episode without a manual completion action'
+);
+select has_function(
+  'public',
+  'save_user_reported_episode_plan',
+  array['uuid', 'uuid', 'jsonb'],
+  'the server can save owner-reported hospital guidance'
+);
+select has_trigger(
+  'public',
+  'health_reports',
+  'health_reports_assign_open_episode',
+  'report inserts choose their open episode atomically'
+);
+
+insert into auth.users (id)
+values ('00000000-0000-4000-8000-0000000000e1'::uuid);
+
+insert into public.pets (id, user_id, name, species)
+values (
+  '00000000-0000-4000-8000-0000000000e2'::uuid,
+  '00000000-0000-4000-8000-0000000000e1'::uuid,
+  '에피소드경계',
+  'dog'
+);
+
+create temporary table episode_boundary_fixture (
+  first_episode_id uuid,
+  first_plan_id uuid,
+  second_episode_id uuid,
+  second_plan_id uuid
+);
+
+insert into episode_boundary_fixture (first_episode_id)
+values (
+  public.ensure_open_episode(
+    '00000000-0000-4000-8000-0000000000e1'::uuid,
+    '00000000-0000-4000-8000-0000000000e2'::uuid,
+    '2026-08-18 09:00:00+09'::timestamptz
+  )
+);
+
+update episode_boundary_fixture
+set first_plan_id = public.save_user_reported_episode_plan(
+  '00000000-0000-4000-8000-0000000000e1'::uuid,
+  first_episode_id,
+  '["첫 방문 안내"]'::jsonb
+);
+
+select is(
+  (
+    select status
+    from public.episodes
+    where id = (select first_episode_id from episode_boundary_fixture)
+  ),
+  'closed'::text,
+  'saving hospital guidance closes the current episode automatically'
+);
+select ok(
+  (
+    select closed_at is not null
+    from public.episodes
+    where id = (select first_episode_id from episode_boundary_fixture)
+  ),
+  'the automatic episode boundary stores its close timestamp'
+);
+
+update public.episode_plans
+set reported_at = '2000-01-01 00:00:00+00'::timestamptz
+where id = (select first_plan_id from episode_boundary_fixture);
+
+update episode_boundary_fixture
+set first_plan_id = public.save_user_reported_episode_plan(
+  '00000000-0000-4000-8000-0000000000e1'::uuid,
+  first_episode_id,
+  '["첫 방문 수정 안내"]'::jsonb
+);
+
+select ok(
+  (
+    select reported_at > '2000-01-01 00:00:00+00'::timestamptz
+    from public.episode_plans
+    where id = (select first_plan_id from episode_boundary_fixture)
+  ),
+  'editing guidance refreshes its reported timestamp'
+);
+
+insert into public.health_reports (
+  id,
+  client_id,
+  user_id,
+  pet_id,
+  episode_id,
+  species,
+  age_group,
+  appetite,
+  energy,
+  duration,
+  risk_level,
+  risk_score,
+  analysis_source,
+  created_at
+) values (
+  '00000000-0000-4000-8000-0000000000e3'::uuid,
+  '00000000-0000-4000-8000-0000000000e4'::uuid,
+  '00000000-0000-4000-8000-0000000000e1'::uuid,
+  '00000000-0000-4000-8000-0000000000e2'::uuid,
+  (select first_episode_id from episode_boundary_fixture),
+  'dog',
+  'adult',
+  'normal',
+  'normal',
+  'today',
+  'watch',
+  0,
+  'local',
+  '2026-08-19 09:00:00+09'::timestamptz
+);
+
+update episode_boundary_fixture
+set second_episode_id = (
+  select episode_id
+  from public.health_reports
+  where id = '00000000-0000-4000-8000-0000000000e3'::uuid
+    and client_id = '00000000-0000-4000-8000-0000000000e4'::uuid
+);
+
+select isnt(
+  (select first_episode_id from episode_boundary_fixture),
+  (select second_episode_id from episode_boundary_fixture),
+  'the next observation opens a fresh episode after hospital guidance'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.episodes
+    where pet_id = '00000000-0000-4000-8000-0000000000e2'::uuid
+      and status = 'open'
+  ),
+  1,
+  'a pet still has exactly one open episode after automatic rollover'
+);
+
+update episode_boundary_fixture
+set second_plan_id = public.save_user_reported_episode_plan(
+  '00000000-0000-4000-8000-0000000000e1'::uuid,
+  second_episode_id,
+  '["두 번째 방문 안내"]'::jsonb
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.episode_plans
+    where pet_id = '00000000-0000-4000-8000-0000000000e2'::uuid
+  ),
+  2,
+  'guidance from separate visits remains in separate episode plans'
+);
+select is(
+  (
+    select task.task_text
+    from public.plan_tasks task
+    where task.plan_id = (select first_plan_id from episode_boundary_fixture)
+  ),
+  '첫 방문 수정 안내'::text,
+  'the earlier visit guidance remains readable after the next visit'
+);
+select is(
+  (
+    select task.task_text
+    from public.plan_tasks task
+    where task.plan_id = (select second_plan_id from episode_boundary_fixture)
+  ),
+  '두 번째 방문 안내'::text,
+  'the next visit guidance is stored without replacing the earlier visit'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.episodes
+    where pet_id = '00000000-0000-4000-8000-0000000000e2'::uuid
+      and status = 'open'
+  ),
+  0,
+  'saving the next visit guidance also leaves no episode open forever'
+);
+
+select is(
+  (
+    select reservation_state
+    from public.reserve_free_ai_report_usage(
+      '00000000-0000-4000-8000-0000000000e1'::uuid,
+      '00000000-0000-4000-8000-0000000000e2'::uuid,
+      (select first_episode_id from episode_boundary_fixture),
+      'gpt-test',
+      '00000000-0000-4000-8000-0000000000e5'::uuid,
+      repeat('a', 64),
+      (
+        select source_revision
+        from public.episodes
+        where id = (select first_episode_id from episode_boundary_fixture)
+      ),
+      array[]::uuid[],
+      3
+    )
+  ),
+  'reserved'::text,
+  'a free draft reserves the exact current source revision'
+);
+
+create temporary table free_ai_fencing_fixture as
+select reservation_token as first_reservation_token
+from public.ai_report_usage
+where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid;
+
+update public.ai_report_usage
+set reservation_updated_at = now() - interval '6 minutes'
+where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid;
+
+select is(
+  (
+    select reservation_state
+    from public.reserve_free_ai_report_usage(
+      '00000000-0000-4000-8000-0000000000e1'::uuid,
+      '00000000-0000-4000-8000-0000000000e2'::uuid,
+      (select first_episode_id from episode_boundary_fixture),
+      'gpt-test',
+      '00000000-0000-4000-8000-0000000000e5'::uuid,
+      repeat('a', 64),
+      (
+        select source_revision
+        from public.episodes
+        where id = (select first_episode_id from episode_boundary_fixture)
+      ),
+      array[]::uuid[],
+      3
+    )
+  ),
+  'reserved'::text,
+  'reservation retries clean up an abandoned free attempt themselves'
+);
+select ok(
+  (
+    select usage.reservation_token <> fixture.first_reservation_token
+      and usage.attempt_count = 2
+    from public.ai_report_usage usage
+    cross join free_ai_fencing_fixture fixture
+    where usage.request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+  ),
+  'a retry receives a fresh fencing token and counts one more same-day attempt'
+);
+select is(
+  public.complete_free_ai_report_usage(
+    (
+      select id
+      from public.ai_report_usage
+      where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+    ),
+    '00000000-0000-4000-8000-0000000000e1'::uuid,
+    (select first_reservation_token from free_ai_fencing_fixture),
+    'succeeded',
+    'gpt-test',
+    1,
+    1,
+    2,
+    0,
+    null,
+    '{"overview":"stale draft"}'::jsonb
+  ),
+  false,
+  'an earlier attempt token cannot complete after a retry reserves the row'
+);
+select is(
+  (
+    select status
+    from public.ai_report_usage
+    where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+  ),
+  'pending'::text,
+  'a stale completion leaves the current reservation pending'
+);
+
+select is(
+  public.complete_free_ai_report_usage(
+    (
+      select id
+      from public.ai_report_usage
+      where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+    ),
+    '00000000-0000-4000-8000-0000000000e1'::uuid,
+    (
+      select reservation_token
+      from public.ai_report_usage
+      where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+    ),
+    'succeeded',
+    'gpt-test',
+    1,
+    1,
+    2,
+    0,
+    null,
+    '{"overview":"stored draft"}'::jsonb
+  ),
+  true,
+  'a free draft completes while its source revision is current'
+);
+select ok(
+  (
+    select result is not null
+    from public.ai_report_usage
+    where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+  ),
+  'the current successful draft is recoverable'
+);
+
+update public.plan_tasks
+set task_text = '첫 방문 변경 안내', updated_at = now()
+where plan_id = (select first_plan_id from episode_boundary_fixture);
+
+select ok(
+  (
+    select result is null and error_code = 'source_changed'
+    from public.ai_report_usage
+    where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+  ),
+  'editing a source fact removes the older recoverable draft'
+);
+select ok(
+  (
+    select usage.source_revision < episode.source_revision
+    from public.ai_report_usage usage
+    join public.episodes episode on episode.id = usage.episode_id
+    where usage.request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+  ),
+  'source mutation advances the episode revision beyond the stored draft'
+);
+
+update public.ai_report_usage
+set status = 'failed', attempt_count = 9, result = null
+where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid;
+
+select is(
+  (
+    select reservation_state
+    from public.reserve_free_ai_report_usage(
+      '00000000-0000-4000-8000-0000000000e1'::uuid,
+      '00000000-0000-4000-8000-0000000000e2'::uuid,
+      (select first_episode_id from episode_boundary_fixture),
+      'gpt-test',
+      '00000000-0000-4000-8000-0000000000e5'::uuid,
+      repeat('b', 64),
+      (
+        select source_revision
+        from public.episodes
+        where id = (select first_episode_id from episode_boundary_fixture)
+      ),
+      array[]::uuid[],
+      3
+    )
+  ),
+  'attempt_limit'::text,
+  'repeated failed model calls stop at three times the daily success limit'
+);
+
+update public.ai_report_usage
+set fair_use_date = timezone('Asia/Seoul', now())::date - 1,
+    status = 'failed'
+where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid;
+
+select is(
+  (
+    select reservation_state
+    from public.reserve_free_ai_report_usage(
+      '00000000-0000-4000-8000-0000000000e1'::uuid,
+      '00000000-0000-4000-8000-0000000000e2'::uuid,
+      (select first_episode_id from episode_boundary_fixture),
+      'gpt-test',
+      '00000000-0000-4000-8000-0000000000e5'::uuid,
+      repeat('b', 64),
+      (
+        select source_revision
+        from public.episodes
+        where id = (select first_episode_id from episode_boundary_fixture)
+      ),
+      array[]::uuid[],
+      3
+    )
+  ),
+  'reserved'::text,
+  'a prior KST day attempt budget does not block a new day'
+);
+select ok(
+  (
+    select attempt_count = 1
+      and fair_use_date = timezone('Asia/Seoul', now())::date
+    from public.ai_report_usage
+    where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid
+  ),
+  'reusing an idempotency row on a new KST day resets its attempt count'
+);
+
+update public.ai_report_usage
+set status = 'succeeded',
+    attempt_count = 1,
+    source_revision = (
+      select source_revision
+      from public.episodes
+      where id = (select first_episode_id from episode_boundary_fixture)
+    ),
+    request_fingerprint = repeat('c', 64),
+    result = '{"overview":"first"}'::jsonb
+where request_id = '00000000-0000-4000-8000-0000000000e5'::uuid;
+
+insert into public.ai_report_usage (
+  user_id, pet_id, episode_id, status, model, access_mode, request_id,
+  request_fingerprint, source_revision, reservation_token, attempt_count,
+  selected_report_ids, result, fair_use_date
+)
+select
+  '00000000-0000-4000-8000-0000000000e1'::uuid,
+  '00000000-0000-4000-8000-0000000000e2'::uuid,
+  first_episode_id,
+  'succeeded',
+  'gpt-test',
+  'free_daily',
+  request_id,
+  repeat(fingerprint_character, 64),
+  episode.source_revision,
+  gen_random_uuid(),
+  1,
+  array[]::uuid[],
+  jsonb_build_object('overview', label),
+  timezone('Asia/Seoul', now())::date
+from episode_boundary_fixture fixture
+join public.episodes episode on episode.id = fixture.first_episode_id
+cross join (
+  values
+    ('00000000-0000-4000-8000-0000000000e6'::uuid, 'd', 'second'),
+    ('00000000-0000-4000-8000-0000000000e7'::uuid, 'e', 'third')
+) usage_rows(request_id, fingerprint_character, label);
+
+select is(
+  (
+    select reservation_state
+    from public.reserve_free_ai_report_usage(
+      '00000000-0000-4000-8000-0000000000e1'::uuid,
+      '00000000-0000-4000-8000-0000000000e2'::uuid,
+      (select first_episode_id from episode_boundary_fixture),
+      'gpt-test',
+      '00000000-0000-4000-8000-0000000000e8'::uuid,
+      repeat('f', 64),
+      (
+        select source_revision
+        from public.episodes
+        where id = (select first_episode_id from episode_boundary_fixture)
+      ),
+      array[]::uuid[],
+      3
+    )
+  ),
+  'limit'::text,
+  'a fourth successful daily draft is blocked without a model call'
+);
 select is(
   (select confdeltype::text from pg_constraint where conname = 'health_reports_user_id_fkey'),
   'c',
@@ -345,6 +830,112 @@ select is(
 select hasnt_column('public', 'ai_report_usage', 'grant_id', 'AI usage has no code grant');
 select has_column('public', 'ai_report_usage', 'total_tokens', 'AI report token usage is stored');
 select has_column('public', 'ai_report_usage', 'estimated_cost_usd', 'AI report cost estimate is stored');
+select has_column(
+  'public',
+  'ai_report_usage',
+  'access_mode',
+  'AI usage keeps free and legacy credit access isolated'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'request_id',
+  'free AI drafts store an idempotency request UUID'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'request_fingerprint',
+  'free AI drafts bind request IDs to an immutable selection'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'selected_report_ids',
+  'stored AI drafts retain their selected record IDs'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'result',
+  'successful AI draft results are persisted for recovery'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'fair_use_date',
+  'free AI reservations are attributed to a KST fair-use day'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'reservation_updated_at',
+  'stale free AI reservations can be retried safely'
+);
+select has_column(
+  'public',
+  'episodes',
+  'source_revision',
+  'episodes version every fact source used by recoverable AI drafts'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'source_revision',
+  'stored AI drafts retain the source revision they reserved'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'reservation_token',
+  'each free AI attempt stores a completion fencing token'
+);
+select has_column(
+  'public',
+  'ai_report_usage',
+  'attempt_count',
+  'failed model retries count toward an abuse safety budget'
+);
+select has_trigger(
+  'public', 'health_reports', 'health_reports_invalidate_free_ai_drafts',
+  'report changes invalidate recoverable AI drafts'
+);
+select has_trigger(
+  'public', 'health_report_media', 'health_report_media_invalidate_free_ai_drafts',
+  'media changes invalidate recoverable AI drafts'
+);
+select has_trigger(
+  'public', 'episode_plans', 'episode_plans_invalidate_free_ai_drafts',
+  'hospital guidance changes invalidate recoverable AI drafts'
+);
+select has_trigger(
+  'public', 'plan_tasks', 'plan_tasks_invalidate_free_ai_drafts',
+  'hospital guidance task changes invalidate recoverable AI drafts'
+);
+select has_trigger(
+  'public', 'episode_progress_logs', 'episode_progress_invalidate_free_ai_drafts',
+  'legacy progress changes invalidate recoverable AI drafts'
+);
+select has_trigger(
+  'public', 'pets', 'pets_invalidate_free_ai_drafts',
+  'pet profile fact changes invalidate recoverable AI drafts'
+);
+select has_index(
+  'public',
+  'ai_report_usage',
+  'ai_report_usage_user_request_key',
+  'AI request IDs are unique within an account'
+);
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.ai_report_usage'::regclass
+      and conname = 'ai_report_usage_free_request_check'
+      and contype = 'c'
+  ),
+  'free AI rows require fair-use and idempotency fields'
+);
 select has_column('public', 'ai_report_feedback', 'usefulness_score', 'AI report usefulness score is stored');
 select hasnt_column('public', 'ai_report_feedback', 'would_pay', 'payment intent is not collected');
 select hasnt_column(
@@ -382,8 +973,8 @@ select is(
     'public.reserve_ai_report_usage(uuid,uuid,uuid,text)',
     'EXECUTE'
   ),
-  true,
-  'service role can reserve AI usage through route handlers'
+  false,
+  'free-release service role cannot execute legacy credit reservations'
 );
 select throws_ok(
   $$
@@ -397,6 +988,99 @@ select throws_ok(
   'P0001',
   'AI report ownership could not be verified',
   'AI usage reservations reject unowned episodes'
+);
+select has_function(
+  'public',
+  'get_free_ai_access_status',
+  array['uuid', 'integer'],
+  'free AI access status accepts the server fair-use limit'
+);
+select has_function(
+  'public',
+  'reserve_free_ai_report_usage',
+  array['uuid', 'uuid', 'uuid', 'text', 'uuid', 'text', 'bigint', 'uuid[]', 'integer'],
+  'free AI reservations accept an idempotency key and selected record IDs'
+);
+select has_function(
+  'public',
+  'complete_free_ai_report_usage',
+  array[
+    'uuid', 'uuid', 'uuid', 'text', 'text', 'integer', 'integer', 'integer',
+    'numeric', 'text', 'jsonb'
+  ],
+  'free AI completion atomically stores the successful draft'
+);
+select is(
+  has_function_privilege(
+    'authenticated',
+    'public.get_free_ai_access_status(uuid,integer)',
+    'EXECUTE'
+  ),
+  false,
+  'authenticated users cannot query free AI limits directly'
+);
+select is(
+  has_function_privilege(
+    'service_role',
+    'public.get_free_ai_access_status(uuid,integer)',
+    'EXECUTE'
+  ),
+  true,
+  'service role can query free AI limits through route handlers'
+);
+select is(
+  has_function_privilege(
+    'authenticated',
+    'public.reserve_free_ai_report_usage(uuid,uuid,uuid,text,uuid,text,bigint,uuid[],integer)',
+    'EXECUTE'
+  ),
+  false,
+  'authenticated users cannot reserve free AI usage directly'
+);
+select is(
+  has_function_privilege(
+    'service_role',
+    'public.reserve_free_ai_report_usage(uuid,uuid,uuid,text,uuid,text,bigint,uuid[],integer)',
+    'EXECUTE'
+  ),
+  true,
+  'service role can reserve free AI usage atomically'
+);
+select is(
+  has_function_privilege(
+    'authenticated',
+    'public.complete_free_ai_report_usage(uuid,uuid,uuid,text,text,integer,integer,integer,numeric,text,jsonb)',
+    'EXECUTE'
+  ),
+  false,
+  'authenticated users cannot persist free AI results directly'
+);
+select is(
+  has_function_privilege(
+    'service_role',
+    'public.complete_free_ai_report_usage(uuid,uuid,uuid,text,text,integer,integer,integer,numeric,text,jsonb)',
+    'EXECUTE'
+  ),
+  true,
+  'service role can persist free AI results atomically'
+);
+select throws_ok(
+  $$
+    select * from public.reserve_free_ai_report_usage(
+      '00000000-0000-4000-8000-000000000001'::uuid,
+      '00000000-0000-4000-8000-000000000002'::uuid,
+      '00000000-0000-4000-8000-000000000003'::uuid,
+      'gpt-test',
+      '00000000-0000-4000-8000-000000000004'::uuid,
+      repeat('a', 64),
+      0,
+      array[]::uuid[],
+      3
+    )
+  $$,
+  'P0001',
+  'AI report ownership could not be verified',
+  'free AI reservations reject unowned episodes before counting usage'
 );
 select has_column(
   'public',
@@ -437,6 +1121,35 @@ select is(
   has_table_privilege('authenticated', 'public.monetization_events', 'SELECT'),
   false,
   'authenticated users cannot query monetization events directly'
+);
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.monetization_events'::regclass
+      and conname = 'monetization_events_event_name_check'
+      and pg_get_constraintdef(oid) like '%factual_summary_shared%'
+  ),
+  'free factual handoff shares are accepted as product-quality events'
+);
+select ok(
+  public.get_free_release_schema_version() = '202608180004'
+    and has_function_privilege(
+      'service_role',
+      'public.get_free_release_schema_version()',
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'authenticated',
+      'public.get_free_release_schema_version()',
+      'EXECUTE'
+    )
+    and not has_function_privilege(
+      'anon',
+      'public.get_free_release_schema_version()',
+      'EXECUTE'
+    ),
+  'the complete free-release schema exposes its version only to the server role'
 );
 select is(
   has_table_privilege('service_role', 'public.billing_daily_metrics', 'SELECT'),
@@ -547,8 +1260,29 @@ select is(
     'public.release_stale_ai_report_reservations(uuid)',
     'EXECUTE'
   ),
-  true,
-  'service role can recover stale AI reservations'
+  false,
+  'free-release service role cannot execute legacy credit recovery'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_proc procedure
+    join pg_namespace namespace on namespace.oid = procedure.pronamespace
+    where namespace.nspname = 'public'
+      and procedure.proname = any(array[
+        'ensure_ai_complimentary_credit',
+        'get_ai_credit_status',
+        'release_stale_ai_report_reservations',
+        'reserve_ai_report_usage',
+        'complete_ai_report_usage',
+        'record_ai_credit_purchase',
+        'refund_ai_credit_purchase',
+        'reverse_ai_credit_refund'
+      ])
+      and has_function_privilege('service_role', procedure.oid, 'EXECUTE')
+  ),
+  0,
+  'free-release service role cannot execute any legacy paid-credit RPC'
 );
 select is(
   (

@@ -2,6 +2,7 @@ import type {
   AnalysisResult,
   HealthCheckInput,
   PetProfile,
+  RedFlagId,
   RiskLevel,
   SymptomId,
 } from "./types";
@@ -229,6 +230,60 @@ const symptomScore: Record<SymptomId, number> = {
 const disclaimer =
   "이 결과는 보호자의 기록 정리를 돕는 참고 정보이며 수의사의 진단을 대신하지 않습니다. 상태가 빠르게 악화되거나 호흡 곤란, 의식 저하, 경련, 지속 출혈이 있으면 즉시 가까운 동물병원에 연락하세요.";
 
+const emergencyPhrasePatterns: Record<RedFlagId, readonly RegExp[]> = {
+  breathing: [
+    /(?:숨|호흡)(?:을|이)?\s*(?:거의\s*)?(?:못\s*(?:쉬|쉰)|안\s*(?:쉬|쉰)|멎|멈췄)/u,
+    /(?:숨쉬기|호흡)(?:가|이)?\s*(?:매우|너무|심하게|몹시)\s*(?:힘들|어렵)/u,
+  ],
+  collapse: [
+    /(?:갑자기\s*)?쓰러(?:졌|져\s*있|진\s*채)/u,
+    /의식(?:이|을)?\s*(?:없|잃|돌아오지\s*않|희미|흐려)/u,
+    /(?:불러도|깨워도|건드려도)\s*(?:전혀\s*)?반응(?:이)?\s*없/u,
+    /기절(?:했|한\s*채)/u,
+  ],
+  seizure: [
+    /(?:전신\s*)?경련(?:이|을)?\s*(?:있|해|하|반복|계속|중)/u,
+    /발작(?:이|을)?\s*(?:있|해|하|반복|계속|중)/u,
+    /(?:온몸|몸)(?:이)?\s*(?:뻣뻣해지며|심하게\s*떨며)\s*(?:의식|반응)(?:이)?\s*없/u,
+  ],
+  bleeding: [
+    /(?:피|출혈)(?:가|이)?\s*(?:계속\s*)?(?:멈추지\s*않|안\s*멈(?:추|춰)|계속\s*(?:나|흐르)|쏟아)/u,
+    /지혈(?:이)?\s*(?:안\s*되|되지\s*않)/u,
+  ],
+};
+
+export function detectEmergencyRedFlags(text: string): RedFlagId[] {
+  const normalized = text.normalize("NFKC").replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  return (Object.keys(emergencyPhrasePatterns) as RedFlagId[]).filter((flag) =>
+    emergencyPhrasePatterns[flag].some((pattern) => pattern.test(normalized)),
+  );
+}
+
+export function hasAssessableObservation(input: HealthCheckInput) {
+  return Boolean(
+    input.symptoms.length ||
+      input.redFlags.length ||
+      detectEmergencyRedFlags(input.note).length ||
+      input.appetite !== "normal" ||
+      input.energy !== "normal" ||
+      input.duration !== "today",
+  );
+}
+
+export function hasKnownValidBirthDate(
+  value: string | undefined,
+  now = new Date(),
+) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value &&
+    parsed.getTime() <= now.getTime()
+  );
+}
+
 export function deriveAgeGroup(
   birthDate: string,
   now = new Date(),
@@ -277,7 +332,7 @@ function riskCopy(level: RiskLevel) {
     return {
       headline: "가까운 시일 내 진료를 권장해요",
       summary:
-        "증상과 컨디션 저하가 함께 보여 전문적인 확인이 필요할 수 있습니다. 가능하면 24시간 안에 병원 상담 일정을 잡아 주세요.",
+        "증상과 컨디션 저하가 함께 기록됐습니다. 가능한 빠른 시일 안에 동물병원에 연락해 상담 시점을 정해 주세요.",
     };
   }
   return {
@@ -288,6 +343,8 @@ function riskCopy(level: RiskLevel) {
 }
 
 export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
+  const inferredRedFlags = detectEmergencyRedFlags(input.note);
+  const redFlags = [...new Set([...input.redFlags, ...inferredRedFlags])];
   let score = input.symptoms.reduce(
     (total, symptom) => total + symptomScore[symptom],
     0,
@@ -302,11 +359,11 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
           ? 18
           : 0;
   score += input.ageGroup === "senior" ? 5 : 0;
-  score += input.redFlags.length > 0 ? 70 : 0;
+  score += redFlags.length > 0 ? 70 : 0;
   score = Math.min(100, Math.max(8, score));
 
   const riskLevel: RiskLevel =
-    input.redFlags.length > 0 || score >= 70
+    redFlags.length > 0 || score >= 70
       ? "urgent"
       : score >= 38
         ? "soon"
@@ -314,7 +371,7 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
   const copy = riskCopy(riskLevel);
   const symptomText = input.symptoms.length
     ? formatSymptomSummary(input)
-    : "선택한 주요 증상 없음";
+    : "입력되지 않아 평가하지 않음";
   const profileLine = [
     input.species === "dog"
       ? "강아지"
@@ -322,7 +379,9 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
         ? "고양이"
         : "기타",
     input.breed,
-    ageGroupLabels[input.ageGroup],
+    hasKnownValidBirthDate(input.birthDate)
+      ? ageGroupLabels[input.ageGroup]
+      : "",
     input.weight,
   ]
     .filter(Boolean)
@@ -334,11 +393,25 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
     input.energy !== "normal" ? `활력 ${levelLabels[input.energy]}` : "",
     input.duration !== "today" ? durationLabels[input.duration] : "",
   ].filter(Boolean);
+  const unassessedFields = [
+    input.symptoms.length ? "" : "주요 증상",
+    input.appetite === "normal" ? "식욕" : "",
+    input.energy === "normal" ? "활력" : "",
+    input.duration === "today" ? "시작 시점" : "",
+  ].filter(Boolean);
+  const onlyUnassessedDefaults = !hasAssessableObservation(input);
+  const unassessedDetail = unassessedFields.length
+    ? `${unassessedFields.join("·")} 정보는 선택되지 않아 평가하지 않았어요.`
+    : "";
   const summaryDetail = changedBits.length
-    ? `${changedBits.join(" · ")}로 기록됐어요.`
-    : "오늘은 선택한 주요 증상 없이 평소 상태에 가깝게 기록됐어요.";
+    ? `${changedBits.join(" · ")}로 입력됐어요.${unassessedDetail ? ` ${unassessedDetail}` : ""}`
+    : inferredRedFlags.length
+      ? `보호자 메모에 즉시 확인이 필요한 표현이 입력됐어요. ${unassessedDetail}`
+      : `${unassessedDetail} ${input.note.trim() ? "보호자 메모는 입력한 원문으로만 정리했어요." : "보호자 메모도 입력되지 않았어요."} 첨부 이미지가 있다면 그 내용도 판독하지 않았어요.`;
   const summary =
-    riskLevel === "urgent"
+    onlyUnassessedDefaults
+      ? summaryDetail
+      : riskLevel === "urgent"
       ? `${summaryDetail} 위험 신호가 포함되어 있어 리포트를 더 읽기보다 병원에 먼저 연락하는 흐름이 맞아요.`
       : riskLevel === "soon"
         ? `${summaryDetail} 지금 바로 응급이라고 단정할 수는 없지만, 같은 상태가 이어지면 상담 일정을 잡아두는 편이 안전해요.`
@@ -347,16 +420,30 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
   const observations = [
     input.symptoms.length
       ? `선택한 증상: ${symptomText}`
-      : "주요 증상은 따로 선택하지 않았어요.",
-    `이어진 기간: ${durationLabels[input.duration]}`,
-    `식욕 ${levelLabels[input.appetite]} · 활력 ${levelLabels[input.energy]}`,
+      : "주요 증상: 입력되지 않아 평가하지 않음",
+    input.duration !== "today"
+      ? `이어진 기간: ${durationLabels[input.duration]}`
+      : "시작 시점: 입력되지 않아 평가하지 않음",
+    input.appetite !== "normal"
+      ? `식욕: ${levelLabels[input.appetite]}`
+      : "식욕: 입력되지 않아 평가하지 않음",
+    input.energy !== "normal"
+      ? `활력: ${levelLabels[input.energy]}`
+      : "활력: 입력되지 않아 평가하지 않음",
     input.note.trim()
-      ? "추가 메모가 있어 병원 공유용 요약에 함께 정리했어요."
-      : "짧은 메모가 없어도 선택한 항목만으로 기록을 만들었어요.",
+      ? "보호자 메모: 입력한 원문으로 저장"
+      : "보호자 메모: 입력 없음",
+    "첨부 사진·영상: PetFlow가 내용을 판독하지 않음",
   ];
 
   const actions =
-    riskLevel === "urgent"
+    onlyUnassessedDefaults
+      ? [
+          "메모나 첨부 자료만으로 상태를 판단하지 마세요.",
+          "호흡이 매우 힘들거나 쓰러짐·의식 소실·경련·멈추지 않는 출혈이 있으면 병원에 먼저 연락하세요.",
+          "상태가 걱정되면 동물병원에 연락해 직접 확인을 받으세요.",
+        ]
+      : riskLevel === "urgent"
       ? [
           "이동 전에 동물병원에 전화해 위험 신호를 먼저 전달하세요.",
           "가능하면 증상이 시작된 시각과 변화를 메모해 함께 보여 주세요.",
@@ -364,12 +451,12 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
         ]
       : riskLevel === "soon"
         ? [
-            "24시간 안에 동물병원 또는 수의사 상담을 예약해 보세요.",
+            "가능한 빠른 시일 안에 동물병원에 연락해 상담 시점을 확인하세요.",
             "상담 전 같은 기준으로 한 번 더 기록하면 변화 설명이 쉬워요.",
             "증상이 심해지거나 위험 신호가 생기면 바로 병원에 연락하세요.",
           ]
         : [
-            "6~12시간 간격으로 식욕, 활력, 배변·배뇨 상태를 다시 확인하세요.",
+            "평소와 같은 기준으로 식욕, 활력, 배변·배뇨 상태의 변화를 다시 확인하세요.",
             "말로 설명하기 어려운 장면은 사진·영상으로 한 번만 남겨 두세요.",
             "증상이 이어지거나 새로운 변화가 생기면 병원 상담을 고려하세요.",
           ];
@@ -379,11 +466,13 @@ export function analyzeLocally(input: HealthCheckInput): AnalysisResult {
     createdAt: new Date().toISOString(),
     riskLevel,
     riskScore: score,
-    headline: copy.headline,
+    headline: onlyUnassessedDefaults
+      ? "입력된 정보만 사실대로 정리했어요"
+      : copy.headline,
     summary,
     observations,
     actions,
-    vetBrief: `${input.petName || "반려동물"} / ${profileLine}\n증상: ${symptomText}\n기간: ${durationLabels[input.duration]}\n식욕: ${levelLabels[input.appetite]} / 활력: ${levelLabels[input.energy]}${input.note ? `\n보호자 메모: ${input.note}` : ""}`,
+    vetBrief: `${input.petName || "반려동물"} / ${profileLine}\n증상: ${symptomText}\n기간: ${input.duration === "today" ? "입력되지 않아 평가하지 않음" : durationLabels[input.duration]}\n식욕: ${input.appetite === "normal" ? "입력되지 않아 평가하지 않음" : levelLabels[input.appetite]} / 활력: ${input.energy === "normal" ? "입력되지 않아 평가하지 않음" : levelLabels[input.energy]}${input.note.trim() ? `\n보호자 메모: ${input.note.trim()}` : ""}\n첨부 사진·영상: PetFlow 판독 안 함`,
     disclaimer,
     source: "local",
   };

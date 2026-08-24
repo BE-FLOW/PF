@@ -23,6 +23,7 @@ module.exports = {
       backgroundColor: "#f2faeb",
     },
     plugins: [
+      "expo-font",
       "expo-secure-store",
       [
         "expo-web-browser",
@@ -50,12 +51,14 @@ module.exports = {
     },
     android: {
       package: "com.beflow.petflow",
-      blockedPermissions: ["android.permission.RECORD_AUDIO"],
+      blockedPermissions: [
+        "android.permission.RECORD_AUDIO",
+        "com.android.vending.BILLING",
+      ],
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
         backgroundColor: "#f8dca3",
       },
-      permissions: ["com.android.vending.BILLING"],
     },
     extra: {
       apiBaseUrl,

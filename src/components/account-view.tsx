@@ -10,7 +10,6 @@ import {
   hasLinkedProvider,
   type OAuthProvider,
 } from "@/lib/auth-identities";
-import type { WebBillingProduct } from "@/lib/billing-web";
 import type { AiAccessStatus, PetProfile, AccountProfile } from "@/lib/types";
 import { Icon } from "./icon";
 
@@ -68,22 +67,35 @@ function aiAccessCopy(access: AiAccessStatus | null) {
     return "병원 전달본 이용 가능 횟수를 확인하고 있어요.";
   }
   if (access.reason === "unavailable") {
-    return "이용 가능 횟수를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
+    return "오늘의 무료 생성 가능 횟수를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.";
   }
-  if (access.reason === "no_credits") {
-    return "필요할 때 병원 전달본 1회만 추가해요.";
+  if (access.reason === "attempt_limit") {
+    return `오늘 반복 요청 안전 한도에 도달했어요. ${aiAccessResetCopy(access)} 기본 사실 전달본과 기록은 계속 이용할 수 있어요.`;
   }
-  return `병원 전달본 ${access.availableCredits}회를 이용할 수 있어요.`;
+  if (access.reason === "daily_limit" || access.reason === "no_credits") {
+    return `오늘의 무료 AI 정리 한도를 사용했어요. ${aiAccessResetCopy(access)} 기본 사실 전달본과 기록은 계속 이용할 수 있어요.`;
+  }
+  return `하루 ${access.dailyLimit}회까지 무료이며 오늘 ${access.availableCredits}회 더 만들 수 있어요.`;
+}
+
+function aiAccessResetCopy(access: AiAccessStatus) {
+  if (!access.resetsAt) return "다음 날 다시 사용할 수 있어요.";
+  const resetsAt = new Date(access.resetsAt);
+  if (Number.isNaN(resetsAt.getTime())) return "다음 날 다시 사용할 수 있어요.";
+  const label = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(resetsAt);
+  return `${label}부터 다시 사용할 수 있어요.`;
 }
 
 export function AccountView({
   user,
   accountProfile,
   aiAccess,
-  billingProduct,
-  billingLoading,
-  billingPurchasePending,
-  billingMessage,
   pets,
   selectedPetId,
   authReady,
@@ -96,8 +108,6 @@ export function AccountView({
   onOAuth,
   onLinkOAuth,
   onRequestAccountDeletion,
-  onPurchaseAiCredit,
-  onRefreshAiCredits,
   onOpenGuide,
   onLogout,
   onAddPet,
@@ -107,10 +117,6 @@ export function AccountView({
   user: User | null;
   accountProfile: AccountProfile | null;
   aiAccess: AiAccessStatus | null;
-  billingProduct: WebBillingProduct | null;
-  billingLoading: boolean;
-  billingPurchasePending: boolean;
-  billingMessage: string;
   pets: PetProfile[];
   selectedPetId?: string;
   authReady: boolean;
@@ -127,11 +133,6 @@ export function AccountView({
   onOAuth: (provider: OAuthProvider) => Promise<string>;
   onLinkOAuth: (provider: OAuthProvider) => Promise<string>;
   onRequestAccountDeletion: () => Promise<string>;
-  onPurchaseAiCredit: () => Promise<{
-    purchased: boolean;
-    error?: string;
-  }>;
-  onRefreshAiCredits: () => Promise<void>;
   onOpenGuide: () => void;
   onLogout: () => Promise<void>;
   onAddPet: () => void;
@@ -160,15 +161,6 @@ export function AccountView({
   const appleLinked = hasLinkedProvider(user, "apple");
   const appleEnabled = enabledOAuthProviders.apple || appleLinked;
   const linkDisabled = linkLoading !== null;
-  const complimentarySummaryAvailable =
-    (aiAccess?.complimentaryCredits ?? 0) > 0;
-  const canOfferPurchase = Boolean(
-    billingProduct &&
-      aiAccess &&
-      aiAccess.reason !== "unavailable" &&
-      !complimentarySummaryAvailable,
-  );
-
   useEffect(() => {
     let active = true;
     void fetchOAuthProviderStatus(
@@ -316,7 +308,7 @@ export function AccountView({
             <div className="account-actions">
               <button
                 className="text-button muted"
-                disabled={billingLoading}
+                disabled={deletionSaving}
                 onClick={onLogout}
               >
                 로그아웃
@@ -407,71 +399,31 @@ export function AccountView({
                   ? "확인 중"
                   : aiAccess.enabled
                     ? `${aiAccess.availableCredits}회`
-                    : aiAccess.reason === "no_credits"
-                      ? "이용권 없음"
+                    : aiAccess.reason === "daily_limit" ||
+                        aiAccess.reason === "attempt_limit" ||
+                        aiAccess.reason === "no_credits"
+                      ? "오늘 한도 완료"
                       : "확인 필요"}
               </span>
             </div>
             {aiAccess && aiAccess.reason !== "unavailable" && (
               <div className="ai-usage-row">
                 <div>
-                  <span>남은 요약</span>
+                  <span>오늘 남은 AI 정리</span>
                   <strong>{aiAccess.availableCredits}회</strong>
                 </div>
                 <div>
-                  <span>완료한 요약</span>
-                  <strong>{aiAccess.usedTotal}회</strong>
+                  <span>일일 한도</span>
+                  <strong>{aiAccess.dailyLimit}회</strong>
                 </div>
               </div>
             )}
-            {complimentarySummaryAvailable && (
-              <p className="ai-trial-hint">
-                첫 병원 요약은 무료예요. 보고서에서 바로 만들어 보세요.
-              </p>
-            )}
-            {canOfferPurchase && billingProduct && (
-              <div className="ai-billing-actions">
-                <button
-                  className="primary-button compact"
-                  type="button"
-                  disabled={billingLoading}
-                  onClick={() =>
-                    void (billingPurchasePending
-                      ? onRefreshAiCredits()
-                      : onPurchaseAiCredit())
-                  }
-                >
-                  {billingPurchasePending
-                    ? "결제 반영 확인"
-                    : `${billingProduct.priceLabel} · 1회 추가`}
-                </button>
-                {!billingPurchasePending && (
-                  <button
-                    className="secondary-button compact"
-                    type="button"
-                    disabled={billingLoading}
-                    onClick={() => void onRefreshAiCredits()}
-                  >
-                    구매 확인
-                  </button>
-                )}
-              </div>
-            )}
-            {billingMessage && (
-              <p
-                className={
-                  billingMessage.includes("추가했어요") ||
-                  billingMessage.includes("확인했어요") ||
-                  billingMessage.includes("반영됐어요") ||
-                  billingMessage.includes("완료됐어요")
-                    ? "form-success"
-                    : "form-error"
-                }
-                role="status"
-              >
-                {billingMessage}
-              </p>
-            )}
+            <p className="ai-trial-hint">
+              {aiAccess && aiAccess.reason !== "unavailable"
+                ? `${aiAccessResetCopy(aiAccess)} `
+                : ""}현재 공개판은 무료이며
+              자동 결제나 인앱결제가 없습니다.
+            </p>
           </section>
 
           <button className="panel quick-guide-entry" type="button" onClick={onOpenGuide}>

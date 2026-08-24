@@ -19,6 +19,7 @@ import {
   analyzeLocally,
   dailyObservationOptions,
   deriveAgeGroup,
+  hasAssessableObservation,
   hasDailyObservation,
   profileToHealthInput,
   toggleDailyObservation,
@@ -58,16 +59,6 @@ import {
   petPhotoAccept,
   petPhotoBucket,
 } from "@/lib/pet-photo";
-import {
-  getWebBillingProduct,
-  isWebBillingAvailable,
-  purchaseWebAiSummary,
-  type WebBillingProduct,
-} from "@/lib/billing-web";
-import type {
-  MonetizationContext,
-  MonetizationEventName,
-} from "@/lib/monetization";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AiAccessStatus,
@@ -132,6 +123,10 @@ interface PetPhotoChange {
   remove: boolean;
 }
 
+type PetProfileDraft = Omit<PetProfile, "species"> & {
+  species: PetProfile["species"] | "";
+};
+
 const views: View[] = [
   "home",
   "profile",
@@ -143,29 +138,9 @@ const views: View[] = [
 ];
 
 const quickGuideStoragePrefix = "petflow-quick-guide-v1";
-const billingPendingStoragePrefix = "petflow-billing-pending-v1";
 
 function quickGuideStorageKey(userId: string) {
   return `${quickGuideStoragePrefix}:${userId}`;
-}
-
-function billingPendingStorageKey(userId: string) {
-  return `${billingPendingStoragePrefix}:${userId}`;
-}
-
-function readPendingBillingMinimum(userId: string) {
-  try {
-    const rawValue = localStorage.getItem(billingPendingStorageKey(userId));
-    if (!rawValue) return null;
-    const value = JSON.parse(rawValue) as { minimumCredits?: unknown };
-    return Number.isInteger(value.minimumCredits) &&
-      Number(value.minimumCredits) > 0 &&
-      Number(value.minimumCredits) <= 100
-      ? Number(value.minimumCredits)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function hasSeenQuickGuide(userId: string) {
@@ -240,11 +215,6 @@ const riskLabel = {
   urgent: "즉시 상담",
 } as const;
 
-function displayCheckScore(riskScore: number) {
-  if (!Number.isFinite(riskScore)) return 0;
-  return Math.max(0, Math.min(100, Math.round(100 - riskScore)));
-}
-
 function avatarLabel(value: string, fallback = "펫") {
   return Array.from(value.trim() || fallback).slice(0, 2).join("");
 }
@@ -287,12 +257,12 @@ function HeroPetPhoto({ pet }: { pet: PetProfile }) {
   return <span>{pet.name ? avatarLabel(pet.name) : <Icon name="paw" size={24} />}</span>;
 }
 
-function formatDate(value: string) {
+function formatObservationDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
     month: "long",
     day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
   }).format(new Date(value));
 }
 
@@ -330,6 +300,7 @@ const recordRiskWeight: Record<RiskLevel, number> = {
 
 function highestRecordRisk(records: HistoryRecord[]) {
   return records.reduce<RiskLevel | null>((highest, record) => {
+    if (!hasAssessableObservation(record.input)) return highest;
     if (!highest) return record.result.riskLevel;
     return recordRiskWeight[record.result.riskLevel] > recordRiskWeight[highest]
       ? record.result.riskLevel
@@ -354,6 +325,7 @@ function recordDateLabel(value: string) {
   if (Number.isNaN(date.getTime())) return "기록";
   if (isToday(value)) return "오늘 기록";
   return `${new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
     month: "long",
     day: "numeric",
   }).format(date)} 기록`;
@@ -361,7 +333,22 @@ function recordDateLabel(value: string) {
 
 function aiDraftActionLabel(loading: boolean, hasDraft: boolean) {
   if (loading) return "초안 만드는 중...";
-  return hasDraft ? "다시 만들기 · 1회" : "병원 전달본 만들기 · 1회";
+  return hasDraft ? "다시 만들기" : "무료 병원 전달본 만들기";
+}
+
+function normalizedVetDraftReportIds(reportIds?: string[]) {
+  return [...new Set(reportIds ?? [])].sort();
+}
+
+function vetDraftSelectionKey(episodeId: string, reportIds?: string[]) {
+  return `${episodeId}:${normalizedVetDraftReportIds(reportIds).join(",")}`;
+}
+
+function vetDraftSelectionMatches(actual: string[] | undefined, expected?: string[]) {
+  return (
+    JSON.stringify(normalizedVetDraftReportIds(actual)) ===
+    JSON.stringify(normalizedVetDraftReportIds(expected))
+  );
 }
 
 function formatFileSize(bytes: number) {
@@ -540,6 +527,66 @@ async function fetchAiAccessStatus(
   const payload = (await response.json()) as { access: AiAccessStatus };
   return payload.access;
 }
+
+interface VetDraftApiPayload {
+  draft?: VetReviewDraft;
+  access?: AiAccessStatus;
+  error?: string;
+  requestId?: string;
+  reportIds?: string[];
+  recovered?: boolean;
+}
+
+async function fetchStoredVetDraft(
+  accessToken: string,
+  episodeId: string,
+  reportIds: string[],
+  requestId?: string,
+) {
+  const params = new URLSearchParams();
+  if (requestId) params.set("requestId", requestId);
+  for (const reportId of reportIds) params.append("reportIds", reportId);
+  const query = params.size ? `?${params.toString()}` : "";
+  const response = await fetch(`/api/episodes/${episodeId}/vet-draft${query}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const payload = (await response.json().catch(() => ({}))) as VetDraftApiPayload;
+  return { response, payload };
+}
+
+async function recordProductSummaryShared(
+  eventName: "ai_summary_shared" | "factual_summary_shared",
+) {
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const { data } = supabase
+      ? await supabase.auth.getSession()
+      : { data: { session: null } };
+    if (!data.session) return;
+    await fetch("/api/product-events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        eventId: crypto.randomUUID(),
+        eventName,
+        context: "report",
+        platform: "web",
+        appVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? "web",
+        appBuild: null,
+      }),
+    });
+  } catch {
+    // Product-quality telemetry is best effort and never blocks sharing.
+  }
+}
+
+const recordAiSummaryShared = () =>
+  recordProductSummaryShared("ai_summary_shared");
+const recordFactualSummaryShared = () =>
+  recordProductSummaryShared("factual_summary_shared");
 
 function mergePetHistory(
   current: HistoryRecord[],
@@ -836,7 +883,6 @@ function HomeView({
   onSignup: () => void;
 }) {
   const recent = history[0];
-  const recentCheckScore = recent ? displayCheckScore(recent.result.riskScore) : undefined;
   const hasProfile = Boolean(profile.name.trim());
   const vaccination = vaccinationReminder(vaccinations);
   const activeEpisodeRecordCount = activeEpisode
@@ -952,24 +998,20 @@ function HomeView({
           </span>
         </button>
       </section>
-      {recent && <section className={`home-score-card ${recent.result.riskLevel}`}>
+      {recent && <section className={`home-score-card ${hasAssessableObservation(recent.input) ? recent.result.riskLevel : "unassessed"}`}>
         <div className="home-score-copy">
           <p className="eyebrow">현재 상태</p>
-          <h2>{riskLabel[recent.result.riskLevel]}</h2>
+          <h2>
+            {hasAssessableObservation(recent.input)
+              ? riskLabel[recent.result.riskLevel]
+              : "정보 미평가"}
+          </h2>
           <p>
-            {formatDate(recent.result.createdAt)} · 전달본에 포함할 수 있어요
+            {formatObservationDate(recent.result.createdAt)} · 전달본에 포함할 수 있어요
           </p>
           <button className="text-button flow-link" onClick={onHistory}>
             전달본 준비
           </button>
-        </div>
-        <div
-          className="home-score-badge"
-          style={{ "--score": recentCheckScore } as React.CSSProperties}
-          aria-label={`체크스코어 ${recentCheckScore}`}
-        >
-          <strong>{recentCheckScore}</strong>
-          <span>CHECK SCORE</span>
         </div>
       </section>}
     </div>
@@ -993,7 +1035,10 @@ function ProfileView({
     vaccination: VaccinationDraft,
   ) => Promise<string | null>;
 }) {
-  const [draft, setDraft] = useState(profile);
+  const [draft, setDraft] = useState<PetProfileDraft>(() => ({
+    ...profile,
+    species: profile.id ? profile.species : "",
+  }));
   const [vaccinationDraft, setVaccinationDraft] = useState(
     vaccinationDraftFromRecords(vaccinations),
   );
@@ -1005,7 +1050,7 @@ function ProfileView({
   const [breedPickerOpen, setBreedPickerOpen] = useState(false);
   const [highlightedBreedIndex, setHighlightedBreedIndex] = useState(0);
   const maxDate = new Date().toISOString().slice(0, 10);
-  const options = breedOptions[draft.species];
+  const options = draft.species ? breedOptions[draft.species] : [];
   const breedQuery = draft.breed.trim().toLowerCase();
   const visibleBreedOptions = breedQuery
     ? options.filter((breed) => breed.toLowerCase().includes(breedQuery))
@@ -1106,6 +1151,11 @@ function ProfileView({
       setError("이름만 알려주시면 바로 시작할 수 있어요.");
       return;
     }
+    if (!draft.species) {
+      setError("강아지, 고양이, 기타 중 반려동물 종류를 선택해 주세요.");
+      return;
+    }
+    const selectedSpecies = draft.species;
     if (draft.birthDate && draft.birthDate > maxDate) {
       setError("생일은 오늘보다 이전 날짜로 입력해 주세요.");
       return;
@@ -1124,6 +1174,7 @@ function ProfileView({
     const saveError = await onSave({
       ...draft,
       name: draft.name.trim(),
+      species: selectedSpecies,
       breed: draft.breed.trim(),
       photoUrl: removePhoto ? "" : draft.photoUrl,
       photoPath: removePhoto ? "" : draft.photoPath,
@@ -1818,6 +1869,7 @@ function CheckView({
 
 function ResultView({
   record,
+  reportIds,
   mediaWarning,
   canUseAiReport,
   aiAccess,
@@ -1827,8 +1879,10 @@ function ResultView({
   onDelete,
   onFeedback,
   onCreateVetDraft,
+  onLoadVetDraft,
 }: {
   record: HistoryRecord;
+  reportIds: string[];
   mediaWarning: string;
   canUseAiReport: boolean;
   aiAccess: AiAccessStatus | null;
@@ -1841,11 +1895,15 @@ function ResultView({
     episodeId: string,
     reportIds?: string[],
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
+  onLoadVetDraft: (
+    episodeId: string,
+    reportIds?: string[],
+  ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
 }) {
   const { result } = record;
-  const checkScore = displayCheckScore(result.riskScore);
   const media = record.media ?? [];
   const mediaSummary = formatReportMediaSummary(media);
+  const assessmentAvailable = hasAssessableObservation(record.input);
   const recordLabel = recordDateLabel(result.createdAt);
   const todayRecord = isToday(result.createdAt);
   const [copied, setCopied] = useState(false);
@@ -1857,6 +1915,20 @@ function ResultView({
     "idle" | "loading" | "ready" | "copied" | "failed"
   >("idle");
   const [vetDraftError, setVetDraftError] = useState("");
+  const [mediaShareMessage, setMediaShareMessage] = useState("");
+
+  useEffect(() => {
+    if (!record.episodeId) return;
+    let active = true;
+    void onLoadVetDraft(record.episodeId, reportIds).then((payload) => {
+      if (!active || !payload.draft) return;
+      setVetDraft(payload.draft);
+      setVetDraftState("ready");
+    });
+    return () => {
+      active = false;
+    };
+  }, [onLoadVetDraft, record.episodeId, reportIds]);
 
   async function copyBrief() {
     try {
@@ -1871,9 +1943,9 @@ function ResultView({
     const title = `${record.input.petName || "반려동물"} 건강 리포트`;
     const text = [
       title,
-      `${riskLabel[result.riskLevel]} · ${result.headline}`,
-      result.summary,
+      `관찰 날짜: ${formatObservationDate(result.createdAt)}`,
       media.length ? `첨부 자료: ${mediaSummary} (보호자 저장, 내용 판독 전)` : "",
+      media.length ? "사진·영상 파일은 이 텍스트 공유에 포함되지 않습니다." : "",
       "",
       "병원에 보여줄 요약",
       result.vetBrief,
@@ -1886,6 +1958,7 @@ function ResultView({
       try {
         await navigator.share({ title, text });
         setShareState("shared");
+        void recordFactualSummaryShared();
         return;
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -1895,8 +1968,35 @@ function ResultView({
     try {
       await copyText(text);
       setShareState("copied");
+      void recordFactualSummaryShared();
     } catch {
       setShareState("failed");
+    }
+  }
+  async function shareMedia(item: ReportMediaAttachment) {
+    if (!item.signedUrl) {
+      setMediaShareMessage("첨부 링크를 새로 불러온 뒤 다시 시도해 주세요.");
+      return;
+    }
+    setMediaShareMessage("");
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: item.fileName,
+          text: "PetFlow에 보호자가 저장한 첨부 자료입니다. PetFlow가 내용을 판독하지 않았습니다.",
+          url: item.signedUrl,
+        });
+        setMediaShareMessage(`${item.fileName} 공유 창을 열었어요.`);
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    }
+    try {
+      await copyText(item.signedUrl);
+      setMediaShareMessage(`${item.fileName} 링크를 복사했어요.`);
+    } catch {
+      setMediaShareMessage("파일을 공유하지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
   }
   async function createResultVetDraft() {
@@ -1904,13 +2004,19 @@ function ResultView({
       setVetDraftError("계정에 연결된 건강 기록에서만 병원 전달본을 만들 수 있어요.");
       return;
     }
-    if (!canUseAiReport && aiAccess?.reason !== "no_credits") {
-      setVetDraftError("병원 전달본 이용 가능 횟수를 확인하지 못했어요.");
+    if (!canUseAiReport) {
+      setVetDraftError(
+        aiAccess?.reason === "daily_limit" ||
+          aiAccess?.reason === "attempt_limit" ||
+          aiAccess?.reason === "no_credits"
+          ? "오늘의 무료 AI 정리 한도를 사용했어요. 기본 사실 전달본은 계속 공유할 수 있어요."
+          : "오늘의 무료 생성 가능 횟수를 확인하지 못했어요.",
+      );
       return;
     }
     setVetDraftState("loading");
     setVetDraftError("");
-    const payload = await onCreateVetDraft(record.episodeId);
+    const payload = await onCreateVetDraft(record.episodeId, reportIds);
     if (!payload.draft) {
       setVetDraftState("failed");
       setVetDraftError(payload.error ?? "병원 전달본을 만들지 못했어요.");
@@ -1923,6 +2029,7 @@ function ResultView({
     if (!vetDraft) return;
     try {
       await copyText(vetDraft.copyText);
+      void recordAiSummaryShared();
       setVetDraftState("copied");
     } catch {
       setVetDraftState("failed");
@@ -1938,23 +2045,26 @@ function ResultView({
         <div>
           <p className="eyebrow">{todayRecord ? "TODAY'S RECORD" : "HEALTH RECORD"}</p>
           <h1>{record.input.petName || "반려동물"}의 {recordLabel}</h1>
-          <p>{formatDate(result.createdAt)} 기준 기록이에요.</p>
+          <p>{formatObservationDate(result.createdAt)} 기준 기록이에요.</p>
         </div>
       </div>
       <div className="result-layout">
-        <aside className={`risk-card ${result.riskLevel}`}>
-          <div
-            className="risk-ring"
-            style={{ "--score": checkScore } as React.CSSProperties}
-          >
-            <div className="risk-score">
-              <strong>{checkScore}</strong>
-              <span>CHECK SCORE</span>
-            </div>
-          </div>
-          <span className="risk-label">{riskLabel[result.riskLevel]}</span>
-          <h2>{result.headline}</h2>
-          <p>{result.summary}</p>
+        <aside className={`risk-card ${hasAssessableObservation(record.input) ? result.riskLevel : "unassessed"}`}>
+          <span className="risk-label">
+            {hasAssessableObservation(record.input)
+              ? riskLabel[result.riskLevel]
+              : "정보 미평가"}
+          </span>
+          <h2>
+            {assessmentAvailable
+              ? result.headline
+              : "입력된 정보만 사실대로 정리했어요"}
+          </h2>
+          <p>
+            {assessmentAvailable
+              ? result.summary
+              : "식욕·활력·시작 시점과 주요 증상은 입력되지 않아 상태를 평가하지 않았어요. 보호자 메모는 원문으로만 정리하며 첨부 사진·영상도 PetFlow가 판독하지 않았어요."}
+          </p>
           <p className="source-note">
             {result.source === "openai"
               ? "AI가 기록 문장을 정리했습니다."
@@ -1997,6 +2107,7 @@ function ResultView({
               </h3>
               <p className="media-helper">
                 {mediaSummary}를 이 기록에 연결했어요. PetFlow는 사진·영상 내용을 판독하지 않아요.
+                텍스트 리포트 공유에는 파일이 포함되지 않으므로 아래에서 각각 공유해 주세요.
               </p>
               <div className="result-media-grid">
                 {media.map((item) => (
@@ -2019,14 +2130,24 @@ function ResultView({
                         {formatFileSize(item.sizeBytes)}
                       </small>
                       {item.signedUrl && (
-                        <a href={item.signedUrl} target="_blank" rel="noreferrer">
-                          원본 열기
-                        </a>
+                        <>
+                          <a href={item.signedUrl} target="_blank" rel="noreferrer">
+                            원본 열기
+                          </a>
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => void shareMedia(item)}
+                          >
+                            파일 공유
+                          </button>
+                        </>
                       )}
                     </span>
                   </div>
                 ))}
               </div>
+              {mediaShareMessage && <p className="media-helper">{mediaShareMessage}</p>}
             </section>
           )}
           <section className="result-card">
@@ -2065,15 +2186,17 @@ function ResultView({
                   <Icon name="spark" size={18} /> 병원 전달본
                 </h3>
                 <p>
-                  이 기록이 연결된 같은 Episode의 관찰, 병원 안내, 경과를 수의사가 보기
+                  이 기록과 같은 건강 흐름의 관찰, 병원 안내, 경과를 수의사가 보기
                   좋은 형태로 짧게 정리해요.
                 </p>
               </div>
               <span className="vet-draft-badge">
                 {canUseAiReport
-                  ? `${aiAccess?.availableCredits ?? 0}회`
-                  : aiAccess?.reason === "no_credits"
-                    ? "1회 추가"
+                  ? `오늘 ${aiAccess?.availableCredits ?? 0}회`
+                  : aiAccess?.reason === "daily_limit" ||
+                      aiAccess?.reason === "attempt_limit" ||
+                      aiAccess?.reason === "no_credits"
+                    ? "오늘 한도 완료"
                     : "확인 필요"}
               </span>
             </div>
@@ -2081,26 +2204,36 @@ function ResultView({
               <p className="plan-empty">
                 서버에 저장된 같은 반려동물의 기록에서 만들 수 있어요.
               </p>
-            ) : !canUseAiReport && aiAccess?.reason !== "no_credits" ? (
-              <div className="vet-draft-locked">
-                <strong>병원 전달본 이용 가능 횟수를 확인하지 못했어요.</strong>
-                <p>잠시 후 다시 시도해 주세요.</p>
-              </div>
             ) : (
               <>
-                <div className="vet-draft-actions">
-                  <button
-                    type="button"
-                    className="primary-button compact"
-                    onClick={createResultVetDraft}
-                    disabled={vetDraftState === "loading"}
-                  >
-                    <Icon name={vetDraft ? "check" : "spark"} size={14} />
-                    {aiDraftActionLabel(
-                      vetDraftState === "loading",
-                      Boolean(vetDraft),
+                {!canUseAiReport && (
+                  <div className="vet-draft-locked">
+                    <strong>
+                      {aiAccess?.reason === "daily_limit" ||
+                      aiAccess?.reason === "attempt_limit" ||
+                      aiAccess?.reason === "no_credits"
+                        ? "오늘의 무료 AI 정리 한도를 사용했어요."
+                        : "오늘의 무료 생성 가능 횟수를 확인하지 못했어요."}
+                    </strong>
+                    <p>저장된 전달본과 기본 사실 전달본은 계속 이용할 수 있어요.</p>
+                  </div>
+                )}
+                {(canUseAiReport || vetDraft) && (
+                  <div className="vet-draft-actions">
+                    {canUseAiReport && (
+                      <button
+                        type="button"
+                        className="primary-button compact"
+                        onClick={createResultVetDraft}
+                        disabled={vetDraftState === "loading"}
+                      >
+                        <Icon name={vetDraft ? "check" : "spark"} size={14} />
+                        {aiDraftActionLabel(
+                          vetDraftState === "loading",
+                          Boolean(vetDraft),
+                        )}
+                      </button>
                     )}
-                  </button>
                   {vetDraft && (
                     <button
                       type="button"
@@ -2111,7 +2244,8 @@ function ResultView({
                       {vetDraftState === "copied" ? "요약 복사 완료" : "요약 전체 복사"}
                     </button>
                   )}
-                </div>
+                  </div>
+                )}
                 {vetDraft && (
                   <div className="vet-draft-preview">
                     <div>
@@ -2352,7 +2486,7 @@ function HistoryView({
               >
                 <span>{day.day}</span>
                 {dayRecords.length > 0 && (
-                  <small className={`record-calendar-mark ${dayRisk ?? "watch"}`}>
+                  <small className={`record-calendar-mark ${dayRisk ?? "unassessed"}`}>
                     {dayRecords.length > 1 ? dayRecords.length : ""}
                   </small>
                 )}
@@ -2391,13 +2525,22 @@ function HistoryView({
                     {Number(toRecordDateKey(record.result.createdAt).slice(-2))}일
                   </span>
                   <span>
-                    <h3>{record.result.headline}</h3>
+                    <h3>
+                      {hasAssessableObservation(record.input)
+                        ? record.result.headline
+                        : "입력된 정보만 사실대로 정리했어요"}
+                    </h3>
                     <p>
-                      {formatDate(record.result.createdAt)} · 증상 {record.input.symptoms.length}개
+                      {formatObservationDate(record.result.createdAt)} ·{" "}
+                      {record.input.symptoms.length
+                        ? `선택 증상 ${record.input.symptoms.length}개`
+                        : "주요 증상 입력 없음 · 평가 안 함"}
                     </p>
                   </span>
-                  <span className={`history-risk ${record.result.riskLevel}`}>
-                    {riskLabel[record.result.riskLevel]}
+                  <span className={`history-risk ${hasAssessableObservation(record.input) ? record.result.riskLevel : "unassessed"}`}>
+                    {hasAssessableObservation(record.input)
+                      ? riskLabel[record.result.riskLevel]
+                      : "정보 미평가"}
                   </span>
                 </button>
                 <HistoryMediaPreview media={record.media} />
@@ -2453,6 +2596,7 @@ function EpisodeReportView({
   onSelectRecord,
   onSavePlan,
   onCreateVetDraft,
+  onLoadVetDraft,
   canUseAiReport,
   aiAccess,
   onSaveAiFeedback,
@@ -2465,6 +2609,10 @@ function EpisodeReportView({
   onSelectRecord: (record: HistoryRecord) => void;
   onSavePlan: (episodeId: string, tasks: string[]) => Promise<string>;
   onCreateVetDraft: (
+    episodeId: string,
+    reportIds?: string[],
+  ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
+  onLoadVetDraft: (
     episodeId: string,
     reportIds?: string[],
   ) => Promise<{ draft?: VetReviewDraft; error?: string }>;
@@ -2504,11 +2652,29 @@ function EpisodeReportView({
     "idle" | "saving" | "saved" | "failed"
   >("idle");
   const [feedbackError, setFeedbackError] = useState("");
+  const selectedReportIds = useMemo(
+    () => selection.records.map((record) => record.result.id).sort(),
+    [selection.records],
+  );
+
+  useEffect(() => {
+    if (!selection.episode) return;
+    let active = true;
+    void onLoadVetDraft(selection.episode.id, selectedReportIds).then((payload) => {
+      if (!active || !payload.draft) return;
+      setVetDraft(payload.draft);
+      setVetDraftState("ready");
+    });
+    return () => {
+      active = false;
+    };
+  }, [onLoadVetDraft, selectedReportIds, selection.episode]);
 
   async function copyReport() {
     try {
       await copyText(report.shareText);
       setShareState("copied");
+      void recordFactualSummaryShared();
     } catch {
       setShareState("failed");
     }
@@ -2520,6 +2686,7 @@ function EpisodeReportView({
       try {
         await navigator.share({ title: report.title, text: report.shareText });
         setShareState("shared");
+        void recordFactualSummaryShared();
         return;
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -2548,18 +2715,24 @@ function EpisodeReportView({
 
   async function createVetDraft() {
     if (!selection.episode) {
-      setVetDraftError("계정에 연결된 Episode 기록에서만 초안을 만들 수 있어요.");
+      setVetDraftError("계정에 연결된 건강 흐름 기록에서만 초안을 만들 수 있어요.");
       return;
     }
-    if (!canUseAiReport && aiAccess?.reason !== "no_credits") {
-      setVetDraftError("병원 전달본 이용 가능 횟수를 확인하지 못했어요.");
+    if (!canUseAiReport) {
+      setVetDraftError(
+        aiAccess?.reason === "daily_limit" ||
+          aiAccess?.reason === "attempt_limit" ||
+          aiAccess?.reason === "no_credits"
+          ? "오늘의 무료 AI 정리 한도를 사용했어요. 기본 사실 전달본은 계속 공유할 수 있어요."
+          : "오늘의 무료 생성 가능 횟수를 확인하지 못했어요.",
+      );
       return;
     }
     setVetDraftState("loading");
     setVetDraftError("");
     const result = await onCreateVetDraft(
       selection.episode.id,
-      selection.records.map((record) => record.result.id),
+      selectedReportIds,
     );
     if (!result.draft) {
       setVetDraftState("failed");
@@ -2574,6 +2747,7 @@ function EpisodeReportView({
     if (!vetDraft) return;
     try {
       await copyText(vetDraft.copyText);
+      void recordAiSummaryShared();
       setVetDraftState("copied");
     } catch {
       setVetDraftState("failed");
@@ -2638,6 +2812,12 @@ function EpisodeReportView({
         </div>
       </section>
 
+      {report.mediaCount > 0 && (
+        <p className="media-helper">
+          위 공유·복사는 텍스트만 전달합니다. 사진·영상 파일은 원본 기록에서 각각 따로 공유해 주세요.
+        </p>
+      )}
+
       {shareState === "failed" && (
         <p className="share-error" role="alert">
           공유하거나 복사하지 못했어요. 브라우저 권한을 확인해 주세요.
@@ -2668,28 +2848,38 @@ function EpisodeReportView({
 
         {!selection.episode ? (
           <p className="plan-empty">
-            계정에 연결된 Episode 기록부터 남기면 AI 초안을 만들 수 있어요.
+            계정에 연결된 건강 흐름 기록부터 남기면 AI 초안을 만들 수 있어요.
           </p>
-        ) : !canUseAiReport && aiAccess?.reason !== "no_credits" ? (
-          <div className="vet-draft-locked">
-            <strong>병원 전달본 이용 가능 횟수를 확인하지 못했어요.</strong>
-            <p>잠시 후 다시 시도해 주세요.</p>
-          </div>
         ) : (
           <>
-            <div className="vet-draft-actions">
-              <button
-                type="button"
-                className="primary-button compact"
-                onClick={createVetDraft}
-                disabled={vetDraftState === "loading"}
-              >
-                <Icon name={vetDraft ? "check" : "spark"} size={14} />
-                {aiDraftActionLabel(
-                  vetDraftState === "loading",
-                  Boolean(vetDraft),
+            {!canUseAiReport && (
+              <div className="vet-draft-locked">
+                <strong>
+                  {aiAccess?.reason === "daily_limit" ||
+                  aiAccess?.reason === "attempt_limit" ||
+                  aiAccess?.reason === "no_credits"
+                    ? "오늘의 무료 AI 정리 한도를 사용했어요."
+                    : "오늘의 무료 생성 가능 횟수를 확인하지 못했어요."}
+                </strong>
+                <p>저장된 전달본과 기본 사실 전달본은 계속 이용할 수 있어요.</p>
+              </div>
+            )}
+            {(canUseAiReport || vetDraft) && (
+              <div className="vet-draft-actions">
+                {canUseAiReport && (
+                  <button
+                    type="button"
+                    className="primary-button compact"
+                    onClick={createVetDraft}
+                    disabled={vetDraftState === "loading"}
+                  >
+                    <Icon name={vetDraft ? "check" : "spark"} size={14} />
+                    {aiDraftActionLabel(
+                      vetDraftState === "loading",
+                      Boolean(vetDraft),
+                    )}
+                  </button>
                 )}
-              </button>
               {vetDraft && (
                 <button
                   type="button"
@@ -2700,7 +2890,8 @@ function EpisodeReportView({
                   {vetDraftState === "copied" ? "초안 복사 완료" : "초안 전체 복사"}
                 </button>
               )}
-            </div>
+              </div>
+            )}
 
             {vetDraft && (
               <div className="vet-draft-preview">
@@ -2743,11 +2934,11 @@ function EpisodeReportView({
                             )
                           }
                         >
-                          <option value={5}>5점 · 매우 유용</option>
-                          <option value={4}>4점 · 유용</option>
-                          <option value={3}>3점 · 보통</option>
-                          <option value={2}>2점 · 부족</option>
-                          <option value={1}>1점 · 거의 도움 안 됨</option>
+                          <option value={5}>매우 유용</option>
+                          <option value={4}>유용</option>
+                          <option value={3}>보통</option>
+                          <option value={2}>부족</option>
+                          <option value={1}>거의 도움 안 됨</option>
                         </select>
                       </label>
                       <label>
@@ -2806,11 +2997,19 @@ function EpisodeReportView({
             </div>
             <div>
               <span>식욕 변화</span>
-              <strong>{report.appetiteChangeCount}회</strong>
+              <strong>
+                {report.appetiteChangeCount
+                  ? `${report.appetiteChangeCount}회`
+                  : "입력 없음"}
+              </strong>
             </div>
             <div>
               <span>활력 변화</span>
-              <strong>{report.energyChangeCount}회</strong>
+              <strong>
+                {report.energyChangeCount
+                  ? `${report.energyChangeCount}회`
+                  : "입력 없음"}
+              </strong>
             </div>
             <div>
               <span>첨부 자료</span>
@@ -2823,7 +3022,7 @@ function EpisodeReportView({
               {report.repeatedSymptoms.length ? (
                 report.repeatedSymptoms.map((item) => <span key={item}>{item}</span>)
               ) : (
-                <span>뚜렷한 반복 기록 없음</span>
+                <span>입력 없음</span>
               )}
             </div>
           </div>
@@ -2849,7 +3048,9 @@ function EpisodeReportView({
                     <strong>{item.dateLabel}</strong>
                     <small>증상: {item.symptoms}</small>
                     <small>
-                      식욕 {item.appetite} · 활력 {item.energy} · {item.duration}
+                      식욕 {sourceRecord?.input.appetite === "normal" ? "입력 없음 · 평가 안 함" : item.appetite}
+                      {" · "}활력 {sourceRecord?.input.energy === "normal" ? "입력 없음 · 평가 안 함" : item.energy}
+                      {" · "}{sourceRecord?.input.duration === "today" ? "시작 시점 입력 없음 · 평가 안 함" : item.duration}
                     </small>
                     {item.note && <small>보호자 메모: {item.note}</small>}
                     {item.mediaCount > 0 && (
@@ -2871,7 +3072,7 @@ function EpisodeReportView({
             <h3>
               <Icon name="clipboard" size={18} /> 병원에서 들은 내용
             </h3>
-            <p>들은 내용을 그대로 남기면 다음 전달본에 자동으로 이어져요.</p>
+            <p>들은 내용을 그대로 남기면 이 건강 흐름의 전달본에 함께 담겨요.</p>
           </div>
           <span className="plan-source-badge">보호자 기록 · 수의사 확인 전</span>
         </div>
@@ -2992,13 +3193,6 @@ export function PetFlowApp() {
   const [user, setUser] = useState<User | null>(null);
   const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
   const [aiAccess, setAiAccess] = useState<AiAccessStatus | null>(null);
-  const [billingProduct, setBillingProduct] =
-    useState<WebBillingProduct | null>(null);
-  const [billingLoading, setBillingLoading] = useState(false);
-  const [billingPurchasePending, setBillingPurchasePending] = useState(false);
-  const [billingMessage, setBillingMessage] = useState("");
-  const billingPendingMinimumCreditsRef = useRef<number | null>(null);
-  const billingOperationInFlightRef = useRef(false);
   const [authReady, setAuthReady] = useState(false);
   const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
@@ -3019,6 +3213,7 @@ export function PetFlowApp() {
     fingerprint: string;
     requestId: string;
   } | null>(null);
+  const vetDraftAttemptRef = useRef(new Map<string, string>());
   const [pendingMedia, setPendingMedia] = useState<PendingMediaFile[]>([]);
   const pendingMediaRef = useRef<PendingMediaFile[]>([]);
   const [mediaError, setMediaError] = useState("");
@@ -3109,63 +3304,6 @@ export function PetFlowApp() {
   }, [appNotice]);
 
   useEffect(() => {
-    let active = true;
-    if (!user?.id || !isWebBillingAvailable()) {
-      window.queueMicrotask(() => {
-        if (!active) return;
-        setBillingProduct(null);
-        if (!user?.id) {
-          setBillingPurchasePending(false);
-          setBillingMessage("");
-          billingPendingMinimumCreditsRef.current = null;
-        }
-      });
-      return () => {
-        active = false;
-      };
-    }
-
-    billingPendingMinimumCreditsRef.current = null;
-    const persistedMinimum = readPendingBillingMinimum(user.id);
-    if (persistedMinimum !== null) {
-      billingPendingMinimumCreditsRef.current = persistedMinimum;
-    }
-    window.queueMicrotask(() => {
-      if (!active) return;
-      setBillingProduct(null);
-      setBillingPurchasePending(false);
-      setBillingMessage("");
-      if (persistedMinimum !== null) {
-        setBillingPurchasePending(true);
-        setBillingMessage(
-          "이전 결제 내역을 확인하고 있어요. 중복 결제 없이 반영만 진행해요.",
-        );
-      }
-    });
-    void Promise.all([
-      getWebBillingProduct(user.id),
-      syncAiCreditPurchases().catch(() => null),
-    ]).then(([product, synced]) => {
-      const minimumCredits = billingPendingMinimumCreditsRef.current;
-      if (
-        minimumCredits !== null &&
-        (synced?.access?.availableCredits ?? 0) >= minimumCredits
-      ) {
-        billingPendingMinimumCreditsRef.current = null;
-        removeLocalStorageItem(billingPendingStorageKey(user.id));
-        if (active) {
-          setBillingPurchasePending(false);
-          setBillingMessage("결제가 반영됐어요.");
-        }
-      }
-      if (active) setBillingProduct(product);
-    });
-    return () => {
-      active = false;
-    };
-  }, [user?.id]);
-
-  useEffect(() => {
     if (!authReady || !user || !accountProfile) return;
     let active = true;
     const shouldOpen = !hasSeenQuickGuide(user.id);
@@ -3246,6 +3384,14 @@ export function PetFlowApp() {
       )
     );
   }, [selectedEpisodeReport, visibleHistory]);
+  const selectedResultEpisodeReportIds = useMemo(() => {
+    if (!selected?.episodeId) return [];
+    const reportIds = visibleHistory
+      .filter((record) => record.episodeId === selected.episodeId)
+      .map((record) => record.result.id);
+    if (!reportIds.includes(selected.result.id)) reportIds.push(selected.result.id);
+    return normalizedVetDraftReportIds(reportIds);
+  }, [selected, visibleHistory]);
   const clearPendingMedia = useCallback(() => {
     setPendingMedia((current) => {
       current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
@@ -3253,6 +3399,35 @@ export function PetFlowApp() {
     });
     setMediaError("");
   }, []);
+
+  async function loadVaccinationsForPets(
+    petIds: string[],
+    loadSequence = accountLoadSequenceRef.current,
+  ) {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !petIds.length) {
+      setVaccinations([]);
+      return;
+    }
+    if (!vaccinationTableAvailableRef.current) {
+      setVaccinations([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("pet_vaccinations")
+      .select(vaccinationSelectColumns)
+      .in("pet_id", petIds)
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
+    if (loadSequence !== accountLoadSequenceRef.current) return;
+    if (isMissingVaccinationTableError(error)) {
+      vaccinationTableAvailableRef.current = false;
+      setVaccinations([]);
+      return;
+    }
+    if (error) return;
+    setVaccinations(((data ?? []) as VaccinationRow[]).map(toVaccinationRecord));
+  }
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -3402,6 +3577,26 @@ export function PetFlowApp() {
     return () => listener.subscription.unsubscribe();
   }, [clearPendingMedia, setView]);
 
+  useEffect(() => {
+    vetDraftAttemptRef.current.clear();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !aiAccess?.resetsAt) return;
+    const resetTime = new Date(aiAccess.resetsAt).getTime();
+    const delay = resetTime - Date.now() + 1_000;
+    if (!Number.isFinite(resetTime) || delay <= 0) return;
+    const timer = window.setTimeout(() => {
+      const supabase = getSupabaseBrowserClient();
+      void supabase?.auth.getSession().then(async ({ data }) => {
+        if (!data.session) return;
+        const nextAccess = await fetchAiAccessStatus(data.session.access_token);
+        if (nextAccess) setAiAccess(nextAccess);
+      });
+    }, Math.min(delay, 2_147_483_647));
+    return () => window.clearTimeout(timer);
+  }, [aiAccess?.resetsAt, user?.id]);
+
   function persist(records: HistoryRecord[]) {
     setHistory(records);
   }
@@ -3509,34 +3704,6 @@ export function PetFlowApp() {
     setHistory((current) =>
       mergePetHistory(current, timeline.records, nextProfile.id as string),
     );
-  }
-  async function loadVaccinationsForPets(
-    petIds: string[],
-    loadSequence = accountLoadSequenceRef.current,
-  ) {
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase || !petIds.length) {
-      setVaccinations([]);
-      return;
-    }
-    if (!vaccinationTableAvailableRef.current) {
-      setVaccinations([]);
-      return;
-    }
-    const { data, error } = await supabase
-      .from("pet_vaccinations")
-      .select(vaccinationSelectColumns)
-      .in("pet_id", petIds)
-      .order("due_at", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: false });
-    if (loadSequence !== accountLoadSequenceRef.current) return;
-    if (isMissingVaccinationTableError(error)) {
-      vaccinationTableAvailableRef.current = false;
-      setVaccinations([]);
-      return;
-    }
-    if (error) return;
-    setVaccinations(((data ?? []) as VaccinationRow[]).map(toVaccinationRecord));
   }
   async function saveVaccinationForPet(
     userId: string,
@@ -3923,11 +4090,7 @@ export function PetFlowApp() {
     setVaccinations([]);
     setAccountProfile(null);
     setAiAccess(null);
-    setBillingProduct(null);
-    setBillingPurchasePending(false);
-    setBillingMessage("");
     setPasswordRecoveryMode(false);
-    billingPendingMinimumCreditsRef.current = null;
     setQuickGuideOpen(false);
     setSelectedEpisodeReport(null);
     setSelectedPetId(undefined);
@@ -4313,7 +4476,10 @@ export function PetFlowApp() {
         body: JSON.stringify({ tasks }),
       });
       if (!response.ok) return "병원에서 들은 내용을 저장하지 못했어요.";
-      const payload = (await response.json()) as { plan: EpisodePlan };
+      const payload = (await response.json()) as {
+        plan: EpisodePlan;
+        episode: PetEpisode;
+      };
       setPlans((current) => {
         const exists = current.some((plan) => plan.id === payload.plan.id);
         return exists
@@ -4322,259 +4488,157 @@ export function PetFlowApp() {
             )
           : [payload.plan, ...current];
       });
+      setEpisodes((current) =>
+        current.map((episode) =>
+          episode.id === payload.episode.id ? payload.episode : episode,
+        ),
+      );
       return "";
     } catch {
       return "병원에서 들은 내용을 저장하지 못했어요.";
     }
   }
 
-  async function syncAiCreditPurchases() {
-    const supabase = getSupabaseBrowserClient();
-    const { data } = supabase
-      ? await supabase.auth.getSession()
-      : { data: { session: null } };
-    if (!data.session) {
-      return { access: null, error: "로그인 상태를 다시 확인해 주세요." };
-    }
-    const response = await fetch("/api/billing/sync", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${data.session.access_token}` },
-    });
-    const payload = (await response.json()) as {
-      access?: AiAccessStatus;
-      error?: string;
-    };
-    if (payload.access) setAiAccess(payload.access);
-    return {
-      access: payload.access ?? null,
-      error: response.ok ? "" : payload.error ?? "구매 내역을 확인하지 못했어요.",
-    };
-  }
-
-  async function recordWebMonetizationEvent(
-    eventName: MonetizationEventName,
-    context: MonetizationContext,
-  ) {
-    const supabase = getSupabaseBrowserClient();
-    const { data } = supabase
-      ? await supabase.auth.getSession()
-      : { data: { session: null } };
-    if (!data.session) return;
-
-    await fetch("/api/billing/events", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${data.session.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        eventId: crypto.randomUUID(),
-        eventName,
-        context,
-        platform: "web",
-      }),
-    }).catch(() => undefined);
-  }
-
-  async function syncAiCreditPurchase(
-    minimumCredits: number,
-    delays = [0, 700, 1_500, 2_800],
-  ) {
-    let latest: Awaited<ReturnType<typeof syncAiCreditPurchases>> = {
-      access: null,
-      error: "",
-    };
-
-    for (const delay of delays) {
-      if (delay > 0) {
-        await new Promise((resolve) => window.setTimeout(resolve, delay));
-      }
-      latest = await syncAiCreditPurchases();
-      if (
-        !latest.error &&
-        (latest.access?.availableCredits ?? 0) >= minimumCredits
-      ) {
-        return latest;
-      }
-    }
-
-    return latest;
-  }
-
-  async function purchaseAiCredit(
-    context: MonetizationContext = "report",
-  ) {
-    if (!user?.id) {
-      const error = "로그인이 필요해요.";
-      setBillingMessage(error);
-      return { purchased: false, error };
-    }
-    if (billingOperationInFlightRef.current) {
-      return { purchased: false };
-    }
-    billingOperationInFlightRef.current = true;
-    let storePurchaseCompleted = false;
-    setBillingLoading(true);
-    setBillingMessage("");
-    try {
-      const pendingMinimum = billingPendingMinimumCreditsRef.current;
-      if (pendingMinimum !== null) {
-        const synced = await syncAiCreditPurchase(pendingMinimum);
-        if (
-          !synced.error &&
-          (synced.access?.availableCredits ?? 0) >= pendingMinimum
-        ) {
-          billingPendingMinimumCreditsRef.current = null;
-          removeLocalStorageItem(billingPendingStorageKey(user.id));
-          setBillingPurchasePending(false);
-          setBillingMessage("결제가 반영됐어요.");
-          return { purchased: true };
+  const loadVetDraft = useCallback(
+    async (episodeId: string, reportIds?: string[]) => {
+      const normalizedReportIds = normalizedVetDraftReportIds(reportIds);
+      const supabase = getSupabaseBrowserClient();
+      try {
+        const { data } = supabase
+          ? await supabase.auth.getSession()
+          : { data: { session: null } };
+        if (!data.session) return { error: "로그인 상태를 다시 확인해 주세요." };
+        const { response, payload } = await fetchStoredVetDraft(
+          data.session.access_token,
+          episodeId,
+          normalizedReportIds,
+        );
+        if (response.status === 404) return {};
+        if (!response.ok || !payload.draft) {
+          return { error: payload.error ?? "저장된 병원 전달본을 불러오지 못했어요." };
         }
-
-        const error =
-          synced.error ||
-          "결제는 완료됐어요. 중복 결제 없이 반영만 다시 확인해 주세요.";
-        setBillingMessage(error);
-        return { purchased: false, error };
-      }
-
-      const current = await syncAiCreditPurchases();
-      if (current.error || !current.access) {
-        const error =
-          current.error || "결제 준비 상태를 확인하지 못했어요.";
-        setBillingMessage(error);
-        return { purchased: false, error };
-      }
-      if (!current.access.purchaseAvailable || !isWebBillingAvailable()) {
-        const error =
-          "병원 전달본 결제는 iOS 또는 Android 앱에서 이용해 주세요.";
-        setBillingMessage(error);
-        return { purchased: false, error };
-      }
-      const minimumCredits = current.access.availableCredits + 1;
-
-      void recordWebMonetizationEvent("purchase_started", context);
-      const purchase = await purchaseWebAiSummary(user.id);
-      if (purchase.status === "cancelled") {
-        void recordWebMonetizationEvent("purchase_cancelled", context);
-        return { purchased: false };
-      }
-      if (purchase.status !== "purchased") {
-        void recordWebMonetizationEvent("purchase_failed", context);
-        setBillingMessage(purchase.message);
-        return { purchased: false, error: purchase.message };
-      }
-      storePurchaseCompleted = true;
-      billingPendingMinimumCreditsRef.current = minimumCredits;
-      setLocalStorageItem(
-        billingPendingStorageKey(user.id),
-        JSON.stringify({ minimumCredits }),
-      );
-      setBillingPurchasePending(true);
-      const synced = await syncAiCreditPurchase(minimumCredits);
-      if (
-        synced.error ||
-        (synced.access?.availableCredits ?? 0) < minimumCredits
-      ) {
-        void recordWebMonetizationEvent("purchase_sync_delayed", context);
-        const error =
-          synced.error ||
-          "결제는 완료됐어요. 잠시 뒤 구매 내역 확인을 눌러 주세요.";
-        setBillingMessage(error);
-        return { purchased: false, error };
-      }
-      billingPendingMinimumCreditsRef.current = null;
-      removeLocalStorageItem(billingPendingStorageKey(user.id));
-      setBillingPurchasePending(false);
-      setBillingMessage("병원 전달본 1회를 추가했어요.");
-      return { purchased: true };
-    } catch {
-      void recordWebMonetizationEvent("purchase_failed", context);
-      const error = storePurchaseCompleted
-        ? "결제가 완료됐을 수 있어요. 구매 내역 확인을 눌러 반영해 주세요."
-        : "결제 준비 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.";
-      setBillingMessage(error);
-      return { purchased: false, error };
-    } finally {
-      billingOperationInFlightRef.current = false;
-      setBillingLoading(false);
-    }
-  }
-
-  async function refreshAiCreditPurchases() {
-    if (billingOperationInFlightRef.current) return;
-    billingOperationInFlightRef.current = true;
-    setBillingLoading(true);
-    setBillingMessage("");
-    void recordWebMonetizationEvent("purchase_history_checked", "account");
-    try {
-      const synced = await syncAiCreditPurchases();
-      const pendingMinimum = billingPendingMinimumCreditsRef.current;
-      if (
-        pendingMinimum !== null &&
-        !synced.error &&
-        (synced.access?.availableCredits ?? 0) >= pendingMinimum
-      ) {
-        billingPendingMinimumCreditsRef.current = null;
-        if (user?.id) {
-          removeLocalStorageItem(billingPendingStorageKey(user.id));
+        if (!vetDraftSelectionMatches(payload.reportIds, normalizedReportIds)) {
+          return {};
         }
-        setBillingPurchasePending(false);
-        setBillingMessage("결제가 반영됐어요.");
-        return;
+        vetDraftAttemptRef.current.delete(
+          vetDraftSelectionKey(episodeId, normalizedReportIds),
+        );
+        return { draft: payload.draft };
+      } catch {
+        return { error: "저장된 병원 전달본을 불러오지 못했어요." };
       }
-      setBillingMessage(
-        synced.error ||
-          (synced.access?.availableCredits
-            ? `병원 전달본 ${synced.access.availableCredits}회를 확인했어요.`
-            : "추가된 병원 전달본 이용권이 없어요."),
-      );
-    } finally {
-      billingOperationInFlightRef.current = false;
-      setBillingLoading(false);
-    }
-  }
+    },
+    [],
+  );
 
   async function createVetDraft(episodeId: string, reportIds?: string[]) {
     if (!aiAccess?.enabled) {
-      if (aiAccess?.reason !== "no_credits") {
-        return { error: "병원 전달본 이용 가능 횟수를 확인하지 못했어요." };
-      }
-      const purchase = await purchaseAiCredit("report");
-      if (!purchase.purchased) {
+      if (
+        aiAccess?.reason === "daily_limit" ||
+        aiAccess?.reason === "attempt_limit" ||
+        aiAccess?.reason === "no_credits"
+      ) {
         return {
-          error: purchase.error || "병원 전달본 1회 이용권이 필요해요.",
+          error:
+            "오늘의 무료 AI 정리 한도를 사용했어요. 기본 사실 전달본은 계속 공유할 수 있어요.",
         };
       }
+      return { error: "오늘의 무료 생성 가능 횟수를 확인하지 못했어요." };
     }
 
+    const normalizedReportIds = normalizedVetDraftReportIds(reportIds);
+    const selectionKey = vetDraftSelectionKey(episodeId, normalizedReportIds);
+    let requestId = vetDraftAttemptRef.current.get(selectionKey);
+    if (!requestId) {
+      requestId = crypto.randomUUID();
+      vetDraftAttemptRef.current.set(selectionKey, requestId);
+    }
     const supabase = getSupabaseBrowserClient();
     try {
       const { data } = supabase
         ? await supabase.auth.getSession()
         : { data: { session: null } };
       if (!data.session) return { error: "로그인 상태를 다시 확인해 주세요." };
+      const recoverStoredDraft = async () => {
+        const recovered = await fetchStoredVetDraft(
+          data.session.access_token,
+          episodeId,
+          normalizedReportIds,
+          requestId,
+        );
+        if (
+          recovered.response.ok &&
+          recovered.payload.draft &&
+          vetDraftSelectionMatches(
+            recovered.payload.reportIds,
+            normalizedReportIds,
+          )
+        ) {
+          vetDraftAttemptRef.current.delete(selectionKey);
+          const nextAccess = await fetchAiAccessStatus(data.session.access_token);
+          if (nextAccess) setAiAccess(nextAccess);
+          return recovered.payload.draft;
+        }
+        return undefined;
+      };
       const response = await fetch(`/api/episodes/${episodeId}/vet-draft`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${data.session.access_token}`,
           "Content-Type": "application/json",
+          "Idempotency-Key": requestId,
         },
-        body: JSON.stringify({ reportIds }),
+        body: JSON.stringify({ reportIds: normalizedReportIds }),
       });
-      const payload = (await response.json()) as {
-        draft?: VetReviewDraft;
-        access?: AiAccessStatus;
-        error?: string;
-      };
+      const payload = (await response.json().catch(() => ({}))) as VetDraftApiPayload;
+      if (payload.access) setAiAccess(payload.access);
       if (!response.ok || !payload.draft) {
-        if (payload.access) setAiAccess(payload.access);
+        if (response.status === 409 || response.status === 503) {
+          const recoveredDraft = await recoverStoredDraft();
+          if (recoveredDraft) return { draft: recoveredDraft };
+        } else {
+          vetDraftAttemptRef.current.delete(selectionKey);
+        }
         return { error: payload.error ?? "병원 전달본을 만들지 못했어요." };
       }
-      setAiAccess(await fetchAiAccessStatus(data.session.access_token));
+      if (!vetDraftSelectionMatches(payload.reportIds, normalizedReportIds)) {
+        return { error: "생성된 병원 전달본의 기록 범위를 확인하지 못했어요." };
+      }
+      vetDraftAttemptRef.current.delete(selectionKey);
+      const nextAccess = await fetchAiAccessStatus(data.session.access_token);
+      if (nextAccess) setAiAccess(nextAccess);
       return { draft: payload.draft };
     } catch {
-      return { error: "병원 전달본을 만들지 못했어요." };
+      try {
+        const { data } = supabase
+          ? await supabase.auth.getSession()
+          : { data: { session: null } };
+        if (data.session) {
+          const recovered = await fetchStoredVetDraft(
+            data.session.access_token,
+            episodeId,
+            normalizedReportIds,
+            requestId,
+          );
+          if (
+            recovered.response.ok &&
+            recovered.payload.draft &&
+            vetDraftSelectionMatches(
+              recovered.payload.reportIds,
+              normalizedReportIds,
+            )
+          ) {
+            vetDraftAttemptRef.current.delete(selectionKey);
+            return { draft: recovered.payload.draft };
+          }
+        }
+      } catch {
+        // Keep the same request ID so the next user retry remains idempotent.
+      }
+      return {
+        error:
+          "병원 전달본 생성 상태를 확인하지 못했어요. 다시 누르면 같은 요청으로 이어서 확인해요.",
+      };
     }
   }
   async function submitAiReportFeedback(input: AiReportFeedbackInput) {
@@ -4730,10 +4794,6 @@ export function PetFlowApp() {
             user={user}
             accountProfile={accountProfile}
             aiAccess={aiAccess}
-            billingProduct={billingProduct}
-            billingLoading={billingLoading}
-            billingPurchasePending={billingPurchasePending}
-            billingMessage={billingMessage}
             pets={pets}
             selectedPetId={selectedPetId}
             authReady={authReady}
@@ -4746,8 +4806,6 @@ export function PetFlowApp() {
             onOAuth={handleOAuth}
             onLinkOAuth={handleLinkOAuth}
             onRequestAccountDeletion={requestAccountDeletion}
-            onPurchaseAiCredit={() => purchaseAiCredit("account")}
-            onRefreshAiCredits={refreshAiCreditPurchases}
             onOpenGuide={() => setQuickGuideOpen(true)}
             onLogout={logout}
             onAddPet={() => openProfile("account", initialProfile)}
@@ -4787,6 +4845,7 @@ export function PetFlowApp() {
           <ResultView
             key={selected.result.id}
             record={selected}
+            reportIds={selectedResultEpisodeReportIds}
             mediaWarning={mediaUploadWarning}
             canUseAiReport={Boolean(aiAccess?.enabled)}
             aiAccess={aiAccess}
@@ -4796,6 +4855,7 @@ export function PetFlowApp() {
             onDelete={(record) => void deleteRecord(record)}
             onFeedback={updateFeedback}
             onCreateVetDraft={createVetDraft}
+            onLoadVetDraft={loadVetDraft}
           />
         )}{" "}
         {currentView === "history" && (
@@ -4846,6 +4906,7 @@ export function PetFlowApp() {
             onBack={() => setView("history", { history: "replace" })}
             onSavePlan={savePlan}
             onCreateVetDraft={createVetDraft}
+            onLoadVetDraft={loadVetDraft}
             canUseAiReport={Boolean(aiAccess?.enabled)}
             aiAccess={aiAccess}
             onSaveAiFeedback={submitAiReportFeedback}
