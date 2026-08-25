@@ -38,6 +38,7 @@ jobs:
       EAS_SIMULATOR_BUILD_COMMIT: ${{ vars.EAS_SIMULATOR_BUILD_COMMIT }}
       EAS_SIMULATOR_BUILD_PROFILE: ${{ vars.EAS_SIMULATOR_BUILD_PROFILE }}
       EAS_SIMULATOR_BUILD_DISTRIBUTION: ${{ vars.EAS_SIMULATOR_BUILD_DISTRIBUTION }}
+      EAS_SIMULATOR_IS_SIMULATOR: ${{ vars.EAS_SIMULATOR_IS_SIMULATOR }}
 
     steps:
       - name: Check out the capture commit
@@ -123,6 +124,7 @@ jobs:
             EAS_SIMULATOR_BUILD_COMMIT
             EAS_SIMULATOR_BUILD_PROFILE
             EAS_SIMULATOR_BUILD_DISTRIBUTION
+            EAS_SIMULATOR_IS_SIMULATOR
           )
           for name in "${required_vars[@]}"; do
             if [[ -z "${!name:-}" ]]; then
@@ -140,8 +142,26 @@ jobs:
             echo "The supplied EAS build ID is invalid." >&2
             exit 1
           fi
-          if [[ "$EAS_SIMULATOR_BUILD_COMMIT" != "$GITHUB_SHA" ]]; then
-            echo "The Simulator build commit does not match github.sha." >&2
+          if [[ ! "$EAS_SIMULATOR_BUILD_COMMIT" =~ ^[a-f0-9]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$EAS_SIMULATOR_BUILD_COMMIT" "$GITHUB_SHA"; then
+            echo "The Simulator build commit is not an ancestor of the capture commit." >&2
+            exit 1
+          fi
+          post_build_changes="$(
+            git diff --name-only "$EAS_SIMULATOR_BUILD_COMMIT..$GITHUB_SHA" |
+              while IFS= read -r changed_path; do
+                case "$changed_path" in
+                  .github/workflows/ios-capture-build32.yml|apps/mobile/.maestro/ios/store-capture.yaml)
+                    ;;
+                  *)
+                    printf '%s\n' "$changed_path"
+                    ;;
+                esac
+              done
+          )"
+          if [[ -n "$post_build_changes" ]]; then
+            echo "Files outside the capture harness changed after the Simulator build." >&2
+            printf '%s\n' "$post_build_changes" >&2
             exit 1
           fi
           if [[ "$EAS_SIMULATOR_BUILD_PROFILE" != "$EAS_BUILD_PROFILE" ]]; then
@@ -149,8 +169,10 @@ jobs:
             exit 1
           fi
           normalized_distribution="$(printf '%s' "$EAS_SIMULATOR_BUILD_DISTRIBUTION" | tr '[:lower:]' '[:upper:]')"
-          if [[ "$normalized_distribution" != "SIMULATOR" ]]; then
-            echo "The supplied build is not an iOS Simulator build." >&2
+          normalized_simulator="$(printf '%s' "$EAS_SIMULATOR_IS_SIMULATOR" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$normalized_distribution" != "STORE" ]] ||
+             [[ "$normalized_simulator" != "true" ]]; then
+            echo "The supplied EAS build metadata is not a Store-profile iOS Simulator build." >&2
             exit 1
           fi
           if [[ ! "$EAS_SIMULATOR_BUILD_NUMBER" =~ ^[0-9]+$ ]] ||
@@ -416,6 +438,7 @@ jobs:
           const metadata = {
             source: "github-actions-ios-simulator",
             capturedAt: new Date().toISOString(),
+            captureCommit: process.env.GITHUB_SHA,
             productionTarget: {
               easBuildId: process.env.PRODUCTION_EAS_BUILD_ID,
               buildNumber: process.env.PRODUCTION_BUILD_NUMBER,
@@ -428,6 +451,8 @@ jobs:
               profile: process.env.EAS_SIMULATOR_BUILD_PROFILE,
               distribution:
                 process.env.EAS_SIMULATOR_BUILD_DISTRIBUTION.toUpperCase(),
+              isForIosSimulator:
+                process.env.EAS_SIMULATOR_IS_SIMULATOR.toLowerCase() === "true",
               artifactSha256:
                 process.env.EAS_SIMULATOR_ARTIFACT_SHA256.toLowerCase(),
             },
