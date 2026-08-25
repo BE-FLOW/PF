@@ -348,6 +348,29 @@ jobs:
             exit 1
           fi
 
+          node <<'NODE'
+          const email = process.env.QA_EMAIL ?? "";
+          const password = process.env.QA_PASSWORD ?? "";
+          const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          const printableAscii = /^[\x21-\x7e]+$/;
+
+          if (
+            email !== email.trim() ||
+            !emailPattern.test(email) ||
+            !printableAscii.test(email)
+          ) {
+            throw new Error("The protected QA email shape is invalid.");
+          }
+          if (
+            password.length < 12 ||
+            password.length > 128 ||
+            !printableAscii.test(password)
+          ) {
+            throw new Error("The protected QA password shape is invalid.");
+          }
+          console.log("Protected QA credential shape validated.");
+          NODE
+
           attempt=1
           while true; do
             attempt_log="$RUNNER_TEMP/maestro-start-attempt-$attempt.log"
@@ -357,16 +380,10 @@ jobs:
               --env QA_EMAIL="$QA_EMAIL" \
               --env QA_PASSWORD="$QA_PASSWORD" \
               --test-output-dir="$RUNNER_TEMP/maestro-capture-output" \
-              2>&1 | tee "$attempt_log"
-            pipeline_status=("${PIPESTATUS[@]}")
-            maestro_status=${pipeline_status[0]}
-            tee_status=${pipeline_status[1]}
+              >"$attempt_log" 2>&1
+            maestro_status=$?
             set -e
 
-            if (( tee_status != 0 )); then
-              rm -f -- "$attempt_log"
-              exit "$tee_status"
-            fi
             if (( maestro_status == 0 )); then
               rm -f -- "$attempt_log"
               break
