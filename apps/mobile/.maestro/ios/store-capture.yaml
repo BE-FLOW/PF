@@ -28,9 +28,17 @@ name: PetFlow build 32 App Store capture
     below: "이메일과 비밀번호"
 
 - extendedWaitUntil:
-    visible: "홈 먼저 보기"
-    timeout: 30000
-- tapOn: "홈 먼저 보기"
+    visible: "^(홈 먼저 보기|새 변화 이어서 남기기)$"
+    timeout: 90000
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: "홈 먼저 보기"
+    commands:
+      - tapOn: "홈 먼저 보기"
+- extendedWaitUntil:
+    visible: "새 변화 이어서 남기기"
+    timeout: 60000
 - extendedWaitUntil:
     visible: "^홈$"
     timeout: 30000
