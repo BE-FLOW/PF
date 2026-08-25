@@ -30,7 +30,7 @@ env:
   SIM_USE_VERSION: 0.13.0
   SIM_USE_ARCHIVE_SHA256: f3da237663199faf4c7f6796c3ede6ce7583da872dc27d92eb3b7eb051725081
   SIM_USE_NO_DAEMON: "1"
-  SIM_USE_HID_STABILIZATION_MS: "60"
+  SIM_USE_HID_STABILIZATION_MS: "250"
 
 jobs:
   capture:
@@ -483,7 +483,7 @@ jobs:
             "$email_focus_output" \
             "true"
           rm -rf -- "$email_focus_output"
-          sleep 0.5
+          sleep 2
           secure_type "$QA_EMAIL" "email"
           sleep 1
 
@@ -493,7 +493,7 @@ jobs:
             "$password_focus_output" \
             "true"
           rm -rf -- "$password_focus_output"
-          sleep 0.5
+          sleep 2
           secure_type "$QA_PASSWORD" "password"
           sleep 1
 
