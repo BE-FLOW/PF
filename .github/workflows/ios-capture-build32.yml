@@ -457,6 +457,7 @@ jobs:
           LAST_PASTE_TARGET_TYPE=""
           LAST_PASTE_TARGET_LABEL_HASH=""
           LAST_PASTE_TARGET_VALUE_HASH=""
+          PASTE_TRANSPORT="default"
 
           resolve_field_target() {
             local field_role="$1"
@@ -533,6 +534,12 @@ jobs:
                     frame: value.frame,
                     labelHash: hashValue(value.AXLabel),
                     type: value.type,
+                    uniqueId:
+                      typeof value.AXUniqueId === "string" &&
+                      value.AXUniqueId.trim().length > 0 &&
+                      value.AXUniqueId.length <= 512
+                        ? value.AXUniqueId.trim()
+                        : null,
                     valueHash: hashValue(value.AXValue),
                   });
                 }
@@ -560,10 +567,13 @@ jobs:
           }
           const { matches } = screenScopes[0];
           if (matches.size !== 1) fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
-          const [{ frame, labelHash, type, valueHash }] = matches.values();
+          const [{ frame, labelHash, type, uniqueId, valueHash }] = matches.values();
           const { x, y, width, height } = frame;
+          const uniqueIdToken = uniqueId
+            ? Buffer.from(uniqueId, "utf8").toString("base64url")
+            : "NONE";
           process.stdout.write(
-            `${x + width / 2} ${y + height / 2} ${x} ${y} ${width} ${height} ${type} ${labelHash} ${valueHash}`,
+            `${x + width / 2} ${y + height / 2} ${x} ${y} ${width} ${height} ${type} ${labelHash} ${valueHash} ${uniqueIdToken}`,
           );
           ' 2>/dev/null
           }
@@ -726,6 +736,7 @@ jobs:
             local target_type
             local target_label_hash
             local target_value_hash
+            local target_unique_id_token
             if ! target="$(resolve_field_target "$field_role")"; then
               if [[ ! "$target" =~ ^ERROR_[A-Z0-9_]+$ ]]; then
                 target="ERROR_UNKNOWN"
@@ -743,37 +754,29 @@ jobs:
               target_type \
               target_label_hash \
               target_value_hash \
+              target_unique_id_token \
               <<<"$target"
             if [[ -z "$target_x" ]] ||
                [[ -z "$target_y" ]] ||
                [[ ! "$target_label_hash" =~ ^[a-f0-9]{64}$ ]] ||
                [[ ! "$target_value_hash" =~ ^[a-f0-9]{64}$ ]] ||
+               [[ ! "$target_unique_id_token" =~ ^(NONE|[A-Za-z0-9_-]+)$ ]] ||
                [[ ! "$target_type" =~ ^(SecureTextField|TextField)$ ]]; then
               echo "Simulator $field_label target resolution failed." >&2
               return 1
             fi
-            if ! sim_use tap \
-              -x "$target_x" \
-              -y "$target_y" \
-              --device "$SIMULATOR_UDID" \
-              --json \
-              >/dev/null 2>&1; then
-              echo "Simulator $field_label focus tap failed." >&2
-              return 1
-            fi
-            sleep 1
-
-            local keyboard_state
-            if ! keyboard_state="$(
-              sim_use keyboard-state \
-                --device "$SIMULATOR_UDID" \
-                --json \
-                2>/dev/null |
-                env \
-                  -u QA_EMAIL \
-                  -u QA_PASSWORD \
-                  -u SIM_USE_DEBUG \
-                  node -e '
+            if [[ "$PASTE_TRANSPORT" == "default" ]]; then
+              local keyboard_state
+              if ! keyboard_state="$(
+                sim_use keyboard-state \
+                  --device "$SIMULATOR_UDID" \
+                  --json \
+                  2>/dev/null |
+                  env \
+                    -u QA_EMAIL \
+                    -u QA_PASSWORD \
+                    -u SIM_USE_DEBUG \
+                    node -e '
             const fs = require("node:fs");
             const document = JSON.parse(fs.readFileSync(0, "utf8"));
             if (
@@ -785,24 +788,63 @@ jobs:
             }
             process.stdout.write(document.data.visible ? "SOFT" : "HIDDEN");
             ' 2>/dev/null
-            )"; then
-              echo "Simulator $field_label keyboard state probe failed." >&2
-              return 1
-            fi
-            if [[ "$keyboard_state" != "HIDDEN" ]]; then
-              echo "Simulator $field_label paste requires the connected hardware keyboard." >&2
+              )"; then
+                echo "Simulator $field_label keyboard state probe failed." >&2
+                return 1
+              fi
+              if [[ "$keyboard_state" != "HIDDEN" ]]; then
+                echo "Simulator $field_label paste requires the connected hardware keyboard." >&2
+                return 1
+              fi
+            elif [[ "$PASTE_TRANSPORT" != "menu" ]]; then
+              echo "Simulator $field_label paste transport is invalid." >&2
               return 1
             fi
 
             set +e
-            printf '%s' "$value" |
-              sim_use paste --stdin \
-                --device "$SIMULATOR_UDID" \
-                --json \
-                >/dev/null 2>&1
+            if [[ "$PASTE_TRANSPORT" == "menu" ]]; then
+              local target_unique_id
+              if [[ "$target_unique_id_token" == "NONE" ]] ||
+                 ! target_unique_id="$(
+                   env \
+                     -u QA_EMAIL \
+                     -u QA_PASSWORD \
+                     -u SIM_USE_DEBUG \
+                     TARGET_UNIQUE_ID_TOKEN="$target_unique_id_token" \
+                     node -e '
+              const token = process.env.TARGET_UNIQUE_ID_TOKEN ?? "";
+              const value = Buffer.from(token, "base64url").toString("utf8");
+              if (
+                value.length === 0 ||
+                value.length > 512 ||
+                value.includes("\0")
+              ) process.exit(1);
+              process.stdout.write(value);
+              ' 2>/dev/null
+                 )"; then
+                set -e
+                echo "Simulator $field_label calibrated menu target is unavailable." >&2
+                return 1
+              fi
+              printf '%s' "$value" |
+                sim_use paste --stdin --via-menu \
+                  --target-id "$target_unique_id" \
+                  --long-press-duration 1.2 \
+                  --menu-timeout 10 \
+                  --device "$SIMULATOR_UDID" \
+                  --json \
+                  >/dev/null 2>&1
+            else
+              printf '%s' "$value" |
+                sim_use paste --stdin \
+                  --device "$SIMULATOR_UDID" \
+                  --json \
+                  >/dev/null 2>&1
+            fi
             local -a pipeline_status=("${PIPESTATUS[@]}")
             set -e
-            if (( pipeline_status[1] != 0 )); then
+            if (( ${#pipeline_status[@]} != 2 )) ||
+               (( pipeline_status[0] != 0 || pipeline_status[1] != 0 )); then
               echo "Simulator $field_label paste failed." >&2
               return 1
             fi
@@ -870,12 +912,38 @@ jobs:
           rm -rf -- "$email_focus_output"
           sleep 2
           paste_value "petflow@@paste-check" "public email sentinel" "email"
-          run_maestro_flow \
-            "verify-email-paste" \
+          if ! run_maestro_flow \
+            "verify-email-paste-default" \
             "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
             "$email_paste_output" \
-            "true"
+            "true"; then
+            if ! grep -Fq \
+              'Assertion is false: "^petflow@@paste-check$" is visible' \
+              "$capture_debug_dir"/maestro-verify-email-paste-default-attempt-*.log; then
+              echo "The default Simulator paste probe failed unexpectedly." >&2
+              exit 1
+            fi
+            rm -rf -- \
+              "$email_paste_output" \
+              "$capture_debug_dir"/maestro-verify-email-paste-default-attempt-*.log
+            clear_pasteboards
+            PASTE_TRANSPORT="menu"
+            run_maestro_flow \
+              "focus-email-menu" \
+              "apps/mobile/.maestro/ios/focus-email.yaml" \
+              "$email_focus_output" \
+              "true"
+            rm -rf -- "$email_focus_output"
+            sleep 2
+            paste_value "petflow@@paste-check" "public email sentinel" "email"
+            run_maestro_flow \
+              "verify-email-paste-menu" \
+              "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
+              "$email_paste_output" \
+              "true"
+          fi
           rm -rf -- "$email_paste_output"
+          echo "Simulator paste transport validated with a public probe ($PASTE_TRANSPORT)."
           clear_pasteboards
           sleep 1
           secure_paste "$QA_EMAIL" "email" "email"
