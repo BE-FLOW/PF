@@ -26,6 +26,7 @@ env:
   MAESTRO_ZIP_SHA256: 3440825f514f537c6a96bcf5de995780c2a4a7f83a43208fdc95d4f1fecfad3b
   MAESTRO_CLI_NO_ANALYTICS: "1"
   MAESTRO_DISABLE_UPDATE_CHECK: "true"
+  MAESTRO_DRIVER_STARTUP_TIMEOUT: "240000"
 
 jobs:
   capture:
@@ -345,11 +346,40 @@ jobs:
             echo "Protected QA credentials are required." >&2
             exit 1
           fi
-          "$MAESTRO_BIN" --no-ansi --device "$SIMULATOR_UDID" \
-            test apps/mobile/.maestro/ios/store-capture.yaml \
-            --env QA_EMAIL="$QA_EMAIL" \
-            --env QA_PASSWORD="$QA_PASSWORD" \
-            --test-output-dir="$RUNNER_TEMP/maestro-capture-output"
+
+          attempt=1
+          while true; do
+            attempt_log="$RUNNER_TEMP/maestro-start-attempt-$attempt.log"
+            set +e
+            "$MAESTRO_BIN" --no-ansi --device "$SIMULATOR_UDID" \
+              test apps/mobile/.maestro/ios/store-capture.yaml \
+              --env QA_EMAIL="$QA_EMAIL" \
+              --env QA_PASSWORD="$QA_PASSWORD" \
+              --test-output-dir="$RUNNER_TEMP/maestro-capture-output" \
+              2>&1 | tee "$attempt_log"
+            pipeline_status=("${PIPESTATUS[@]}")
+            maestro_status=${pipeline_status[0]}
+            tee_status=${pipeline_status[1]}
+            set -e
+
+            if (( tee_status != 0 )); then
+              rm -f -- "$attempt_log"
+              exit "$tee_status"
+            fi
+            if (( maestro_status == 0 )); then
+              rm -f -- "$attempt_log"
+              break
+            fi
+            if (( attempt == 1 )) &&
+               grep -Fq 'iOS driver not ready in time' "$attempt_log"; then
+              echo "The iOS test driver timed out once; retrying its startup." >&2
+              rm -f -- "$attempt_log"
+              attempt=2
+              continue
+            fi
+            rm -f -- "$attempt_log"
+            exit "$maestro_status"
+          done
 
       - name: Normalize and verify only the five store screenshots
         shell: bash
