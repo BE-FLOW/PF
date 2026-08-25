@@ -18,6 +18,16 @@
     "production": {
       "autoIncrement": true
     },
+    "ios-store-screenshot-ci": {
+      "extends": "production",
+      "environment": "production",
+      "autoIncrement": true,
+      "withoutCredentials": true,
+      "ios": {
+        "simulator": true,
+        "buildConfiguration": "Release"
+      }
+    },
     "store-screenshot": {
       "extends": "production",
       "distribution": "internal",

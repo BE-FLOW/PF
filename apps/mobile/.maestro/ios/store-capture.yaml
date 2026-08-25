@@ -1,0 +1,144 @@
+appId: com.beflow.petflow
+name: PetFlow build 32 App Store capture
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible: "이메일로 로그인"
+    timeout: 30000
+- tapOn: "이메일로 로그인"
+- tapOn: "name@example.com"
+- inputText: ${QA_EMAIL}
+- tapOn:
+    text: "^비밀번호$"
+    index: 1
+- inputText: ${QA_PASSWORD}
+- hideKeyboard
+- tapOn:
+    text: "^로그인$"
+    below: "이메일과 비밀번호"
+
+- extendedWaitUntil:
+    visible: "홈 먼저 보기"
+    timeout: 30000
+- tapOn: "홈 먼저 보기"
+- extendedWaitUntil:
+    visible: "^홈$"
+    timeout: 30000
+- extendedWaitUntil:
+    visible: "병원 전달본 준비 시작"
+    timeout: 30000
+- repeat:
+    times: 3
+    commands:
+      - swipe:
+          direction: DOWN
+          duration: 400
+- waitForAnimationToEnd
+- takeScreenshot: 01-home-score
+
+- tapOn:
+    text: "^전달본$"
+- extendedWaitUntil:
+    visible: "병원에 가져갈 기록"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: 03-health-flow
+
+- scrollUntilVisible:
+    element:
+      text: "^수정$"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 100
+    centerElement: true
+- tapOn:
+    text: "^수정$"
+    index: 0
+- scrollUntilVisible:
+    element:
+      text: "기록 수정"
+    direction: UP
+    timeout: 30000
+    visibilityPercentage: 100
+    centerElement: true
+- extendedWaitUntil:
+    visible: "기록 수정"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: 02-health-check
+
+- scrollUntilVisible:
+    element:
+      text: "^병원 준비$"
+    direction: UP
+    timeout: 30000
+    visibilityPercentage: 100
+- tapOn:
+    text: "^병원 준비$"
+- scrollUntilVisible:
+    element:
+      text: "^수정$"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 100
+    centerElement: true
+- tapOn:
+    text: "^수정$"
+    index: 0
+- extendedWaitUntil:
+    visible: "함께하는 아이들"
+    timeout: 30000
+- repeat:
+    times: 3
+    commands:
+      - swipe:
+          direction: DOWN
+          duration: 400
+- waitForAnimationToEnd
+- takeScreenshot: 04-account-pets
+
+- scrollUntilVisible:
+    element:
+      text: "^접기$"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 100
+- tapOn:
+    text: "^접기$"
+- scrollUntilVisible:
+    element:
+      text: "^전달본$"
+    direction: UP
+    timeout: 30000
+    visibilityPercentage: 100
+- tapOn:
+    text: "^전달본$"
+- extendedWaitUntil:
+    visible: "병원에 가져갈 기록"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: "^전달본 준비$"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 100
+    centerElement: true
+- tapOn:
+    text: "^전달본 준비$"
+- extendedWaitUntil:
+    visible: "기본 사실 요약"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: "^병원 전달본$"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 90
+    centerElement: true
+- extendedWaitUntil:
+    visible: "병원에 먼저 전할 내용"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: 05-report-summary
