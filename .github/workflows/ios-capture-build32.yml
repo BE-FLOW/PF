@@ -76,6 +76,8 @@ jobs:
             'apps/mobile/.maestro/ios/focus-email.yaml' \
             'apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             'apps/mobile/.maestro/ios/focus-password.yaml' \
+            'apps/mobile/.maestro/ios/approve-password-paste.yaml' \
+            'apps/mobile/.maestro/ios/verify-password-paste.yaml' \
             'apps/mobile/.maestro/ios/store-capture.yaml' \
             'apps/mobile/eas.json' | LC_ALL=C sort)"
           if [[ "$actual_paths" != "$expected_paths" ]]; then
@@ -89,6 +91,8 @@ jobs:
             ':(exclude)apps/mobile/.maestro/ios/focus-email.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-password.yaml' \
+            ':(exclude)apps/mobile/.maestro/ios/approve-password-paste.yaml' \
+            ':(exclude)apps/mobile/.maestro/ios/verify-password-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/store-capture.yaml' \
             ':(exclude)apps/mobile/eas.json'
 
@@ -173,6 +177,8 @@ jobs:
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-email.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-email-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-password.yaml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/approve-password-paste.yaml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-password-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/store-capture.yaml" ]]; then
                   printf '%s\n' "$changed_path"
                 fi
@@ -315,7 +321,11 @@ jobs:
             'PetFlow build 32 capture' "$device_type_id" "$runtime_id")"
           echo "SIMULATOR_UDID=$simulator_udid" >> "$GITHUB_ENV"
           defaults write com.apple.iphonesimulator PasteboardAutomaticSync -bool false
-          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool true
+          if [[ "$(defaults read com.apple.iphonesimulator ConnectHardwareKeyboard)" != "1" ]]; then
+            echo "The Simulator hardware keyboard preference was not applied." >&2
+            exit 1
+          fi
           xcrun simctl boot "$simulator_udid"
           open -a Simulator --args -CurrentDeviceUDID "$simulator_udid"
           xcrun simctl bootstatus "$simulator_udid" -b
@@ -440,6 +450,13 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
           clear_pasteboards
+          LAST_PASTE_TARGET_FRAME_X=""
+          LAST_PASTE_TARGET_FRAME_Y=""
+          LAST_PASTE_TARGET_FRAME_WIDTH=""
+          LAST_PASTE_TARGET_FRAME_HEIGHT=""
+          LAST_PASTE_TARGET_TYPE=""
+          LAST_PASTE_TARGET_LABEL_HASH=""
+          LAST_PASTE_TARGET_VALUE_HASH=""
 
           resolve_field_target() {
             local field_role="$1"
@@ -455,6 +472,7 @@ jobs:
                 TARGET_FIELD_ROLE="$field_role" \
                 node -e '
           const fs = require("node:fs");
+          const crypto = require("node:crypto");
 
           function fail(code) {
             fs.writeSync(1, `ERROR_${code}`);
@@ -469,6 +487,13 @@ jobs:
           if (typeof appPackage !== "string") fail("ENVELOPE");
           if (appPackage !== "" && appPackage !== "com.beflow.petflow") fail("APP");
           if (!["email", "password"].includes(fieldRole)) fail("ROLE");
+
+          function hashValue(value) {
+            return crypto
+              .createHash("sha256")
+              .update(JSON.stringify(value ?? null))
+              .digest("hex");
+          }
 
           function inspectRoot(root) {
             const matches = new Map();
@@ -504,7 +529,12 @@ jobs:
                   width > 0 &&
                   height > 0
                 ) {
-                  matches.set(frame.join(":"), value.frame);
+                  matches.set(frame.join(":"), {
+                    frame: value.frame,
+                    labelHash: hashValue(value.AXLabel),
+                    type: value.type,
+                    valueHash: hashValue(value.AXValue),
+                  });
                 }
               }
               for (const item of Object.values(value)) visit(item);
@@ -530,9 +560,156 @@ jobs:
           }
           const { matches } = screenScopes[0];
           if (matches.size !== 1) fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
-          const [{ x, y, width, height }] = matches.values();
-          process.stdout.write(`${x + width / 2} ${y + height / 2}`);
+          const [{ frame, labelHash, type, valueHash }] = matches.values();
+          const { x, y, width, height } = frame;
+          process.stdout.write(
+            `${x + width / 2} ${y + height / 2} ${x} ${y} ${width} ${height} ${type} ${labelHash} ${valueHash}`,
+          );
           ' 2>/dev/null
+          }
+
+          verify_target_changed() {
+            local field_label="$1"
+            local expected_frame_x="$2"
+            local expected_frame_y="$3"
+            local expected_frame_width="$4"
+            local expected_frame_height="$5"
+            local expected_type="$6"
+            local expected_label_hash="$7"
+            local expected_value_hash="$8"
+            local result
+            if ! result="$(
+              sim_use describe-ui \
+                --device "$SIMULATOR_UDID" \
+                --max-probes 0 \
+                --json \
+                2>/dev/null |
+                env \
+                  -u QA_EMAIL \
+                  -u QA_PASSWORD \
+                  -u SIM_USE_DEBUG \
+                  EXPECTED_FRAME_X="$expected_frame_x" \
+                  EXPECTED_FRAME_Y="$expected_frame_y" \
+                  EXPECTED_FRAME_WIDTH="$expected_frame_width" \
+                  EXPECTED_FRAME_HEIGHT="$expected_frame_height" \
+                  EXPECTED_TARGET_TYPE="$expected_type" \
+                  EXPECTED_LABEL_HASH="$expected_label_hash" \
+                  EXPECTED_VALUE_HASH="$expected_value_hash" \
+                  node -e '
+            const fs = require("node:fs");
+            const crypto = require("node:crypto");
+
+            function fail(code) {
+              fs.writeSync(1, `ERROR_${code}`);
+              process.exit(1);
+            }
+
+            const document = JSON.parse(fs.readFileSync(0, "utf8"));
+            if (document?.ok !== true || !document?.data?.raw) fail("ENVELOPE");
+            const appPackage = document.data.appPackage;
+            if (typeof appPackage !== "string") fail("ENVELOPE");
+            if (appPackage !== "" && appPackage !== "com.beflow.petflow") fail("APP");
+
+            const expectedFrame = [
+              process.env.EXPECTED_FRAME_X,
+              process.env.EXPECTED_FRAME_Y,
+              process.env.EXPECTED_FRAME_WIDTH,
+              process.env.EXPECTED_FRAME_HEIGHT,
+            ].map(Number);
+            const expectedType = process.env.EXPECTED_TARGET_TYPE ?? "";
+            const expectedLabelHash = process.env.EXPECTED_LABEL_HASH ?? "";
+            const expectedValueHash = process.env.EXPECTED_VALUE_HASH ?? "";
+            if (
+              !expectedFrame.every(Number.isFinite) ||
+              !["SecureTextField", "TextField"].includes(expectedType) ||
+              !/^[a-f0-9]{64}$/.test(expectedLabelHash) ||
+              !/^[a-f0-9]{64}$/.test(expectedValueHash)
+            ) fail("EXPECTED_TARGET");
+
+            function hashValue(value) {
+              return crypto
+                .createHash("sha256")
+                .update(JSON.stringify(value ?? null))
+                .digest("hex");
+            }
+
+            function inspectRoot(root) {
+              const matches = new Map();
+              const publicText = [];
+
+              function visit(value) {
+                if (Array.isArray(value)) {
+                  for (const item of value) visit(item);
+                  return;
+                }
+                if (!value || typeof value !== "object") return;
+                for (const key of ["AXLabel", "AXValue"]) {
+                  if (typeof value[key] === "string") publicText.push(value[key]);
+                }
+                if (value.type === expectedType && value.frame) {
+                  const { x, y, width, height } = value.frame;
+                  const frame = [x, y, width, height];
+                  if (
+                    frame.every(Number.isFinite) &&
+                    x >= 0 &&
+                    y >= 0 &&
+                    width > 0 &&
+                    height > 0 &&
+                    frame.every(
+                      (component, index) =>
+                        Math.abs(component - expectedFrame[index]) <= 0.25,
+                    ) &&
+                    hashValue(value.AXLabel) === expectedLabelHash
+                  ) {
+                    matches.set(frame.join(":"), value);
+                  }
+                }
+                for (const item of Object.values(value)) visit(item);
+              }
+
+              visit(root);
+              return { matches, publicText };
+            }
+
+            const screenSignatures = [
+              "이메일과 비밀번호",
+              "비밀번호 재설정 메일 받기",
+            ];
+            const raw = document.data.raw;
+            const screenScopes = (Array.isArray(raw) ? raw : [raw])
+              .map(inspectRoot)
+              .filter(({ publicText }) =>
+                screenSignatures.every((signature) =>
+                  publicText.some((value) => value.includes(signature)),
+                ),
+              );
+            if (screenScopes.length !== 1) {
+              fail(`SCREEN_SCOPE_COUNT_${Math.min(screenScopes.length, 9)}`);
+            }
+            const { matches } = screenScopes[0];
+            if (matches.size !== 1) {
+              fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
+            }
+            const [field] = matches.values();
+            if (
+              typeof field.AXValue !== "string" ||
+              field.AXValue.length === 0 ||
+              field.AXValue === "비밀번호"
+            ) fail("VALUE");
+            if (hashValue(field.AXValue) === expectedValueHash) fail("UNCHANGED");
+            fs.writeSync(1, "CHANGED");
+            ' 2>/dev/null
+            )"; then
+              if [[ ! "$result" =~ ^ERROR_[A-Z0-9_]+$ ]]; then
+                result="ERROR_UNKNOWN"
+              fi
+              echo "Simulator $field_label public probe verification failed ($result)." >&2
+              return 1
+            fi
+            if [[ "$result" != "CHANGED" ]]; then
+              echo "Simulator $field_label public probe verification failed (ERROR_UNKNOWN)." >&2
+              return 1
+            fi
           }
 
           paste_value() {
@@ -542,6 +719,13 @@ jobs:
             local target
             local target_x
             local target_y
+            local target_frame_x
+            local target_frame_y
+            local target_frame_width
+            local target_frame_height
+            local target_type
+            local target_label_hash
+            local target_value_hash
             if ! target="$(resolve_field_target "$field_role")"; then
               if [[ ! "$target" =~ ^ERROR_[A-Z0-9_]+$ ]]; then
                 target="ERROR_UNKNOWN"
@@ -549,17 +733,70 @@ jobs:
               echo "Simulator $field_label target resolution failed ($target)." >&2
               return 1
             fi
-            read -r target_x target_y <<<"$target"
-            if [[ -z "$target_x" ]] || [[ -z "$target_y" ]]; then
+            read -r \
+              target_x \
+              target_y \
+              target_frame_x \
+              target_frame_y \
+              target_frame_width \
+              target_frame_height \
+              target_type \
+              target_label_hash \
+              target_value_hash \
+              <<<"$target"
+            if [[ -z "$target_x" ]] ||
+               [[ -z "$target_y" ]] ||
+               [[ ! "$target_label_hash" =~ ^[a-f0-9]{64}$ ]] ||
+               [[ ! "$target_value_hash" =~ ^[a-f0-9]{64}$ ]] ||
+               [[ ! "$target_type" =~ ^(SecureTextField|TextField)$ ]]; then
               echo "Simulator $field_label target resolution failed." >&2
+              return 1
+            fi
+            if ! sim_use tap \
+              -x "$target_x" \
+              -y "$target_y" \
+              --device "$SIMULATOR_UDID" \
+              --json \
+              >/dev/null 2>&1; then
+              echo "Simulator $field_label focus tap failed." >&2
+              return 1
+            fi
+            sleep 1
+
+            local keyboard_state
+            if ! keyboard_state="$(
+              sim_use keyboard-state \
+                --device "$SIMULATOR_UDID" \
+                --json \
+                2>/dev/null |
+                env \
+                  -u QA_EMAIL \
+                  -u QA_PASSWORD \
+                  -u SIM_USE_DEBUG \
+                  node -e '
+            const fs = require("node:fs");
+            const document = JSON.parse(fs.readFileSync(0, "utf8"));
+            if (
+              document?.ok !== true ||
+              document?.data?.platform !== "ios" ||
+              typeof document.data.visible !== "boolean"
+            ) {
+              process.exit(1);
+            }
+            process.stdout.write(document.data.visible ? "SOFT" : "HIDDEN");
+            ' 2>/dev/null
+            )"; then
+              echo "Simulator $field_label keyboard state probe failed." >&2
+              return 1
+            fi
+            if [[ "$keyboard_state" != "HIDDEN" ]]; then
+              echo "Simulator $field_label paste requires the connected hardware keyboard." >&2
               return 1
             fi
 
             set +e
             printf '%s' "$value" |
-              sim_use paste --stdin --via-menu \
-                --target-x "$target_x" \
-                --target-y "$target_y" \
+              sim_use paste --stdin \
                 --device "$SIMULATOR_UDID" \
                 --json \
                 >/dev/null 2>&1
@@ -569,6 +806,13 @@ jobs:
               echo "Simulator $field_label paste failed." >&2
               return 1
             fi
+            LAST_PASTE_TARGET_FRAME_X="$target_frame_x"
+            LAST_PASTE_TARGET_FRAME_Y="$target_frame_y"
+            LAST_PASTE_TARGET_FRAME_WIDTH="$target_frame_width"
+            LAST_PASTE_TARGET_FRAME_HEIGHT="$target_frame_height"
+            LAST_PASTE_TARGET_TYPE="$target_type"
+            LAST_PASTE_TARGET_LABEL_HASH="$target_label_hash"
+            LAST_PASTE_TARGET_VALUE_HASH="$target_value_hash"
           }
 
           secure_paste() {
@@ -614,6 +858,8 @@ jobs:
           email_focus_output="$capture_debug_dir/focus-email"
           email_paste_output="$capture_debug_dir/verify-email-paste"
           password_focus_output="$capture_debug_dir/focus-password"
+          password_prompt_output="$capture_debug_dir/approve-password-paste"
+          password_paste_output="$capture_debug_dir/verify-password-paste"
           store_capture_output="$capture_debug_dir/store-capture"
 
           run_maestro_flow \
@@ -641,6 +887,30 @@ jobs:
             "true"
           rm -rf -- "$password_focus_output"
           sleep 2
+          paste_value "petflow-password-check" "public password sentinel" "password"
+          run_maestro_flow \
+            "approve-password-paste" \
+            "apps/mobile/.maestro/ios/approve-password-paste.yaml" \
+            "$password_prompt_output" \
+            "true"
+          rm -rf -- "$password_prompt_output"
+          verify_target_changed \
+            "public password sentinel" \
+            "$LAST_PASTE_TARGET_FRAME_X" \
+            "$LAST_PASTE_TARGET_FRAME_Y" \
+            "$LAST_PASTE_TARGET_FRAME_WIDTH" \
+            "$LAST_PASTE_TARGET_FRAME_HEIGHT" \
+            "$LAST_PASTE_TARGET_TYPE" \
+            "$LAST_PASTE_TARGET_LABEL_HASH" \
+            "$LAST_PASTE_TARGET_VALUE_HASH"
+          run_maestro_flow \
+            "verify-password-paste" \
+            "apps/mobile/.maestro/ios/verify-password-paste.yaml" \
+            "$password_paste_output" \
+            "true"
+          rm -rf -- "$password_paste_output"
+          clear_pasteboards
+          sleep 1
           secure_paste "$QA_PASSWORD" "password" "password"
 
           unset QA_EMAIL QA_PASSWORD
