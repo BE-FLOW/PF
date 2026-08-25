@@ -9,7 +9,8 @@ name: PetFlow build 32 App Store capture
     timeout: 30000
 - tapOn: "이메일로 로그인"
 - tapOn: "name@example.com"
-- inputText: ${QA_EMAIL}
+- setClipboard: ${QA_EMAIL}
+- pasteText
 - hideKeyboard
 - scrollUntilVisible:
     element:
@@ -21,7 +22,9 @@ name: PetFlow build 32 App Store capture
 - tapOn:
     text: "^비밀번호$"
     index: 1
-- inputText: ${QA_PASSWORD}
+- setClipboard: ${QA_PASSWORD}
+- pasteText
+- setClipboard: "petflow-clipboard-cleared"
 - hideKeyboard
 - tapOn:
     text: "^로그인$"
