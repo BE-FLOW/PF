@@ -74,10 +74,8 @@ jobs:
           expected_paths="$(printf '%s\n' \
             '.github/workflows/ios-capture-build32.yml' \
             'apps/mobile/.maestro/ios/focus-email.yaml' \
-            'apps/mobile/.maestro/ios/paste-email-menu.yaml' \
             'apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             'apps/mobile/.maestro/ios/focus-password.yaml' \
-            'apps/mobile/.maestro/ios/paste-password-menu.yaml' \
             'apps/mobile/.maestro/ios/approve-password-paste.yaml' \
             'apps/mobile/.maestro/ios/verify-password-paste.yaml' \
             'apps/mobile/.maestro/ios/store-capture.yaml' \
@@ -91,10 +89,8 @@ jobs:
           git diff --quiet "$RUNTIME_BASE_COMMIT" "$GITHUB_SHA" -- . \
             ':(exclude).github/workflows/ios-capture-build32.yml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-email.yaml' \
-            ':(exclude)apps/mobile/.maestro/ios/paste-email-menu.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-password.yaml' \
-            ':(exclude)apps/mobile/.maestro/ios/paste-password-menu.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/approve-password-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/verify-password-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/store-capture.yaml' \
@@ -179,10 +175,8 @@ jobs:
               while IFS= read -r changed_path; do
                 if [[ "$changed_path" != ".github/workflows/ios-capture-build32.yml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-email.yaml" ]] &&
-                   [[ "$changed_path" != "apps/mobile/.maestro/ios/paste-email-menu.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-email-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-password.yaml" ]] &&
-                   [[ "$changed_path" != "apps/mobile/.maestro/ios/paste-password-menu.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/approve-password-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-password-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/store-capture.yaml" ]]; then
@@ -526,7 +520,6 @@ jobs:
           LAST_PASTE_TARGET_TYPE=""
           LAST_PASTE_TARGET_LABEL_HASH=""
           LAST_PASTE_TARGET_VALUE_HASH=""
-          PASTE_SEQUENCE=0
 
           resolve_field_target() {
             local field_role="$1"
@@ -787,7 +780,6 @@ jobs:
             export -n value
             local field_label="$2"
             local field_role="$3"
-            local sensitive="${4:-false}"
             local target
             local target_x
             local target_y
@@ -825,48 +817,91 @@ jobs:
               return 1
             fi
 
-            local menu_flow_path
+            local field_selector_value
             if [[ "$field_role" == "email" ]]; then
-              menu_flow_path="apps/mobile/.maestro/ios/paste-email-menu.yaml"
+              field_selector_value="name@example.com"
+              if [[ "$target_type" != "TextField" ]]; then
+                echo "Simulator $field_label system paste target type is invalid." >&2
+                return 1
+              fi
             elif [[ "$field_role" == "password" ]]; then
-              menu_flow_path="apps/mobile/.maestro/ios/paste-password-menu.yaml"
+              field_selector_value="비밀번호"
             else
               echo "Simulator $field_label system paste role is invalid." >&2
               return 1
             fi
-            if [[ "$sensitive" != "true" && "$sensitive" != "false" ]]; then
-              echo "Simulator $field_label system paste sensitivity is invalid." >&2
+
+            local focus_status
+            set +e
+            sim_use tap \
+              --value "$field_selector_value" \
+              --element-type "$target_type" \
+              --wait-timeout 15 \
+              --post-delay 1 \
+              --device "$SIMULATOR_UDID" \
+              --json \
+              >/dev/null 2>&1
+            focus_status=$?
+            if (( focus_status != 0 )); then
+              sim_use tap \
+                --label "$field_selector_value" \
+                --element-type "$target_type" \
+                --wait-timeout 15 \
+                --post-delay 1 \
+                --device "$SIMULATOR_UDID" \
+                --json \
+                >/dev/null 2>&1
+              focus_status=$?
+            fi
+            set -e
+            if (( focus_status != 0 )); then
+              echo "Simulator $field_label calibrated focus failed." >&2
+              return 1
+            fi
+
+            local keyboard_state
+            if ! keyboard_state="$(
+              sim_use keyboard-state \
+                --device "$SIMULATOR_UDID" \
+                --json \
+                2>/dev/null |
+                env \
+                  -u QA_EMAIL \
+                  -u QA_PASSWORD \
+                  -u SIM_USE_DEBUG \
+                  node -e '
+            const fs = require("node:fs");
+            const document = JSON.parse(fs.readFileSync(0, "utf8"));
+            if (
+              document?.ok !== true ||
+              document?.data?.platform !== "ios" ||
+              typeof document.data.visible !== "boolean"
+            ) {
+              process.exit(1);
+            }
+            process.stdout.write(document.data.visible ? "SOFT" : "HIDDEN");
+            ' 2>/dev/null
+            )"; then
+              echo "Simulator $field_label keyboard state probe failed." >&2
+              return 1
+            fi
+            if [[ "$keyboard_state" != "HIDDEN" ]]; then
+              echo "Simulator $field_label paste requires the connected hardware keyboard." >&2
               return 1
             fi
 
             set +e
             printf '%s' "$value" |
-              env \
-                -u QA_EMAIL \
-                -u QA_PASSWORD \
-                -u SIM_USE_DEBUG \
-                xcrun simctl pbcopy "$SIMULATOR_UDID" \
-                  >/dev/null 2>&1
+              sim_use paste --stdin \
+                --device "$SIMULATOR_UDID" \
+                --json \
+                >/dev/null 2>&1
             local -a pipeline_status=("${PIPESTATUS[@]}")
             set -e
             if (( ${#pipeline_status[@]} != 2 )) ||
                (( pipeline_status[0] != 0 || pipeline_status[1] != 0 )); then
-              echo "Simulator $field_label pasteboard write failed." >&2
+              echo "Simulator $field_label HID paste failed." >&2
               return 1
-            fi
-
-            PASTE_SEQUENCE=$((PASTE_SEQUENCE + 1))
-            local phase_name="system-paste-$field_role-$PASTE_SEQUENCE"
-            if [[ "$sensitive" == "true" ]]; then
-              run_sensitive_maestro_flow "$phase_name" "$menu_flow_path"
-            else
-              local output_dir="$capture_debug_dir/$phase_name"
-              run_maestro_flow \
-                "$phase_name" \
-                "$menu_flow_path" \
-                "$output_dir" \
-                "true"
-              rm -rf -- "$output_dir"
             fi
 
             LAST_PASTE_TARGET_FRAME_X="$target_frame_x"
@@ -879,7 +914,51 @@ jobs:
           }
 
           secure_paste() {
-            paste_value "$1" "$2" "$3" "true"
+            local input_status
+            local pasteboard_clear_status
+            local settle_status=1
+            local verification_status=1
+            if paste_value "$1" "$2" "$3"; then
+              input_status=0
+            else
+              input_status=$?
+            fi
+            if strict_clear_pasteboards; then
+              pasteboard_clear_status=0
+            else
+              pasteboard_clear_status=$?
+            fi
+            if (( input_status == 0 )) &&
+               (( pasteboard_clear_status == 0 )); then
+              if sleep 2; then
+                settle_status=0
+              else
+                settle_status=$?
+              fi
+            fi
+            if (( settle_status == 0 )); then
+              if verify_target_changed \
+                   "$2" \
+                   "$LAST_PASTE_TARGET_FRAME_X" \
+                   "$LAST_PASTE_TARGET_FRAME_Y" \
+                   "$LAST_PASTE_TARGET_FRAME_WIDTH" \
+                   "$LAST_PASTE_TARGET_FRAME_HEIGHT" \
+                   "$LAST_PASTE_TARGET_TYPE" \
+                   "$LAST_PASTE_TARGET_LABEL_HASH" \
+                   "$LAST_PASTE_TARGET_VALUE_HASH"; then
+                verification_status=0
+              else
+                verification_status=$?
+              fi
+            fi
+            if (( input_status != 0 )) ||
+               (( pasteboard_clear_status != 0 )) ||
+               (( settle_status != 0 )) ||
+               (( verification_status != 0 )); then
+              echo "The protected Simulator paste phase failed." >&2
+              return 1
+            fi
+            return 0
           }
 
           run_maestro_flow() {
@@ -1105,8 +1184,7 @@ jobs:
           paste_value \
             "petflow-password-check" \
             "public password sentinel" \
-            "password" \
-            "true"
+            "password"
           run_sensitive_maestro_flow \
             "approve-password-paste" \
             "apps/mobile/.maestro/ios/approve-password-paste.yaml"
