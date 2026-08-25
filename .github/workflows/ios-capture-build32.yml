@@ -623,7 +623,7 @@ jobs:
             "true"
           rm -rf -- "$email_focus_output"
           sleep 2
-          paste_value "petflow@@paste-check" "public email sentinel" "TextField"
+          paste_value "petflow@@paste-check" "public email sentinel" "email"
           run_maestro_flow \
             "verify-email-paste" \
             "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
@@ -632,7 +632,7 @@ jobs:
           rm -rf -- "$email_paste_output"
           clear_pasteboards
           sleep 1
-          secure_paste "$QA_EMAIL" "email" "TextField"
+          secure_paste "$QA_EMAIL" "email" "email"
 
           run_maestro_flow \
             "focus-password" \
@@ -641,7 +641,7 @@ jobs:
             "true"
           rm -rf -- "$password_focus_output"
           sleep 2
-          secure_paste "$QA_PASSWORD" "password" "SecureTextField"
+          secure_paste "$QA_PASSWORD" "password" "password"
 
           unset QA_EMAIL QA_PASSWORD
           echo "Protected QA credentials entered through Simulator paste input."
