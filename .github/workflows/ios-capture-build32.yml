@@ -74,8 +74,10 @@ jobs:
           expected_paths="$(printf '%s\n' \
             '.github/workflows/ios-capture-build32.yml' \
             'apps/mobile/.maestro/ios/focus-email.yaml' \
+            'apps/mobile/.maestro/ios/paste-email-menu.yaml' \
             'apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             'apps/mobile/.maestro/ios/focus-password.yaml' \
+            'apps/mobile/.maestro/ios/paste-password-menu.yaml' \
             'apps/mobile/.maestro/ios/approve-password-paste.yaml' \
             'apps/mobile/.maestro/ios/verify-password-paste.yaml' \
             'apps/mobile/.maestro/ios/store-capture.yaml' \
@@ -89,8 +91,10 @@ jobs:
           git diff --quiet "$RUNTIME_BASE_COMMIT" "$GITHUB_SHA" -- . \
             ':(exclude).github/workflows/ios-capture-build32.yml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-email.yaml' \
+            ':(exclude)apps/mobile/.maestro/ios/paste-email-menu.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-password.yaml' \
+            ':(exclude)apps/mobile/.maestro/ios/paste-password-menu.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/approve-password-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/verify-password-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/store-capture.yaml' \
@@ -175,8 +179,10 @@ jobs:
               while IFS= read -r changed_path; do
                 if [[ "$changed_path" != ".github/workflows/ios-capture-build32.yml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-email.yaml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/paste-email-menu.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-email-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-password.yaml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/paste-password-menu.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/approve-password-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-password-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/store-capture.yaml" ]]; then
@@ -397,37 +403,54 @@ jobs:
         run: |
           set -euo pipefail
           set +x
-          if [[ -z "${QA_EMAIL:-}" ]] || [[ -z "${QA_PASSWORD:-}" ]]; then
+          qa_email="${QA_EMAIL:-}"
+          qa_password="${QA_PASSWORD:-}"
+          unset QA_EMAIL QA_PASSWORD
+          export -n qa_email qa_password
+          if [[ -z "$qa_email" ]] || [[ -z "$qa_password" ]]; then
             echo "Protected QA credentials are required." >&2
             exit 1
           fi
 
-          node <<'NODE'
-          const email = process.env.QA_EMAIL ?? "";
-          const password = process.env.QA_PASSWORD ?? "";
-          const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-          const printableAscii = /^[\x21-\x7e]+$/;
-
-          if (
-            email !== email.trim() ||
-            !emailPattern.test(email) ||
-            !printableAscii.test(email)
-          ) {
-            throw new Error("The protected QA email shape is invalid.");
-          }
-          if (
-            password.length < 12 ||
-            password.length > 64 ||
-            !printableAscii.test(password)
-          ) {
-            throw new Error("The protected QA password shape is invalid.");
-          }
-          console.log("Protected QA credential shape validated.");
-          NODE
+          previous_lc_all_state="${LC_ALL+x}"
+          previous_lc_all="${LC_ALL-}"
+          LC_ALL=C
+          email_shape_valid="true"
+          if [[ "$qa_email" != "${qa_email# }" ]] ||
+             [[ "$qa_email" != "${qa_email% }" ]] ||
+             [[ ! "$qa_email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            email_shape_valid="false"
+          fi
+          password_shape_valid="true"
+          if (( ${#qa_password} < 12 || ${#qa_password} > 64 )) ||
+             [[ ! "$qa_password" =~ ^[[:graph:]]+$ ]]; then
+            password_shape_valid="false"
+          fi
+          if [[ "$previous_lc_all_state" == "x" ]]; then
+            LC_ALL="$previous_lc_all"
+          else
+            unset LC_ALL
+          fi
+          unset previous_lc_all_state previous_lc_all
+          if [[ "$email_shape_valid" != "true" ]]; then
+            echo "The protected QA email shape is invalid." >&2
+            exit 1
+          fi
+          if [[ "$password_shape_valid" != "true" ]]; then
+            echo "The protected QA password shape is invalid." >&2
+            exit 1
+          fi
+          unset email_shape_valid password_shape_valid
+          echo "Protected QA credential shape validated."
 
           capture_debug_dir="$RUNNER_TEMP/maestro-capture-output"
+          sensitive_paste_root="$RUNNER_TEMP/petflow-sensitive-paste"
+          store_screenshot_export_dir="$capture_debug_dir/store-capture-screenshots"
+          STORE_SCREENSHOT_EXPORT_COMPLETE="false"
           mkdir -p "$capture_debug_dir"
           chmod 700 "$capture_debug_dir"
+          mkdir -p "$sensitive_paste_root"
+          chmod 700 "$sensitive_paste_root"
 
           sim_use() {
             env \
@@ -441,11 +464,57 @@ jobs:
 
           clear_pasteboards() {
             {
-              printf '' | xcrun simctl pbcopy "$SIMULATOR_UDID"
+              printf '' |
+                env \
+                  -u QA_EMAIL \
+                  -u QA_PASSWORD \
+                  -u SIM_USE_DEBUG \
+                  xcrun simctl pbcopy "$SIMULATOR_UDID"
             } >/dev/null 2>&1 || true
-            /usr/bin/pbcopy </dev/null >/dev/null 2>&1 || true
+            env \
+              -u QA_EMAIL \
+              -u QA_PASSWORD \
+              -u SIM_USE_DEBUG \
+              /usr/bin/pbcopy </dev/null >/dev/null 2>&1 || true
           }
-          trap clear_pasteboards EXIT
+          strict_clear_pasteboards() {
+            set +e
+            printf '' |
+              env \
+                -u QA_EMAIL \
+                -u QA_PASSWORD \
+                -u SIM_USE_DEBUG \
+                xcrun simctl pbcopy "$SIMULATOR_UDID" \
+                  >/dev/null 2>&1
+            local -a simulator_clear_status=("${PIPESTATUS[@]}")
+            env \
+              -u QA_EMAIL \
+              -u QA_PASSWORD \
+              -u SIM_USE_DEBUG \
+              /usr/bin/pbcopy </dev/null >/dev/null 2>&1
+            local host_clear_status=$?
+            set -e
+            if (( ${#simulator_clear_status[@]} != 2 )) ||
+               (( simulator_clear_status[0] != 0 || simulator_clear_status[1] != 0 )) ||
+               (( host_clear_status != 0 )); then
+              return 1
+            fi
+            return 0
+          }
+          cleanup_capture_secrets() {
+            clear_pasteboards
+            qa_email=""
+            qa_password=""
+            unset qa_email qa_password
+            if [[ -n "${sensitive_paste_root:-}" ]]; then
+              rm -rf -- "$sensitive_paste_root" >/dev/null 2>&1 || true
+            fi
+            if [[ "${STORE_SCREENSHOT_EXPORT_COMPLETE:-false}" != "true" ]] &&
+               [[ -n "${store_screenshot_export_dir:-}" ]]; then
+              rm -rf -- "$store_screenshot_export_dir" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_capture_secrets EXIT
           trap 'exit 129' HUP
           trap 'exit 130' INT
           trap 'exit 143' TERM
@@ -457,7 +526,7 @@ jobs:
           LAST_PASTE_TARGET_TYPE=""
           LAST_PASTE_TARGET_LABEL_HASH=""
           LAST_PASTE_TARGET_VALUE_HASH=""
-          PASTE_TRANSPORT="default"
+          PASTE_SEQUENCE=0
 
           resolve_field_target() {
             local field_role="$1"
@@ -534,12 +603,6 @@ jobs:
                     frame: value.frame,
                     labelHash: hashValue(value.AXLabel),
                     type: value.type,
-                    uniqueId:
-                      typeof value.AXUniqueId === "string" &&
-                      value.AXUniqueId.trim().length > 0 &&
-                      value.AXUniqueId.length <= 512
-                        ? value.AXUniqueId.trim()
-                        : null,
                     valueHash: hashValue(value.AXValue),
                   });
                 }
@@ -567,13 +630,10 @@ jobs:
           }
           const { matches } = screenScopes[0];
           if (matches.size !== 1) fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
-          const [{ frame, labelHash, type, uniqueId, valueHash }] = matches.values();
+          const [{ frame, labelHash, type, valueHash }] = matches.values();
           const { x, y, width, height } = frame;
-          const uniqueIdToken = uniqueId
-            ? Buffer.from(uniqueId, "utf8").toString("base64url")
-            : "NONE";
           process.stdout.write(
-            `${x + width / 2} ${y + height / 2} ${x} ${y} ${width} ${height} ${type} ${labelHash} ${valueHash} ${uniqueIdToken}`,
+            `${x + width / 2} ${y + height / 2} ${x} ${y} ${width} ${height} ${type} ${labelHash} ${valueHash}`,
           );
           ' 2>/dev/null
           }
@@ -724,8 +784,10 @@ jobs:
 
           paste_value() {
             local value="$1"
+            export -n value
             local field_label="$2"
             local field_role="$3"
+            local sensitive="${4:-false}"
             local target
             local target_x
             local target_y
@@ -736,7 +798,6 @@ jobs:
             local target_type
             local target_label_hash
             local target_value_hash
-            local target_unique_id_token
             if ! target="$(resolve_field_target "$field_role")"; then
               if [[ ! "$target" =~ ^ERROR_[A-Z0-9_]+$ ]]; then
                 target="ERROR_UNKNOWN"
@@ -754,108 +815,60 @@ jobs:
               target_type \
               target_label_hash \
               target_value_hash \
-              target_unique_id_token \
               <<<"$target"
             if [[ -z "$target_x" ]] ||
                [[ -z "$target_y" ]] ||
                [[ ! "$target_label_hash" =~ ^[a-f0-9]{64}$ ]] ||
                [[ ! "$target_value_hash" =~ ^[a-f0-9]{64}$ ]] ||
-               [[ ! "$target_unique_id_token" =~ ^(NONE|[A-Za-z0-9_-]+)$ ]] ||
                [[ ! "$target_type" =~ ^(SecureTextField|TextField)$ ]]; then
               echo "Simulator $field_label target resolution failed." >&2
               return 1
             fi
-            if [[ "$PASTE_TRANSPORT" == "default" ]]; then
-              local keyboard_state
-              if ! keyboard_state="$(
-                sim_use keyboard-state \
-                  --device "$SIMULATOR_UDID" \
-                  --json \
-                  2>/dev/null |
-                  env \
-                    -u QA_EMAIL \
-                    -u QA_PASSWORD \
-                    -u SIM_USE_DEBUG \
-                    node -e '
-            const fs = require("node:fs");
-            const document = JSON.parse(fs.readFileSync(0, "utf8"));
-            if (
-              document?.ok !== true ||
-              document?.data?.platform !== "ios" ||
-              typeof document.data.visible !== "boolean"
-            ) {
-              process.exit(1);
-            }
-            process.stdout.write(document.data.visible ? "SOFT" : "HIDDEN");
-            ' 2>/dev/null
-              )"; then
-                echo "Simulator $field_label keyboard state probe failed." >&2
-                return 1
-              fi
-              if [[ "$keyboard_state" != "HIDDEN" ]]; then
-                echo "Simulator $field_label paste requires the connected hardware keyboard." >&2
-                return 1
-              fi
-            elif [[ "$PASTE_TRANSPORT" != "menu" ]]; then
-              echo "Simulator $field_label paste transport is invalid." >&2
+
+            local menu_flow_path
+            if [[ "$field_role" == "email" ]]; then
+              menu_flow_path="apps/mobile/.maestro/ios/paste-email-menu.yaml"
+            elif [[ "$field_role" == "password" ]]; then
+              menu_flow_path="apps/mobile/.maestro/ios/paste-password-menu.yaml"
+            else
+              echo "Simulator $field_label system paste role is invalid." >&2
+              return 1
+            fi
+            if [[ "$sensitive" != "true" && "$sensitive" != "false" ]]; then
+              echo "Simulator $field_label system paste sensitivity is invalid." >&2
               return 1
             fi
 
             set +e
-            if [[ "$PASTE_TRANSPORT" == "menu" ]]; then
-              local -a menu_target_args=()
-              if [[ "$target_unique_id_token" == "NONE" ]]; then
-                menu_target_args=(
-                  --target-x "$target_x"
-                  --target-y "$target_y"
-                )
-              else
-                local target_unique_id
-                if ! target_unique_id="$(
-                     env \
-                       -u QA_EMAIL \
-                       -u QA_PASSWORD \
-                       -u SIM_USE_DEBUG \
-                       TARGET_UNIQUE_ID_TOKEN="$target_unique_id_token" \
-                       node -e '
-              const token = process.env.TARGET_UNIQUE_ID_TOKEN ?? "";
-              const value = Buffer.from(token, "base64url").toString("utf8");
-              if (
-                value.length === 0 ||
-                value.length > 512 ||
-                value.includes("\0")
-              ) process.exit(1);
-              process.stdout.write(value);
-              ' 2>/dev/null
-                   )"; then
-                  set -e
-                  echo "Simulator $field_label calibrated menu target is invalid." >&2
-                  return 1
-                fi
-                menu_target_args=(--target-id "$target_unique_id")
-              fi
-              printf '%s' "$value" |
-                sim_use paste --stdin --via-menu \
-                  "${menu_target_args[@]}" \
-                  --long-press-duration 1.2 \
-                  --menu-timeout 10 \
-                  --device "$SIMULATOR_UDID" \
-                  --json \
+            printf '%s' "$value" |
+              env \
+                -u QA_EMAIL \
+                -u QA_PASSWORD \
+                -u SIM_USE_DEBUG \
+                xcrun simctl pbcopy "$SIMULATOR_UDID" \
                   >/dev/null 2>&1
-            else
-              printf '%s' "$value" |
-                sim_use paste --stdin \
-                  --device "$SIMULATOR_UDID" \
-                  --json \
-                  >/dev/null 2>&1
-            fi
             local -a pipeline_status=("${PIPESTATUS[@]}")
             set -e
             if (( ${#pipeline_status[@]} != 2 )) ||
                (( pipeline_status[0] != 0 || pipeline_status[1] != 0 )); then
-              echo "Simulator $field_label paste failed." >&2
+              echo "Simulator $field_label pasteboard write failed." >&2
               return 1
             fi
+
+            PASTE_SEQUENCE=$((PASTE_SEQUENCE + 1))
+            local phase_name="system-paste-$field_role-$PASTE_SEQUENCE"
+            if [[ "$sensitive" == "true" ]]; then
+              run_sensitive_maestro_flow "$phase_name" "$menu_flow_path"
+            else
+              local output_dir="$capture_debug_dir/$phase_name"
+              run_maestro_flow \
+                "$phase_name" \
+                "$menu_flow_path" \
+                "$output_dir" \
+                "true"
+              rm -rf -- "$output_dir"
+            fi
+
             LAST_PASTE_TARGET_FRAME_X="$target_frame_x"
             LAST_PASTE_TARGET_FRAME_Y="$target_frame_y"
             LAST_PASTE_TARGET_FRAME_WIDTH="$target_frame_width"
@@ -866,9 +879,7 @@ jobs:
           }
 
           secure_paste() {
-            paste_value "$1" "$2" "$3"
-            sleep 2
-            clear_pasteboards
+            paste_value "$1" "$2" "$3" "true"
           }
 
           run_maestro_flow() {
@@ -905,12 +916,168 @@ jobs:
             done
           }
 
+          run_sensitive_maestro_flow() {
+            local phase_name="$1"
+            local flow_path="$2"
+            local export_dir="${3:-}"
+            local phase_dir="$sensitive_paste_root/$phase_name"
+            local output_dir="$phase_dir/output"
+            local attempt_log="$phase_dir/maestro.log"
+            rm -rf -- "$phase_dir"
+            mkdir -p "$output_dir"
+            chmod 700 "$phase_dir" "$output_dir"
+
+            local maestro_status
+            set +e
+            env \
+              -u QA_EMAIL \
+              -u QA_PASSWORD \
+              -u SIM_USE_DEBUG \
+              MAESTRO_DRIVER_STARTUP_TIMEOUT=60000 \
+              "$MAESTRO_BIN" --no-ansi --device "$SIMULATOR_UDID" \
+                test "$flow_path" \
+                --test-output-dir="$output_dir" \
+                >"$attempt_log" 2>&1
+            maestro_status=$?
+            set -e
+
+            local export_status=0
+            if [[ -n "$export_dir" ]]; then
+              set +e
+              rm -rf -- "$export_dir"
+              export_status=$?
+              if (( export_status == 0 && maestro_status == 0 )); then
+                mkdir -p "$export_dir"
+                export_status=$?
+              fi
+              if (( export_status == 0 && maestro_status == 0 )); then
+                chmod 700 "$export_dir"
+                export_status=$?
+              fi
+              if (( export_status == 0 && maestro_status == 0 )); then
+                env \
+                  -u QA_EMAIL \
+                  -u QA_PASSWORD \
+                  -u SIM_USE_DEBUG \
+                  SENSITIVE_OUTPUT_DIR="$output_dir" \
+                  SCREENSHOT_EXPORT_DIR="$export_dir" \
+                  node <<'NODE' >"$phase_dir/export.log" 2>&1
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const sourceRoot = process.env.SENSITIVE_OUTPUT_DIR;
+          const exportRoot = process.env.SCREENSHOT_EXPORT_DIR;
+          const expectedNames = new Set([
+            "01-home-score.png",
+            "02-health-check.png",
+            "03-health-flow.png",
+            "04-account-pets.png",
+            "05-report-summary.png",
+          ]);
+          const matches = new Map([...expectedNames].map((name) => [name, []]));
+          const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+          let entryCount = 0;
+
+          function requireDirectory(directory, label) {
+            const stat = fs.lstatSync(directory);
+            if (stat.isSymbolicLink() || !stat.isDirectory()) {
+              throw new Error(`${label} is not a real directory.`);
+            }
+          }
+
+          function visit(directory) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              entryCount += 1;
+              if (entryCount > 2_000) {
+                throw new Error("The protected capture output contains too many entries.");
+              }
+              const entryPath = path.join(directory, entry.name);
+              const stat = fs.lstatSync(entryPath);
+              if (stat.isSymbolicLink()) {
+                throw new Error("Symbolic links are not permitted in protected capture output.");
+              }
+              if (stat.isDirectory()) {
+                visit(entryPath);
+                continue;
+              }
+              if (!stat.isFile()) {
+                throw new Error("Only regular files are permitted in protected capture output.");
+              }
+              if (expectedNames.has(entry.name)) matches.get(entry.name).push(entryPath);
+            }
+          }
+
+          requireDirectory(sourceRoot, "Protected capture output");
+          requireDirectory(exportRoot, "Screenshot export target");
+          visit(sourceRoot);
+
+          for (const name of expectedNames) {
+            const candidates = matches.get(name);
+            if (candidates.length !== 1) {
+              throw new Error(`Expected exactly one protected screenshot named ${name}.`);
+            }
+            const source = candidates[0];
+            const stat = fs.lstatSync(source);
+            if (stat.size < pngSignature.length || stat.size > 50_000_000) {
+              throw new Error(`${name} has an invalid size.`);
+            }
+            const descriptor = fs.openSync(source, "r");
+            const signature = Buffer.alloc(pngSignature.length);
+            try {
+              const bytesRead = fs.readSync(
+                descriptor,
+                signature,
+                0,
+                pngSignature.length,
+                0,
+              );
+              if (bytesRead !== pngSignature.length || !signature.equals(pngSignature)) {
+                throw new Error(`${name} is not a PNG file.`);
+              }
+            } finally {
+              fs.closeSync(descriptor);
+            }
+            const destination = path.join(exportRoot, name);
+            fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+            fs.chmodSync(destination, 0o600);
+          }
+          NODE
+                export_status=$?
+              fi
+              set -e
+            fi
+
+            local pasteboard_clear_status
+            if strict_clear_pasteboards; then
+              pasteboard_clear_status=0
+            else
+              pasteboard_clear_status=$?
+            fi
+
+            local delete_status
+            set +e
+            rm -rf -- "$phase_dir"
+            delete_status=$?
+            set -e
+
+            if (( maestro_status != 0 )) ||
+               (( export_status != 0 )) ||
+               (( pasteboard_clear_status != 0 )) ||
+               (( delete_status != 0 )); then
+              if [[ -n "$export_dir" ]]; then
+                rm -rf -- "$export_dir" >/dev/null 2>&1 || true
+              fi
+              echo "The protected Simulator paste phase failed." >&2
+              return 1
+            fi
+            if [[ -n "$export_dir" ]]; then
+              STORE_SCREENSHOT_EXPORT_COMPLETE="true"
+            fi
+            return 0
+          }
+
           email_focus_output="$capture_debug_dir/focus-email"
           email_paste_output="$capture_debug_dir/verify-email-paste"
-          password_focus_output="$capture_debug_dir/focus-password"
-          password_prompt_output="$capture_debug_dir/approve-password-paste"
-          password_paste_output="$capture_debug_dir/verify-password-paste"
-          store_capture_output="$capture_debug_dir/store-capture"
 
           run_maestro_flow \
             "focus-email" \
@@ -920,56 +1087,29 @@ jobs:
           rm -rf -- "$email_focus_output"
           sleep 2
           paste_value "petflow@@paste-check" "public email sentinel" "email"
-          if ! run_maestro_flow \
-            "verify-email-paste-default" \
+          run_maestro_flow \
+            "verify-email-paste" \
             "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
             "$email_paste_output" \
-            "true"; then
-            if ! grep -Fq \
-              'Assertion is false: "^petflow@@paste-check$" is visible' \
-              "$capture_debug_dir"/maestro-verify-email-paste-default-attempt-*.log; then
-              echo "The default Simulator paste probe failed unexpectedly." >&2
-              exit 1
-            fi
-            rm -rf -- \
-              "$email_paste_output" \
-              "$capture_debug_dir"/maestro-verify-email-paste-default-attempt-*.log
-            clear_pasteboards
-            PASTE_TRANSPORT="menu"
-            run_maestro_flow \
-              "focus-email-menu" \
-              "apps/mobile/.maestro/ios/focus-email.yaml" \
-              "$email_focus_output" \
-              "true"
-            rm -rf -- "$email_focus_output"
-            sleep 2
-            paste_value "petflow@@paste-check" "public email sentinel" "email"
-            run_maestro_flow \
-              "verify-email-paste-menu" \
-              "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
-              "$email_paste_output" \
-              "true"
-          fi
+            "true"
           rm -rf -- "$email_paste_output"
-          echo "Simulator paste transport validated with a public probe ($PASTE_TRANSPORT)."
+          echo "Simulator system paste transport validated with a public probe."
           clear_pasteboards
           sleep 1
-          secure_paste "$QA_EMAIL" "email" "email"
+          secure_paste "$qa_email" "email" "email"
 
-          run_maestro_flow \
+          run_sensitive_maestro_flow \
             "focus-password" \
-            "apps/mobile/.maestro/ios/focus-password.yaml" \
-            "$password_focus_output" \
-            "true"
-          rm -rf -- "$password_focus_output"
+            "apps/mobile/.maestro/ios/focus-password.yaml"
           sleep 2
-          paste_value "petflow-password-check" "public password sentinel" "password"
-          run_maestro_flow \
-            "approve-password-paste" \
-            "apps/mobile/.maestro/ios/approve-password-paste.yaml" \
-            "$password_prompt_output" \
+          paste_value \
+            "petflow-password-check" \
+            "public password sentinel" \
+            "password" \
             "true"
-          rm -rf -- "$password_prompt_output"
+          run_sensitive_maestro_flow \
+            "approve-password-paste" \
+            "apps/mobile/.maestro/ios/approve-password-paste.yaml"
           verify_target_changed \
             "public password sentinel" \
             "$LAST_PASTE_TARGET_FRAME_X" \
@@ -979,30 +1119,25 @@ jobs:
             "$LAST_PASTE_TARGET_TYPE" \
             "$LAST_PASTE_TARGET_LABEL_HASH" \
             "$LAST_PASTE_TARGET_VALUE_HASH"
-          run_maestro_flow \
+          run_sensitive_maestro_flow \
             "verify-password-paste" \
-            "apps/mobile/.maestro/ios/verify-password-paste.yaml" \
-            "$password_paste_output" \
-            "true"
-          rm -rf -- "$password_paste_output"
+            "apps/mobile/.maestro/ios/verify-password-paste.yaml"
           clear_pasteboards
           sleep 1
-          secure_paste "$QA_PASSWORD" "password" "password"
+          secure_paste "$qa_password" "password" "password"
 
-          unset QA_EMAIL QA_PASSWORD
+          qa_email=""
+          qa_password=""
+          unset qa_email qa_password
           echo "Protected QA credentials entered through Simulator paste input."
-          run_maestro_flow \
+          run_sensitive_maestro_flow \
             "store-capture" \
             "apps/mobile/.maestro/ios/store-capture.yaml" \
-            "$store_capture_output" \
-            "false"
+            "$store_screenshot_export_dir"
 
       - name: Emit only sanitized UI text when capture fails
         if: failure() && steps.maestro_capture.outcome == 'failure'
         shell: bash
-        env:
-          QA_EMAIL: ${{ secrets.PETFLOW_QA_EMAIL }}
-          QA_PASSWORD: ${{ secrets.PETFLOW_QA_PASSWORD }}
         run: |
           set -euo pipefail
           DEBUG_ROOT="$RUNNER_TEMP/maestro-capture-output" node <<'NODE'
@@ -1011,7 +1146,6 @@ jobs:
 
           const root = process.env.DEBUG_ROOT;
           const extensions = new Set([".json", ".log", ".txt", ".xml", ".yaml", ".yml"]);
-          const secrets = [process.env.QA_EMAIL, process.env.QA_PASSWORD].filter(Boolean);
           const candidates = [];
           const diagnostics = [];
           const seen = new Set();
@@ -1023,11 +1157,7 @@ jobs:
           const maxFiles = 500;
 
           function sanitize(value) {
-            let result = value;
-            for (const secret of secrets) {
-              result = result.split(secret).join("[REDACTED_QA_VALUE]");
-            }
-            return result
+            return value
               .replace(/https?:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
               .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
               .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
