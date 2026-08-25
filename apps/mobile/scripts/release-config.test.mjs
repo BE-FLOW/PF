@@ -52,6 +52,14 @@ describe("mobile release configuration", () => {
     expect(appConfig.expo.ios.bundleIdentifier).toBe("com.beflow.petflow");
   });
 
+  it("keeps system status content readable on the light app background", () => {
+    expect(appConfig.expo.userInterfaceStyle).toBe("light");
+    expect(appConfig.expo.androidStatusBar).toEqual({
+      barStyle: "dark-content",
+      backgroundColor: "#f2faeb",
+    });
+  });
+
   it("keeps the public app free of mobile purchase code and permissions", () => {
     expect(packageJson.dependencies["react-native-purchases"]).toBeUndefined();
     expect(packageJson.scripts["status:ios:iap"]).toBeUndefined();

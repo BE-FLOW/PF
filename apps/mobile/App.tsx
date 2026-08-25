@@ -20,6 +20,7 @@ import {
   SafeAreaView,
   ScrollView,
   Share,
+  StatusBar,
   StyleSheet,
   Text as NativeText,
   TextInput as NativeTextInput,
@@ -2755,6 +2756,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.screen}>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboard}

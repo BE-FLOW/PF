@@ -17,6 +17,10 @@ module.exports = {
     version: "1.0",
     icon: "./assets/icon.png",
     userInterfaceStyle: "light",
+    androidStatusBar: {
+      barStyle: "dark-content",
+      backgroundColor: "#f2faeb",
+    },
     splash: {
       image: "./assets/brand-icon.png",
       resizeMode: "contain",
