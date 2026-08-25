@@ -1,7 +1,6 @@
 appId: com.beflow.petflow
 name: PetFlow build 32 App Store capture
 ---
-- hideKeyboard
 - tapOn:
     text: "^로그인$"
     index: 1
