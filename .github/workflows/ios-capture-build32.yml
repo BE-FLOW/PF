@@ -315,7 +315,7 @@ jobs:
             'PetFlow build 32 capture' "$device_type_id" "$runtime_id")"
           echo "SIMULATOR_UDID=$simulator_udid" >> "$GITHUB_ENV"
           defaults write com.apple.iphonesimulator PasteboardAutomaticSync -bool false
-          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool true
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
           xcrun simctl boot "$simulator_udid"
           open -a Simulator --args -CurrentDeviceUDID "$simulator_udid"
           xcrun simctl bootstatus "$simulator_udid" -b
@@ -441,12 +441,86 @@ jobs:
           trap 'exit 143' TERM
           clear_pasteboards
 
+          resolve_field_target() {
+            local element_type="$1"
+            sim_use describe-ui \
+              --device "$SIMULATOR_UDID" \
+              --max-probes 0 \
+              --json \
+              2>/dev/null |
+              env \
+                -u QA_EMAIL \
+                -u QA_PASSWORD \
+                -u SIM_USE_DEBUG \
+                TARGET_ELEMENT_TYPE="$element_type" \
+                node -e '
+          const fs = require("node:fs");
+
+          const document = JSON.parse(fs.readFileSync(0, "utf8"));
+          if (
+            document?.ok !== true ||
+            document?.data?.appPackage !== "com.beflow.petflow" ||
+            !document.data.raw
+          ) {
+            throw new Error("The foreground auth UI is unavailable.");
+          }
+          const raw = document.data.raw;
+          const elementType = process.env.TARGET_ELEMENT_TYPE;
+          const matches = new Map();
+
+          function visit(value) {
+            if (Array.isArray(value)) {
+              for (const item of value) visit(item);
+              return;
+            }
+            if (!value || typeof value !== "object") return;
+            if (value.type === elementType && value.frame) {
+              const { x, y, width, height } = value.frame;
+              const frame = [x, y, width, height];
+              if (
+                frame.every(Number.isFinite) &&
+                x >= 0 &&
+                y >= 0 &&
+                width > 0 &&
+                height > 0
+              ) {
+                matches.set(frame.join(":"), value.frame);
+              }
+            }
+            for (const item of Object.values(value)) visit(item);
+          }
+
+          visit(raw);
+          if (matches.size !== 1) {
+            throw new Error("The requested auth field is not unique.");
+          }
+          const [{ x, y, width, height }] = matches.values();
+          process.stdout.write(`${x + width / 2} ${y + height / 2}`);
+          ' 2>/dev/null
+          }
+
           paste_value() {
             local value="$1"
             local field_label="$2"
+            local element_type="$3"
+            local target
+            local target_x
+            local target_y
+            if ! target="$(resolve_field_target "$element_type")"; then
+              echo "Simulator $field_label target resolution failed." >&2
+              return 1
+            fi
+            read -r target_x target_y <<<"$target"
+            if [[ -z "$target_x" ]] || [[ -z "$target_y" ]]; then
+              echo "Simulator $field_label target resolution failed." >&2
+              return 1
+            fi
+
             set +e
             printf '%s' "$value" |
-              sim_use paste --stdin --replace \
+              sim_use paste --stdin --via-menu \
+                --target-x "$target_x" \
+                --target-y "$target_y" \
                 --device "$SIMULATOR_UDID" \
                 --json \
                 >/dev/null 2>&1
@@ -459,7 +533,7 @@ jobs:
           }
 
           secure_paste() {
-            paste_value "$1" "$2"
+            paste_value "$1" "$2" "$3"
             sleep 2
             clear_pasteboards
           }
@@ -510,7 +584,7 @@ jobs:
             "true"
           rm -rf -- "$email_focus_output"
           sleep 2
-          paste_value "petflow@@paste-check" "public email sentinel"
+          paste_value "petflow@@paste-check" "public email sentinel" "TextField"
           run_maestro_flow \
             "verify-email-paste" \
             "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
@@ -519,7 +593,7 @@ jobs:
           rm -rf -- "$email_paste_output"
           clear_pasteboards
           sleep 1
-          secure_paste "$QA_EMAIL" "email"
+          secure_paste "$QA_EMAIL" "email" "TextField"
 
           run_maestro_flow \
             "focus-password" \
@@ -528,7 +602,7 @@ jobs:
             "true"
           rm -rf -- "$password_focus_output"
           sleep 2
-          secure_paste "$QA_PASSWORD" "password"
+          secure_paste "$QA_PASSWORD" "password" "SecureTextField"
 
           unset QA_EMAIL QA_PASSWORD
           echo "Protected QA credentials entered through Simulator paste input."
