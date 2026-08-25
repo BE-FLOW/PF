@@ -150,13 +150,10 @@ jobs:
           post_build_changes="$(
             git diff --name-only "$EAS_SIMULATOR_BUILD_COMMIT..$GITHUB_SHA" |
               while IFS= read -r changed_path; do
-                case "$changed_path" in
-                  .github/workflows/ios-capture-build32.yml|apps/mobile/.maestro/ios/store-capture.yaml)
-                    ;;
-                  *)
-                    printf '%s\n' "$changed_path"
-                    ;;
-                esac
+                if [[ "$changed_path" != ".github/workflows/ios-capture-build32.yml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/store-capture.yaml" ]]; then
+                  printf '%s\n' "$changed_path"
+                fi
               done
           )"
           if [[ -n "$post_build_changes" ]]; then
