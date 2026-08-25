@@ -457,28 +457,20 @@ export async function POST(
   }
 
   const result = await enrichWithOpenAI(localDraft, apiKey, model);
-  if (!result.draft) {
-    await completeUsageWithRetry({
-      usageId: reservation.usageId,
-      userId: access.userId,
-      reservationToken: reservation.reservationToken,
-      status: "failed",
-      model,
-      errorCode: result.errorCode ?? "openai_failed",
-    });
-    return NextResponse.json(
-      { error: "병원 전달본을 만들지 못했어요. 잠시 후 다시 시도해 주세요." },
-      { status: 502 },
-    );
-  }
-
-  const safetyViolation = vetDraftSafetyViolation(result.draft);
-  const groundingViolation = vetDraftGroundingViolation(
-    result.draft,
-    localDraft,
-  );
-  const fallbackReason = safetyViolation ?? groundingViolation;
-  const safeDraft = fallbackReason ? localDraft : result.draft;
+  const safetyViolation = result.draft
+    ? vetDraftSafetyViolation(result.draft)
+    : null;
+  const groundingViolation = result.draft
+    ? vetDraftGroundingViolation(result.draft, localDraft)
+    : null;
+  const generatedFallbackReason = safetyViolation ?? groundingViolation;
+  const openAiFallbackReason = result.draft
+    ? null
+    : (result.errorCode ?? "openai_failed");
+  const safeDraft =
+    result.draft && !generatedFallbackReason && !openAiFallbackReason
+      ? result.draft
+      : localDraft;
   const usageCompleted = await completeUsageWithRetry({
     usageId: reservation.usageId,
     userId: access.userId,
@@ -488,9 +480,11 @@ export async function POST(
     promptTokens: result.usage?.input_tokens ?? null,
     completionTokens: result.usage?.output_tokens ?? null,
     totalTokens: result.usage?.total_tokens ?? null,
-    errorCode: fallbackReason
-      ? `unsafe_generated_fallback_${fallbackReason}`
-      : null,
+    errorCode: generatedFallbackReason
+      ? `unsafe_generated_fallback_${generatedFallbackReason}`
+      : openAiFallbackReason
+        ? `openai_unavailable_local_fallback_${openAiFallbackReason}`
+        : null,
     draft: safeDraft,
   });
   if (!usageCompleted) {

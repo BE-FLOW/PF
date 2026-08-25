@@ -381,6 +381,29 @@ describe("free vet draft route", () => {
     );
   });
 
+  it("persists the deterministic draft when OpenAI is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("upstream unavailable", { status: 503 }),
+    );
+
+    const response = await POST(postRequest({ key: requestId }), context);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      recovered: false,
+      draft: { source: "local", usageId },
+    });
+    expect(adminMocks.completeFreeAiReportUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reservationToken,
+        status: "succeeded",
+        errorCode:
+          "openai_unavailable_local_fallback_openai_response_error",
+        draft: localDraft,
+      }),
+    );
+  });
+
   it("preserves owner-reported provenance fields without revalidating them as model text", async () => {
     const previousPlan = localDraft.planAndProgress;
     localDraft.planAndProgress = ["보호자 메모: 아목시실린 5mg 하루 2회"];
