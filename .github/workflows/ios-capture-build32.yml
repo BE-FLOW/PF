@@ -74,6 +74,7 @@ jobs:
           expected_paths="$(printf '%s\n' \
             '.github/workflows/ios-capture-build32.yml' \
             'apps/mobile/.maestro/ios/focus-email.yaml' \
+            'apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             'apps/mobile/.maestro/ios/focus-password.yaml' \
             'apps/mobile/.maestro/ios/store-capture.yaml' \
             'apps/mobile/eas.json' | LC_ALL=C sort)"
@@ -86,6 +87,7 @@ jobs:
           git diff --quiet "$RUNTIME_BASE_COMMIT" "$GITHUB_SHA" -- . \
             ':(exclude).github/workflows/ios-capture-build32.yml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-email.yaml' \
+            ':(exclude)apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-password.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/store-capture.yaml' \
             ':(exclude)apps/mobile/eas.json'
@@ -169,6 +171,7 @@ jobs:
               while IFS= read -r changed_path; do
                 if [[ "$changed_path" != ".github/workflows/ios-capture-build32.yml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-email.yaml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-email-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-password.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/store-capture.yaml" ]]; then
                   printf '%s\n' "$changed_path"
@@ -311,6 +314,8 @@ jobs:
           simulator_udid="$(xcrun simctl create \
             'PetFlow build 32 capture' "$device_type_id" "$runtime_id")"
           echo "SIMULATOR_UDID=$simulator_udid" >> "$GITHUB_ENV"
+          defaults write com.apple.iphonesimulator PasteboardAutomaticSync -bool false
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool true
           xcrun simctl boot "$simulator_udid"
           open -a Simulator --args -CurrentDeviceUDID "$simulator_udid"
           xcrun simctl bootstatus "$simulator_udid" -b
@@ -424,19 +429,39 @@ jobs:
               "$SIM_USE_BIN" "$@"
           }
 
-          secure_type() {
+          clear_pasteboards() {
+            {
+              printf '' | xcrun simctl pbcopy "$SIMULATOR_UDID"
+            } >/dev/null 2>&1 || true
+            /usr/bin/pbcopy </dev/null >/dev/null 2>&1 || true
+          }
+          trap clear_pasteboards EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          clear_pasteboards
+
+          paste_value() {
             local value="$1"
             local field_label="$2"
             set +e
             printf '%s' "$value" |
-              sim_use type --stdin --device "$SIMULATOR_UDID" --json \
+              sim_use paste --stdin --replace \
+                --device "$SIMULATOR_UDID" \
+                --json \
                 >/dev/null 2>&1
             local -a pipeline_status=("${PIPESTATUS[@]}")
             set -e
             if (( pipeline_status[1] != 0 )); then
-              echo "Simulator HID $field_label entry failed." >&2
+              echo "Simulator $field_label paste failed." >&2
               return 1
             fi
+          }
+
+          secure_paste() {
+            paste_value "$1" "$2"
+            sleep 2
+            clear_pasteboards
           }
 
           run_maestro_flow() {
@@ -474,6 +499,7 @@ jobs:
           }
 
           email_focus_output="$capture_debug_dir/focus-email"
+          email_paste_output="$capture_debug_dir/verify-email-paste"
           password_focus_output="$capture_debug_dir/focus-password"
           store_capture_output="$capture_debug_dir/store-capture"
 
@@ -484,8 +510,16 @@ jobs:
             "true"
           rm -rf -- "$email_focus_output"
           sleep 2
-          secure_type "$QA_EMAIL" "email"
+          paste_value "petflow@@paste-check" "public email sentinel"
+          run_maestro_flow \
+            "verify-email-paste" \
+            "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
+            "$email_paste_output" \
+            "true"
+          rm -rf -- "$email_paste_output"
+          clear_pasteboards
           sleep 1
+          secure_paste "$QA_EMAIL" "email"
 
           run_maestro_flow \
             "focus-password" \
@@ -494,11 +528,10 @@ jobs:
             "true"
           rm -rf -- "$password_focus_output"
           sleep 2
-          secure_type "$QA_PASSWORD" "password"
-          sleep 1
+          secure_paste "$QA_PASSWORD" "password"
 
           unset QA_EMAIL QA_PASSWORD
-          echo "Protected QA credentials entered through Simulator HID input."
+          echo "Protected QA credentials entered through Simulator paste input."
           run_maestro_flow \
             "store-capture" \
             "apps/mobile/.maestro/ios/store-capture.yaml" \
@@ -786,6 +819,8 @@ jobs:
         shell: bash
         run: |
           if [[ -n "${SIMULATOR_UDID:-}" ]]; then
+            printf '' | xcrun simctl pbcopy "$SIMULATOR_UDID" >/dev/null 2>&1 || true
             xcrun simctl shutdown "$SIMULATOR_UDID" >/dev/null 2>&1 || true
             xcrun simctl delete "$SIMULATOR_UDID" >/dev/null 2>&1 || true
           fi
+          /usr/bin/pbcopy </dev/null >/dev/null 2>&1 || true

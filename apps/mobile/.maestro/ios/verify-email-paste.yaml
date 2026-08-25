@@ -1,0 +1,17 @@
+appId: com.beflow.petflow
+name: PetFlow iOS capture email paste verification
+---
+- runFlow:
+    when:
+      visible: "^Allow Paste$"
+    commands:
+      - tapOn: "^Allow Paste$"
+- runFlow:
+    when:
+      visible: "^붙여넣기 허용$"
+    commands:
+      - tapOn: "^붙여넣기 허용$"
+- extendedWaitUntil:
+    visible: "^petflow@@paste-check$"
+    timeout: 15000
+- tapOn: "^petflow@@paste-check$"
