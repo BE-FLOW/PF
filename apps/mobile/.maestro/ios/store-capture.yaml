@@ -2,48 +2,12 @@ appId: com.beflow.petflow
 name: PetFlow build 32 App Store capture
 ---
 - launchApp:
-    clearState: true
-
-- extendedWaitUntil:
-    visible: "이메일로 로그인"
-    timeout: 30000
-- tapOn: "이메일로 로그인"
-- tapOn: "name@example.com"
-- evalScript: ${output.emailInputIndex = 0}
-- repeat:
-    optional: true
-    while:
-      true: ${output.emailInputIndex < QA_EMAIL.length}
-    commands:
-      - inputText: ${QA_EMAIL.charAt(output.emailInputIndex)}
-      - evalScript: ${output.emailInputIndex = output.emailInputIndex + 1}
-- hideKeyboard
-- scrollUntilVisible:
-    element:
-      text: "^비밀번호$"
-    direction: DOWN
-    timeout: 30000
-    visibilityPercentage: 100
-    centerElement: true
-- tapOn:
-    text: "^비밀번호$"
-    index: 1
-- evalScript: ${output.passwordInputIndex = 0}
-- repeat:
-    optional: true
-    while:
-      true: ${output.passwordInputIndex < QA_PASSWORD.length}
-    commands:
-      - inputText: ${QA_PASSWORD.charAt(output.passwordInputIndex)}
-      - evalScript: ${output.passwordInputIndex = output.passwordInputIndex + 1}
-- hideKeyboard
-- tapOn:
-    text: "^로그인$"
-    below: "이메일과 비밀번호"
+    clearState: false
 
 - extendedWaitUntil:
     visible: "^(홈 먼저 보기|새 변화 이어서 남기기)$"
     timeout: 90000
+- assertNotVisible: "이메일로 로그인"
 - waitForAnimationToEnd
 - runFlow:
     when:

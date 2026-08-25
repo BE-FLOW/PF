@@ -27,6 +27,10 @@ env:
   MAESTRO_CLI_NO_ANALYTICS: "1"
   MAESTRO_DISABLE_UPDATE_CHECK: "true"
   MAESTRO_DRIVER_STARTUP_TIMEOUT: "240000"
+  SIM_USE_VERSION: 0.13.0
+  SIM_USE_ARCHIVE_SHA256: f3da237663199faf4c7f6796c3ede6ce7583da872dc27d92eb3b7eb051725081
+  SIM_USE_NO_DAEMON: "1"
+  SIM_USE_HID_STABILIZATION_MS: "60"
 
 jobs:
   capture:
@@ -335,6 +339,34 @@ jobs:
           test -x "$maestro_dir/maestro/bin/maestro"
           echo "MAESTRO_BIN=$maestro_dir/maestro/bin/maestro" >> "$GITHUB_ENV"
 
+      - name: Install pinned Simulator HID CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          sim_use_archive="$RUNNER_TEMP/sim-use-$SIM_USE_VERSION.tar.gz"
+          sim_use_dir="$RUNNER_TEMP/sim-use-$SIM_USE_VERSION"
+          mkdir -p "$sim_use_dir"
+          curl --fail --location --silent --show-error \
+            --proto '=https' --tlsv1.2 \
+            "https://github.com/lycorp-jp/sim-use/releases/download/v$SIM_USE_VERSION/sim-use-v$SIM_USE_VERSION.tar.gz" \
+            --output "$sim_use_archive"
+          actual_sim_use_sha="$(shasum -a 256 "$sim_use_archive" | awk '{print $1}')"
+          if [[ "$actual_sim_use_sha" != "$SIM_USE_ARCHIVE_SHA256" ]]; then
+            echo "The sim-use archive SHA-256 does not match the pinned release." >&2
+            exit 1
+          fi
+          tar -xzf "$sim_use_archive" -C "$sim_use_dir"
+          sim_use_bin="$sim_use_dir/sim-use"
+          test -x "$sim_use_bin"
+          codesign --force --sign - --timestamp=none "$sim_use_bin"
+          codesign --verify --strict "$sim_use_bin"
+          version_output="$("$sim_use_bin" --version)"
+          if [[ "$version_output" != *"$SIM_USE_VERSION"* ]]; then
+            echo "The sim-use binary version does not match the pinned release." >&2
+            exit 1
+          fi
+          echo "SIM_USE_BIN=$sim_use_bin" >> "$GITHUB_ENV"
+
       - name: Run the synthetic store-review capture flow
         id: maestro_capture
         shell: bash
@@ -343,6 +375,7 @@ jobs:
           QA_PASSWORD: ${{ secrets.PETFLOW_QA_PASSWORD }}
         run: |
           set -euo pipefail
+          set +x
           if [[ -z "${QA_EMAIL:-}" ]] || [[ -z "${QA_PASSWORD:-}" ]]; then
             echo "Protected QA credentials are required." >&2
             exit 1
@@ -363,7 +396,7 @@ jobs:
           }
           if (
             password.length < 12 ||
-            password.length > 128 ||
+            password.length > 64 ||
             !printableAscii.test(password)
           ) {
             throw new Error("The protected QA password shape is invalid.");
@@ -371,15 +404,118 @@ jobs:
           console.log("Protected QA credential shape validated.");
           NODE
 
+          capture_debug_dir="$RUNNER_TEMP/maestro-capture-output"
+          mkdir -p "$capture_debug_dir"
+          chmod 700 "$capture_debug_dir"
+
+          sim_use() {
+            env \
+              -u QA_EMAIL \
+              -u QA_PASSWORD \
+              -u SIM_USE_DEBUG \
+              SIM_USE_NO_DAEMON="$SIM_USE_NO_DAEMON" \
+              SIM_USE_HID_STABILIZATION_MS="$SIM_USE_HID_STABILIZATION_MS" \
+              "$SIM_USE_BIN" "$@"
+          }
+
+          run_sim_use() {
+            local action_label="$1"
+            shift
+            set +e
+            sim_use "$@" >/dev/null 2>&1
+            local command_status=$?
+            set -e
+            if (( command_status != 0 )); then
+              echo "$action_label failed." >&2
+              return 1
+            fi
+          }
+
+          secure_type() {
+            local value="$1"
+            local field_label="$2"
+            set +e
+            printf '%s' "$value" |
+              sim_use type --stdin --device "$SIMULATOR_UDID" --json \
+                >/dev/null 2>&1
+            local -a pipeline_status=("${PIPESTATUS[@]}")
+            set -e
+            if (( pipeline_status[1] != 0 )); then
+              echo "Simulator HID $field_label entry failed." >&2
+              return 1
+            fi
+          }
+
+          focus_text_field() {
+            local field_text="$1"
+            local field_label="$2"
+            set +e
+            sim_use tap \
+              --label "$field_text" \
+              --element-type TextField \
+              --wait-timeout 15 \
+              --post-delay 0.5 \
+              --device "$SIMULATOR_UDID" \
+              --json >/dev/null 2>&1
+            local focus_status=$?
+            if (( focus_status != 0 )); then
+              sim_use tap \
+                --value "$field_text" \
+                --element-type TextField \
+                --wait-timeout 15 \
+                --post-delay 0.5 \
+                --device "$SIMULATOR_UDID" \
+                --json >/dev/null 2>&1
+              focus_status=$?
+            fi
+            set -e
+            if (( focus_status != 0 )); then
+              echo "$field_label could not be focused." >&2
+              return 1
+            fi
+          }
+
+          xcrun simctl launch "$SIMULATOR_UDID" "$IOS_BUNDLE_ID" >/dev/null
+          run_sim_use "Opening email login" tap \
+            --label "이메일로 로그인" \
+            --element-type Button \
+            --wait-timeout 30 \
+            --post-delay 1 \
+            --device "$SIMULATOR_UDID" \
+            --json
+
+          focus_text_field "name@example.com" "The Simulator email field"
+          secure_type "$QA_EMAIL" "email"
+          run_sim_use "Closing the email keyboard" ios key 40 \
+            --device "$SIMULATOR_UDID" --json
+          sleep 1
+
+          focus_text_field "비밀번호" "The Simulator password field"
+          secure_type "$QA_PASSWORD" "password"
+          run_sim_use "Closing the password keyboard" ios key 40 \
+            --device "$SIMULATOR_UDID" --json
+          sleep 1
+
+          run_sim_use "Revealing the login button" gesture scroll-up \
+            --post-delay 1 --device "$SIMULATOR_UDID" --json
+          run_sim_use "Submitting the protected QA login" tap \
+            --label "로그인" \
+            --element-type Button \
+            --frame minY=0.4r \
+            --wait-timeout 15 \
+            --post-delay 1 \
+            --device "$SIMULATOR_UDID" \
+            --json
+          echo "Protected QA login submitted through Simulator HID input."
+          unset QA_EMAIL QA_PASSWORD
+
           attempt=1
           while true; do
             attempt_log="$RUNNER_TEMP/maestro-start-attempt-$attempt.log"
             set +e
             "$MAESTRO_BIN" --no-ansi --device "$SIMULATOR_UDID" \
               test apps/mobile/.maestro/ios/store-capture.yaml \
-              --env QA_EMAIL="$QA_EMAIL" \
-              --env QA_PASSWORD="$QA_PASSWORD" \
-              --test-output-dir="$RUNNER_TEMP/maestro-capture-output" \
+              --test-output-dir="$capture_debug_dir" \
               >"$attempt_log" 2>&1
             maestro_status=$?
             set -e
