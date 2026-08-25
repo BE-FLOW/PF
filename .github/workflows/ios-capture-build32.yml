@@ -73,6 +73,8 @@ jobs:
           actual_paths="$(git diff --name-only "$RUNTIME_BASE_COMMIT..$GITHUB_SHA" | LC_ALL=C sort)"
           expected_paths="$(printf '%s\n' \
             '.github/workflows/ios-capture-build32.yml' \
+            'apps/mobile/.maestro/ios/focus-email.yaml' \
+            'apps/mobile/.maestro/ios/focus-password.yaml' \
             'apps/mobile/.maestro/ios/store-capture.yaml' \
             'apps/mobile/eas.json' | LC_ALL=C sort)"
           if [[ "$actual_paths" != "$expected_paths" ]]; then
@@ -83,6 +85,8 @@ jobs:
 
           git diff --quiet "$RUNTIME_BASE_COMMIT" "$GITHUB_SHA" -- . \
             ':(exclude).github/workflows/ios-capture-build32.yml' \
+            ':(exclude)apps/mobile/.maestro/ios/focus-email.yaml' \
+            ':(exclude)apps/mobile/.maestro/ios/focus-password.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/store-capture.yaml' \
             ':(exclude)apps/mobile/eas.json'
 
@@ -164,6 +168,8 @@ jobs:
             git diff --name-only "$EAS_SIMULATOR_BUILD_COMMIT..$GITHUB_SHA" |
               while IFS= read -r changed_path; do
                 if [[ "$changed_path" != ".github/workflows/ios-capture-build32.yml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-email.yaml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-password.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/store-capture.yaml" ]]; then
                   printf '%s\n' "$changed_path"
                 fi
@@ -418,19 +424,6 @@ jobs:
               "$SIM_USE_BIN" "$@"
           }
 
-          run_sim_use() {
-            local action_label="$1"
-            shift
-            set +e
-            sim_use "$@" >/dev/null 2>&1
-            local command_status=$?
-            set -e
-            if (( command_status != 0 )); then
-              echo "$action_label failed." >&2
-              return 1
-            fi
-          }
-
           secure_type() {
             local value="$1"
             local field_label="$2"
@@ -446,94 +439,72 @@ jobs:
             fi
           }
 
-          focus_text_field() {
-            local field_text="$1"
-            local field_label="$2"
-            set +e
-            sim_use tap \
-              --label "$field_text" \
-              --element-type TextField \
-              --wait-timeout 15 \
-              --post-delay 0.5 \
-              --device "$SIMULATOR_UDID" \
-              --json >/dev/null 2>&1
-            local focus_status=$?
-            if (( focus_status != 0 )); then
-              sim_use tap \
-                --value "$field_text" \
-                --element-type TextField \
-                --wait-timeout 15 \
-                --post-delay 0.5 \
-                --device "$SIMULATOR_UDID" \
-                --json >/dev/null 2>&1
-              focus_status=$?
-            fi
-            set -e
-            if (( focus_status != 0 )); then
-              echo "$field_label could not be focused." >&2
-              return 1
-            fi
+          run_maestro_flow() {
+            local phase_name="$1"
+            local flow_path="$2"
+            local output_dir="$3"
+            local allow_startup_retry="$4"
+            local attempt=1
+            while true; do
+              local attempt_log="$capture_debug_dir/maestro-$phase_name-attempt-$attempt.log"
+              set +e
+              env -u QA_EMAIL -u QA_PASSWORD \
+                "$MAESTRO_BIN" --no-ansi --device "$SIMULATOR_UDID" \
+                  test "$flow_path" \
+                  --test-output-dir="$output_dir" \
+                  >"$attempt_log" 2>&1
+              local maestro_status=$?
+              set -e
+
+              if (( maestro_status == 0 )); then
+                rm -f -- "$attempt_log"
+                return 0
+              fi
+              if [[ "$allow_startup_retry" == "true" ]] &&
+                 (( attempt == 1 )) &&
+                 grep -Fq 'iOS driver not ready in time' "$attempt_log"; then
+                echo "The iOS test driver timed out during $phase_name; retrying once." >&2
+                rm -f -- "$attempt_log"
+                attempt=2
+                continue
+              fi
+              rm -f -- "$attempt_log"
+              echo "The $phase_name Maestro phase failed." >&2
+              return "$maestro_status"
+            done
           }
 
-          xcrun simctl launch "$SIMULATOR_UDID" "$IOS_BUNDLE_ID" >/dev/null
-          run_sim_use "Opening email login" tap \
-            --label "이메일로 로그인" \
-            --element-type Button \
-            --wait-timeout 30 \
-            --post-delay 1 \
-            --device "$SIMULATOR_UDID" \
-            --json
+          email_focus_output="$capture_debug_dir/focus-email"
+          password_focus_output="$capture_debug_dir/focus-password"
+          store_capture_output="$capture_debug_dir/store-capture"
 
-          focus_text_field "name@example.com" "The Simulator email field"
+          run_maestro_flow \
+            "focus-email" \
+            "apps/mobile/.maestro/ios/focus-email.yaml" \
+            "$email_focus_output" \
+            "true"
+          rm -rf -- "$email_focus_output"
+          sleep 0.5
           secure_type "$QA_EMAIL" "email"
-          run_sim_use "Closing the email keyboard" ios key 40 \
-            --device "$SIMULATOR_UDID" --json
           sleep 1
 
-          focus_text_field "비밀번호" "The Simulator password field"
+          run_maestro_flow \
+            "focus-password" \
+            "apps/mobile/.maestro/ios/focus-password.yaml" \
+            "$password_focus_output" \
+            "true"
+          rm -rf -- "$password_focus_output"
+          sleep 0.5
           secure_type "$QA_PASSWORD" "password"
-          run_sim_use "Closing the password keyboard" ios key 40 \
-            --device "$SIMULATOR_UDID" --json
           sleep 1
 
-          run_sim_use "Revealing the login button" gesture scroll-up \
-            --post-delay 1 --device "$SIMULATOR_UDID" --json
-          run_sim_use "Submitting the protected QA login" tap \
-            --label "로그인" \
-            --element-type Button \
-            --frame minY=0.4r \
-            --wait-timeout 15 \
-            --post-delay 1 \
-            --device "$SIMULATOR_UDID" \
-            --json
-          echo "Protected QA login submitted through Simulator HID input."
           unset QA_EMAIL QA_PASSWORD
-
-          attempt=1
-          while true; do
-            attempt_log="$RUNNER_TEMP/maestro-start-attempt-$attempt.log"
-            set +e
-            "$MAESTRO_BIN" --no-ansi --device "$SIMULATOR_UDID" \
-              test apps/mobile/.maestro/ios/store-capture.yaml \
-              --test-output-dir="$capture_debug_dir" \
-              >"$attempt_log" 2>&1
-            maestro_status=$?
-            set -e
-
-            if (( maestro_status == 0 )); then
-              rm -f -- "$attempt_log"
-              break
-            fi
-            if (( attempt == 1 )) &&
-               grep -Fq 'iOS driver not ready in time' "$attempt_log"; then
-              echo "The iOS test driver timed out once; retrying its startup." >&2
-              rm -f -- "$attempt_log"
-              attempt=2
-              continue
-            fi
-            rm -f -- "$attempt_log"
-            exit "$maestro_status"
-          done
+          echo "Protected QA credentials entered through Simulator HID input."
+          run_maestro_flow \
+            "store-capture" \
+            "apps/mobile/.maestro/ios/store-capture.yaml" \
+            "$store_capture_output" \
+            "false"
 
       - name: Emit only sanitized UI text when capture fails
         if: failure() && steps.maestro_capture.outcome == 'failure'

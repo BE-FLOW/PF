@@ -1,8 +1,10 @@
 appId: com.beflow.petflow
 name: PetFlow build 32 App Store capture
 ---
-- launchApp:
-    clearState: false
+- hideKeyboard
+- tapOn:
+    text: "^로그인$"
+    below: "이메일과 비밀번호"
 
 - extendedWaitUntil:
     visible: "^(홈 먼저 보기|새 변화 이어서 남기기)$"

@@ -1,0 +1,11 @@
+appId: com.beflow.petflow
+name: PetFlow iOS capture email focus
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible: "이메일로 로그인"
+    timeout: 30000
+- tapOn: "이메일로 로그인"
+- tapOn: "name@example.com"
