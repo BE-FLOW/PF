@@ -2158,7 +2158,7 @@ export async function checkFreeReleaseSchema(): Promise<FreeReleaseSchemaStatus>
   if (!getConfig()) return "unconfigured";
   try {
     const [columnResponse, versionResponse] = await Promise.all([
-      supabaseRequest("health_reports?select=id,source_revision&limit=1", {
+      supabaseRequest("episodes?select=id,source_revision&limit=1", {
         method: "GET",
         headers: { Range: "0-0" },
       }),
