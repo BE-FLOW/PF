@@ -803,15 +803,21 @@ jobs:
 
             set +e
             if [[ "$PASTE_TRANSPORT" == "menu" ]]; then
-              local target_unique_id
-              if [[ "$target_unique_id_token" == "NONE" ]] ||
-                 ! target_unique_id="$(
-                   env \
-                     -u QA_EMAIL \
-                     -u QA_PASSWORD \
-                     -u SIM_USE_DEBUG \
-                     TARGET_UNIQUE_ID_TOKEN="$target_unique_id_token" \
-                     node -e '
+              local -a menu_target_args=()
+              if [[ "$target_unique_id_token" == "NONE" ]]; then
+                menu_target_args=(
+                  --target-x "$target_x"
+                  --target-y "$target_y"
+                )
+              else
+                local target_unique_id
+                if ! target_unique_id="$(
+                     env \
+                       -u QA_EMAIL \
+                       -u QA_PASSWORD \
+                       -u SIM_USE_DEBUG \
+                       TARGET_UNIQUE_ID_TOKEN="$target_unique_id_token" \
+                       node -e '
               const token = process.env.TARGET_UNIQUE_ID_TOKEN ?? "";
               const value = Buffer.from(token, "base64url").toString("utf8");
               if (
@@ -821,14 +827,16 @@ jobs:
               ) process.exit(1);
               process.stdout.write(value);
               ' 2>/dev/null
-                 )"; then
-                set -e
-                echo "Simulator $field_label calibrated menu target is unavailable." >&2
-                return 1
+                   )"; then
+                  set -e
+                  echo "Simulator $field_label calibrated menu target is invalid." >&2
+                  return 1
+                fi
+                menu_target_args=(--target-id "$target_unique_id")
               fi
               printf '%s' "$value" |
                 sim_use paste --stdin --via-menu \
-                  --target-id "$target_unique_id" \
+                  "${menu_target_args[@]}" \
                   --long-press-duration 1.2 \
                   --menu-timeout 10 \
                   --device "$SIMULATOR_UDID" \
