@@ -33,6 +33,7 @@ jobs:
     environment: petflow-ios-capture
     env:
       EAS_SIMULATOR_ARTIFACT_SHA256: ${{ vars.EAS_SIMULATOR_ARTIFACT_SHA256 }}
+      EAS_SIMULATOR_BINARY_BUILD_NUMBER: ${{ vars.EAS_SIMULATOR_BINARY_BUILD_NUMBER }}
       EAS_SIMULATOR_BUILD_ID: ${{ vars.EAS_SIMULATOR_BUILD_ID }}
       EAS_SIMULATOR_BUILD_NUMBER: ${{ vars.EAS_SIMULATOR_BUILD_NUMBER }}
       EAS_SIMULATOR_BUILD_COMMIT: ${{ vars.EAS_SIMULATOR_BUILD_COMMIT }}
@@ -119,6 +120,7 @@ jobs:
 
           required_vars=(
             EAS_SIMULATOR_ARTIFACT_SHA256
+            EAS_SIMULATOR_BINARY_BUILD_NUMBER
             EAS_SIMULATOR_BUILD_ID
             EAS_SIMULATOR_BUILD_NUMBER
             EAS_SIMULATOR_BUILD_COMMIT
@@ -140,6 +142,10 @@ jobs:
           fi
           if [[ ! "$EAS_SIMULATOR_BUILD_ID" =~ ^[a-f0-9-]{36}$ ]]; then
             echo "The supplied EAS build ID is invalid." >&2
+            exit 1
+          fi
+          if [[ ! "$EAS_SIMULATOR_BINARY_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "The supplied Simulator binary build number is invalid." >&2
             exit 1
           fi
           if [[ ! "$EAS_SIMULATOR_BUILD_COMMIT" =~ ^[a-f0-9]{40}$ ]] ||
@@ -255,7 +261,7 @@ jobs:
           executable_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info_plist")"
           if [[ "$bundle_id" != "$IOS_BUNDLE_ID" ]] ||
              [[ "$app_version" != "$IOS_APP_VERSION" ]] ||
-             [[ "$build_number" != "$EAS_SIMULATOR_BUILD_NUMBER" ]]; then
+             [[ "$build_number" != "$EAS_SIMULATOR_BINARY_BUILD_NUMBER" ]]; then
             echo "The Simulator app identity does not match the protected metadata." >&2
             exit 1
           fi
@@ -444,6 +450,8 @@ jobs:
             simulatorBuild: {
               easBuildId: process.env.EAS_SIMULATOR_BUILD_ID,
               buildNumber: process.env.EAS_SIMULATOR_BUILD_NUMBER,
+              binaryBuildNumber:
+                process.env.EAS_SIMULATOR_BINARY_BUILD_NUMBER,
               commit: process.env.EAS_SIMULATOR_BUILD_COMMIT,
               profile: process.env.EAS_SIMULATOR_BUILD_PROFILE,
               distribution:
