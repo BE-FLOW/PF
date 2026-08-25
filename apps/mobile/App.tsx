@@ -2746,6 +2746,7 @@ export default function App() {
   if (!fontsLoaded && !fontLoadError) {
     return (
       <SafeAreaView style={styles.screen}>
+        <StatusBar barStyle="dark-content" />
         <View style={styles.fontLoading}>
           <ActivityIndicator color={colors.green} />
           <NativeText style={styles.fontLoadingText}>PetFlow 준비 중</NativeText>
@@ -2756,7 +2757,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboard}
