@@ -188,6 +188,8 @@ const git = readCleanMain(repoRoot);
 const easBuild = findExactFinishedEasBuild(readEasBuilds(mobileRoot), {
   version: versionString,
   buildNumber,
+  buildProfile: "production",
+  distribution: "STORE",
 });
 const source = verifyBuildCoversMain(repoRoot, easBuild, git.head);
 verifyLocalScreenshots(source.buildCommit);

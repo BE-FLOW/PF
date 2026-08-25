@@ -27,7 +27,7 @@ export function runCommand(command, args, cwd) {
       (result.stderr || result.stdout || result.error?.message || "command failed").trim(),
     );
   }
-  return result.stdout.trim();
+  return result.stdout.trimEnd();
 }
 
 export function readCleanMain(repoRoot) {
@@ -63,13 +63,21 @@ export function readEasBuilds(mobileRoot, platform = "ios") {
 
 export function findExactFinishedEasBuild(
   builds,
-  { version, buildNumber, platform = "ios" },
+  {
+    version,
+    buildNumber,
+    platform = "ios",
+    buildProfile,
+    distribution,
+  },
 ) {
   const matches = builds.filter(
     (build) =>
       build.appVersion === version &&
       String(build.appBuildVersion) === String(buildNumber) &&
-      build.status === "FINISHED",
+      build.status === "FINISHED" &&
+      (!buildProfile || build.buildProfile === buildProfile) &&
+      (!distribution || build.distribution === distribution),
   );
   if (matches.length === 0) {
     throw new Error(

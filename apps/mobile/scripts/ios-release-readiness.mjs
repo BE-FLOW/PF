@@ -77,6 +77,8 @@ const easBuild = targetBuild
       findExactFinishedEasBuild(readEasBuilds(mobileRoot), {
         version: versionString,
         buildNumber: targetBuild,
+        buildProfile: "production",
+        distribution: "STORE",
       }),
     )
   : null;

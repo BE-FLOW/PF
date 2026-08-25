@@ -10,7 +10,10 @@ import {
   validateRemoteScreenshotAssets,
   validateScreenshotManifest,
 } from "./lib/ios-release-guard.mjs";
-import { findExactFinishedEasBuild } from "./lib/release-source.mjs";
+import {
+  findExactFinishedEasBuild,
+  runCommand,
+} from "./lib/release-source.mjs";
 import {
   hasStatus as hasGooglePlayStatus,
   parseArgs as parseGooglePlayArgs,
@@ -243,9 +246,39 @@ describe("mobile release configuration", () => {
         { version: "1.0", buildNumber: "27" },
       ),
     ).toThrow("conflicting finished builds");
+
+    expect(
+      findExactFinishedEasBuild(
+        [
+          newer,
+          {
+            ...newer,
+            id: "screenshot-apk",
+            distribution: "INTERNAL",
+            buildProfile: "store-screenshot",
+          },
+        ],
+        {
+          version: "1.0",
+          buildNumber: "27",
+          buildProfile: "production",
+          distribution: "STORE",
+        },
+      ).id,
+    ).toBe("newer");
   });
 
-  it("allows only store screenshot assets to change after the release build", () => {
+  it("preserves the leading status column in command output", () => {
+    expect(
+      runCommand(
+        process.execPath,
+        ["-e", "process.stdout.write(' M apps/mobile/file.png\\n')"],
+        mobileRoot,
+      ),
+    ).toBe(" M apps/mobile/file.png");
+  });
+
+  it("allows only store assets and approved release tooling to change after the release build", () => {
     expect(
       assertRuntimeCoveredByBuild({
         buildCommit: "build",
@@ -262,12 +295,28 @@ describe("mobile release configuration", () => {
         buildCommit: "build",
         currentCommit: "head",
         buildIsAncestor: true,
+        changedPaths: ["apps/mobile/scripts/stamp-android-screenshots.mjs"],
+      }),
+    ).toEqual({ releaseArtifactOnly: true });
+    expect(
+      assertRuntimeCoveredByBuild({
+        buildCommit: "build",
+        currentCommit: "head",
+        buildIsAncestor: true,
         changedPaths: [
           "apps/mobile/store/google-play/screenshots-phone/01-home-score.png",
           "apps/mobile/store/google-play/screenshots-phone/manifest.json",
         ],
       }),
     ).toEqual({ releaseArtifactOnly: true });
+    expect(() =>
+      assertRuntimeCoveredByBuild({
+        buildCommit: "build",
+        currentCommit: "head",
+        buildIsAncestor: true,
+        changedPaths: ["apps/mobile/scripts/unreviewed-release-tool.mjs"],
+      }),
+    ).toThrow("Runtime changed");
     expect(() =>
       assertRuntimeCoveredByBuild({
         buildCommit: "build",

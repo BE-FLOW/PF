@@ -17,6 +17,7 @@ import {
   findExactFinishedEasBuild,
   readEasBuilds,
   runCommand,
+  verifyBuildCoversMain,
 } from "./lib/release-source.mjs";
 import { parseArgs } from "./lib/app-store-connect.mjs";
 
@@ -65,12 +66,10 @@ const easBuild = findExactFinishedEasBuild(readEasBuilds(mobileRoot, "android"),
   version: expo.version,
   buildNumber,
   platform: "android",
+  buildProfile: "production",
+  distribution: "STORE",
 });
-if (easBuild.gitCommitHash !== head) {
-  throw new Error(
-    `EAS build ${buildNumber} was created from ${easBuild.gitCommitHash}, not current main ${head}.`,
-  );
-}
+verifyBuildCoversMain(repoRoot, easBuild, head);
 if (easBuild.buildProfile !== "production" || easBuild.distribution !== "STORE") {
   throw new Error(`EAS build ${buildNumber} is not a production store build.`);
 }
