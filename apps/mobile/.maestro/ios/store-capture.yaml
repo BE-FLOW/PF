@@ -10,6 +10,14 @@ name: PetFlow build 32 App Store capture
 - tapOn: "이메일로 로그인"
 - tapOn: "name@example.com"
 - inputText: ${QA_EMAIL}
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      text: "^비밀번호$"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 100
+    centerElement: true
 - tapOn:
     text: "^비밀번호$"
     index: 1
