@@ -1,6 +1,8 @@
 appId: com.beflow.petflow
 name: PetFlow iOS capture email system paste
 ---
+- tapOn: "^name@example.com$"
+- waitForAnimationToEnd
 - longPressOn: "^name@example.com$"
 - extendedWaitUntil:
     visible: "^(Paste|붙여넣기)$"
