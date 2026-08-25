@@ -336,6 +336,7 @@ jobs:
           echo "MAESTRO_BIN=$maestro_dir/maestro/bin/maestro" >> "$GITHUB_ENV"
 
       - name: Run the synthetic store-review capture flow
+        id: maestro_capture
         shell: bash
         env:
           QA_EMAIL: ${{ secrets.PETFLOW_QA_EMAIL }}
@@ -380,6 +381,117 @@ jobs:
             rm -f -- "$attempt_log"
             exit "$maestro_status"
           done
+
+      - name: Emit only sanitized UI text when capture fails
+        if: failure() && steps.maestro_capture.outcome == 'failure'
+        shell: bash
+        env:
+          QA_EMAIL: ${{ secrets.PETFLOW_QA_EMAIL }}
+          QA_PASSWORD: ${{ secrets.PETFLOW_QA_PASSWORD }}
+        run: |
+          set -euo pipefail
+          DEBUG_ROOT="$RUNNER_TEMP/maestro-capture-output" node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const root = process.env.DEBUG_ROOT;
+          const extensions = new Set([".json", ".log", ".txt", ".xml", ".yaml", ".yml"]);
+          const secrets = [process.env.QA_EMAIL, process.env.QA_PASSWORD].filter(Boolean);
+          const candidates = [];
+          const seen = new Set();
+          let scannedBytes = 0;
+          let scannedFiles = 0;
+          const maxBytes = 32_000_000;
+          const maxCandidates = 1_000;
+          const maxFiles = 500;
+
+          function sanitize(value) {
+            let result = value;
+            for (const secret of secrets) {
+              result = result.split(secret).join("[REDACTED_QA_VALUE]");
+            }
+            return result
+              .replace(/https?:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
+              .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+              .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
+              .replace(/\b(?:\+?82[-.\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}\b/g, "[REDACTED_PHONE]")
+              .replace(/\b[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\b/gi, "[REDACTED_ID]")
+              .replace(/\b[a-f0-9]{32,}\b/gi, "[REDACTED_ID]")
+              .replace(/\b[A-Za-z0-9_+\/-]{32,}={0,2}\b/g, "[REDACTED_OPAQUE_VALUE]")
+              .replace(/\s+/g, " ")
+              .trim();
+          }
+
+          function collect(value) {
+            if (typeof value === "string") {
+              const sanitized = sanitize(value);
+              if (
+                sanitized.length > 0 &&
+                sanitized.length <= 500 &&
+                /[가-힣]/.test(sanitized) &&
+                !seen.has(sanitized) &&
+                candidates.length < maxCandidates
+              ) {
+                seen.add(sanitized);
+                candidates.push(sanitized);
+              }
+              return;
+            }
+            if (Array.isArray(value)) {
+              for (const item of value) collect(item);
+              return;
+            }
+            if (value && typeof value === "object") {
+              for (const item of Object.values(value)) collect(item);
+            }
+          }
+
+          function visit(directory) {
+            if (
+              scannedBytes >= maxBytes ||
+              scannedFiles >= maxFiles ||
+              candidates.length >= maxCandidates
+            ) return;
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              if (
+                scannedBytes >= maxBytes ||
+                scannedFiles >= maxFiles ||
+                candidates.length >= maxCandidates
+              ) break;
+              const filePath = path.join(directory, entry.name);
+              if (entry.isDirectory()) {
+                visit(filePath);
+                continue;
+              }
+              const stat = fs.lstatSync(filePath);
+              if (
+                !stat.isFile() ||
+                !extensions.has(path.extname(entry.name).toLowerCase()) ||
+                stat.size > 8_000_000 ||
+                scannedBytes + stat.size > maxBytes
+              ) {
+                continue;
+              }
+              scannedFiles += 1;
+              scannedBytes += stat.size;
+              const content = fs.readFileSync(filePath, "utf8");
+              try {
+                collect(JSON.parse(content));
+              } catch {
+                for (const line of content.split(/\r?\n/)) collect(line);
+              }
+            }
+          }
+
+          if (!root || !fs.existsSync(root)) {
+            console.log("No Maestro debug directory was created.");
+            process.exit(0);
+          }
+          visit(root);
+          console.log("Sanitized Korean UI strings from the failed capture:");
+          for (const value of candidates.slice(-200)) console.log(`- ${value}`);
+          if (candidates.length === 0) console.log("- No Korean UI strings were found.");
+          NODE
 
       - name: Normalize and verify only the five store screenshots
         shell: bash
