@@ -44,6 +44,7 @@ try {
 const targetBuild =
   args.get("--build-number") ||
   (manifest?.buildNumber === undefined ? null : String(manifest.buildNumber));
+const deviceQaConfirmation = args.get("--confirm-device-qa");
 const { request } = createAppStoreConnectClient({
   keyId: args.get("--key-id") || appStoreConnectDefaults.keyId,
   issuerId: args.get("--issuer-id") || appStoreConnectDefaults.issuerId,
@@ -59,6 +60,14 @@ if (manifestError) {
   );
 }
 if (!targetBuild) blockers.push("대상 iOS 빌드 번호가 없습니다.");
+if (
+  targetBuild &&
+  deviceQaConfirmation !== `IOS_BUILD_${targetBuild}_DEVICE_QA_PASSED`
+) {
+  blockers.push(
+    `TestFlight 실기기 QA 후 --confirm-device-qa IOS_BUILD_${targetBuild}_DEVICE_QA_PASSED를 지정해야 합니다.`,
+  );
+}
 
 async function check(label, action) {
   try {

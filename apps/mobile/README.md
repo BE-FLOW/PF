@@ -37,7 +37,7 @@ npm run build:android:production
 npm run stamp:android:screenshots -- --build-number <새빌드> --confirm-qa ANDROID_BUILD_<새빌드>_QA_PASSED --execute true
 npm run release:preflight:android
 npm run release:ios:review-candidate
-npm run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_BUILD_<새빌드>_QA_PASSED --execute true
+npm run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_SCREENSHOTS_BUILD_<새빌드>_QA_PASSED --execute true
 npm run release:preflight:ios
 ```
 
@@ -63,8 +63,11 @@ npm run generate:android:feature-graphic -- --execute true
 
 7인치는 `--set tablet-7`, 10인치는 `--set tablet-10`을 사용합니다. 캡처 스크립트는
 정확한 AVD, 설치된 앱 버전·versionCode, 전경 앱, 권장 9:16 해상도와 알파 채널 부재를
-확인합니다. iOS 스크린샷은 Windows 에뮬레이터로 만들지 않고 새 TestFlight 빌드를
-실제 iPhone에서 확인한 뒤 캡처합니다.
+확인합니다. iOS 화면은 기본적으로 정확한 TestFlight 빌드를 실제 iPhone에서 캡처합니다.
+CI 시뮬레이터를 예외적으로 사용할 때는 production 빌드와 동일한 runtime commit에서
+만든 서명된 Simulator artifact만 허용하고, artifact 해시·EAS 빌드·캡처 커밋을
+manifest의 `source`에 남깁니다. 시뮬레이터 화면 시각 검수는 TestFlight 실기기 QA를
+대체하지 않습니다.
 
 ## 배포 명령
 
@@ -74,11 +77,13 @@ npm run stamp:android:screenshots -- --build-number <새빌드> --confirm-qa AND
 npm run release:android:closed
 npm run release:android:production
 npm run release:ios:review-candidate
-npm run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_BUILD_<새빌드>_QA_PASSED --execute true
-npm run readiness:ios:app-store -- --build-number <새빌드>
+npm run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_SCREENSHOTS_BUILD_<새빌드>_QA_PASSED --execute true
+npm run readiness:ios:app-store -- --build-number <새빌드> --confirm-device-qa IOS_BUILD_<새빌드>_DEVICE_QA_PASSED
 ```
 
 배포는 DB 마이그레이션과 서버 API가 먼저 반영된 뒤 진행합니다. 스토어 상태와
 현재 빌드는 `docs/mobile-store-registration.md`를 기준으로 확인합니다. iOS
 TestFlight 배포, 양 플랫폼 스크린샷 교체, 기존 승인 철회는 모두 정확한 빌드 번호를
-요구합니다. stamp 뒤에는 이미지와 manifest만 커밋·push하고 최종 preflight를 실행합니다.
+요구합니다. iOS screenshot stamp는 화면 세트의 시각 검수만 증명하며, 실제 설치본 QA는
+readiness의 별도 확인값으로 증명합니다. stamp 뒤에는 이미지와 manifest만 커밋·push하고
+최종 preflight를 실행합니다.

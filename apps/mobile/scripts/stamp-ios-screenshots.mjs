@@ -31,9 +31,11 @@ const screenshotDir = path.resolve(
 const manifestPath = path.join(screenshotDir, "manifest.json");
 
 if (!buildNumber) throw new Error("--build-number is required.");
-const expectedQaConfirmation = `IOS_BUILD_${buildNumber}_QA_PASSED`;
+const expectedQaConfirmation = `IOS_SCREENSHOTS_BUILD_${buildNumber}_QA_PASSED`;
 if (qaConfirmation !== expectedQaConfirmation) {
-  throw new Error(`Use --confirm-qa ${expectedQaConfirmation} after device QA.`);
+  throw new Error(
+    `Use --confirm-qa ${expectedQaConfirmation} after visually reviewing the exact screenshot set.`,
+  );
 }
 if (runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], repoRoot) !== "main") {
   throw new Error("Screenshot stamping must run from main.");

@@ -113,6 +113,7 @@ export function isStoreReleaseArtifact(relativePath) {
     "apps/mobile/scripts/ios-release-readiness.mjs",
     "apps/mobile/scripts/lib/ios-release-guard.mjs",
     "apps/mobile/scripts/lib/release-source.mjs",
+    "apps/mobile/scripts/lib/store-screenshot-guard.mjs",
     "apps/mobile/scripts/prepare-ios-app-store.mjs",
     "apps/mobile/scripts/release-config.test.mjs",
     "apps/mobile/scripts/release-preflight.mjs",
@@ -120,6 +121,8 @@ export function isStoreReleaseArtifact(relativePath) {
     "apps/mobile/scripts/stamp-ios-screenshots.mjs",
     "apps/mobile/scripts/upload-ios-screenshots.mjs",
     "apps/mobile/scripts/verify-ios-release-build.mjs",
+    "apps/mobile/README.md",
+    "docs/mobile-store-registration.md",
   ]);
   return (
     storePrefixes.some((prefix) => normalized.startsWith(prefix)) ||

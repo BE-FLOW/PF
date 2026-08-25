@@ -97,18 +97,23 @@ stamp를 실행한다. 생성된 세 manifest와 이미지만 커밋·push한 �
 
 ## iOS 출시
 
-코드 동결 커밋으로 새 후보를 만들고 TestFlight 실기기 검증을 마친다.
+코드 동결 커밋으로 새 후보를 만들고, 제출 전 정확한 TestFlight 설치본의 실기기 검증을
+별도로 마친다.
 
 ```powershell
 npm --prefix apps/mobile run release:ios:review-candidate
-npm --prefix apps/mobile run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_BUILD_<새빌드>_QA_PASSED --execute true
+npm --prefix apps/mobile run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_SCREENSHOTS_BUILD_<새빌드>_QA_PASSED --execute true
 npm --prefix apps/mobile run release:preflight:ios
-npm --prefix apps/mobile run readiness:ios:app-store -- --build-number <새빌드>
+npm --prefix apps/mobile run readiness:ios:app-store -- --build-number <새빌드> --confirm-device-qa IOS_BUILD_<새빌드>_DEVICE_QA_PASSED
 ```
 
-`release:ios:review-candidate`는 후보 바이너리만 만들고 업로드한다. 정확한 TestFlight
-설치본에서 스크린샷을 다시 캡처해 stamp하고, 스크린샷과 manifest만 커밋·push한 뒤
-preflight와 readiness를 통과시킨다.
+`release:ios:review-candidate`는 후보 바이너리를 만들고 App Store Connect에 업로드한다.
+기본 캡처 경로는 정확한 TestFlight 설치본이다. CI 시뮬레이터를 예외적으로 사용할 때는
+production 빌드와 동일한 runtime commit의 Simulator artifact만 허용하며 artifact 해시,
+EAS 빌드 번호·ID, 캡처 커밋을 manifest의 `source`에 기록한다. 스크린샷 시각 검수는
+`IOS_SCREENSHOTS_BUILD_<새빌드>_QA_PASSED`로 stamp하지만 TestFlight 실기기 QA를
+대체하지 않는다. 실기기 확인 후 별도의 `IOS_BUILD_<새빌드>_DEVICE_QA_PASSED`를
+readiness에 전달한다.
 
 App Store Connect에서는 현재 무료 후보 빌드만 버전 `1.0`에 연결한다. 과거 빌드나
 첫 인앱결제 상품을 이번 버전에 포함하지 않는다. 스크린샷과 메타데이터는 정확한
@@ -144,9 +149,15 @@ Apple App Store:
 
 모든 스크린샷은 무료 후보의 실제 화면이어야 한다. 가격, 구매 버튼, 복원, 남은
 이용권과 과거 결제 모달이 보이는 이미지는 사용하지 않는다. 과거 IAP 심사용 이미지는
-앱 버전 스크린샷으로 제출하지 않는다.
+앱 버전 스크린샷으로 제출하지 않는다. PNG는 지정 크기와 SHA-256뿐 아니라 알파 채널이나
+투명도 청크가 없는 불투명 이미지여야 한다.
 
 ### 2026-08-18 저장소 이미지 감사
+
+아래 항목은 2026-08-18 당시 발견한 교체 사유다. 최신 승인 상태는 각 manifest와
+`release:preflight:*` 결과를 기준으로 판단한다. Android 항목은 build `34` 화면 세트와
+그래픽 이미지로 교체되어 현재 preflight를 통과한다. iOS 항목은 새 build `32` 화면과
+manifest가 커밋될 때까지 미해결로 유지한다.
 
 - `store/app-store/iphone-6-7/manifest.json`은 과거 build `22`, commit
   `67f11be545509efbe80b61770f8c19841863f2b1`을 가리킨다.
