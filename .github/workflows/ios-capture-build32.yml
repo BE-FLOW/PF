@@ -468,7 +468,6 @@ jobs:
                 attempt=2
                 continue
               fi
-              rm -f -- "$attempt_log"
               echo "The $phase_name Maestro phase failed." >&2
               return "$maestro_status"
             done
@@ -522,7 +521,9 @@ jobs:
           const extensions = new Set([".json", ".log", ".txt", ".xml", ".yaml", ".yml"]);
           const secrets = [process.env.QA_EMAIL, process.env.QA_PASSWORD].filter(Boolean);
           const candidates = [];
+          const diagnostics = [];
           const seen = new Set();
+          const seenDiagnostics = new Set();
           let scannedBytes = 0;
           let scannedFiles = 0;
           const maxBytes = 32_000_000;
@@ -549,6 +550,16 @@ jobs:
           function collect(value) {
             if (typeof value === "string") {
               const sanitized = sanitize(value);
+              if (
+                sanitized.length > 0 &&
+                sanitized.length <= 500 &&
+                /(?:assert|command|element|error|fail|not found|not visible|tapOn|timeout|waitUntil)/i.test(sanitized) &&
+                !seenDiagnostics.has(sanitized) &&
+                diagnostics.length < maxCandidates
+              ) {
+                seenDiagnostics.add(sanitized);
+                diagnostics.push(sanitized);
+              }
               if (
                 sanitized.length > 0 &&
                 sanitized.length <= 500 &&
@@ -615,6 +626,9 @@ jobs:
           console.log("Sanitized Korean UI strings from the failed capture:");
           for (const value of candidates.slice(-200)) console.log(`- ${value}`);
           if (candidates.length === 0) console.log("- No Korean UI strings were found.");
+          console.log("Sanitized failure diagnostics from the failed capture:");
+          for (const value of diagnostics.slice(-80)) console.log(`- ${value}`);
+          if (diagnostics.length === 0) console.log("- No failure diagnostics were found.");
           NODE
 
       - name: Normalize and verify only the five store screenshots

@@ -4,7 +4,7 @@ name: PetFlow build 32 App Store capture
 - hideKeyboard
 - tapOn:
     text: "^로그인$"
-    below: "이메일과 비밀번호"
+    index: 1
 
 - extendedWaitUntil:
     visible: "^(홈 먼저 보기|새 변화 이어서 남기기)$"
