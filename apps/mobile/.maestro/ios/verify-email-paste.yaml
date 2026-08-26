@@ -17,6 +17,13 @@ name: PetFlow iOS capture email paste verification
 - tapOn: "^petflow@@paste-check$"
 - eraseText
 - extendedWaitUntil:
-    visible: "^name@example.com$"
+    visible: "^name@example[.]com$"
     timeout: 10000
-- tapOn: "^name@example.com$"
+- tapOn:
+    text: "^name@example[.]com$"
+    retryTapIfNoChange: true
+- extendedWaitUntil:
+    visible:
+      text: "^name@example[.]com$"
+      focused: true
+    timeout: 10000

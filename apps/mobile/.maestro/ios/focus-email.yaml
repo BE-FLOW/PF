@@ -5,7 +5,27 @@ name: PetFlow iOS capture email focus
     clearState: true
 
 - extendedWaitUntil:
-    visible: "이메일로 로그인"
+    visible:
+      text: "^이메일로 로그인$"
+      enabled: true
     timeout: 30000
-- tapOn: "이메일로 로그인"
-- tapOn: "name@example.com"
+- tapOn:
+    text: "^이메일로 로그인$"
+    enabled: true
+    retryTapIfNoChange: true
+- waitForAnimationToEnd
+- scrollUntilVisible:
+    element:
+      text: "^name@example[.]com$"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 100
+    centerElement: true
+- tapOn:
+    text: "^name@example[.]com$"
+    retryTapIfNoChange: true
+- extendedWaitUntil:
+    visible:
+      text: "^name@example[.]com$"
+      focused: true
+    timeout: 10000

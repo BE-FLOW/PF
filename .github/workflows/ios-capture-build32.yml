@@ -512,7 +512,7 @@ jobs:
           trap 'exit 129' HUP
           trap 'exit 130' INT
           trap 'exit 143' TERM
-          clear_pasteboards
+          strict_clear_pasteboards
           LAST_PASTE_TARGET_FRAME_X=""
           LAST_PASTE_TARGET_FRAME_Y=""
           LAST_PASTE_TARGET_FRAME_WIDTH=""
@@ -545,11 +545,18 @@ jobs:
           const document = JSON.parse(fs.readFileSync(0, "utf8"));
           if (document?.ok !== true || !document?.data?.raw) fail("ENVELOPE");
           const raw = document.data.raw;
+          const screen = document.data.screen;
           const appPackage = document.data.appPackage;
           const fieldRole = process.env.TARGET_FIELD_ROLE;
           if (typeof appPackage !== "string") fail("ENVELOPE");
           if (appPackage !== "" && appPackage !== "com.beflow.petflow") fail("APP");
           if (!["email", "password"].includes(fieldRole)) fail("ROLE");
+          if (
+            !screen ||
+            ![screen.x, screen.y, screen.width, screen.height].every(Number.isFinite) ||
+            screen.width <= 0 ||
+            screen.height <= 0
+          ) fail("SCREEN");
 
           function hashValue(value) {
             return crypto
@@ -590,7 +597,11 @@ jobs:
                   x >= 0 &&
                   y >= 0 &&
                   width > 0 &&
-                  height > 0
+                  height > 0 &&
+                  x + width / 2 >= screen.x &&
+                  x + width / 2 <= screen.x + screen.width &&
+                  y + height / 2 >= screen.y &&
+                  y + height / 2 <= screen.y + screen.height
                 ) {
                   matches.set(frame.join(":"), {
                     frame: value.frame,
@@ -817,45 +828,13 @@ jobs:
               return 1
             fi
 
-            local field_selector_value
             if [[ "$field_role" == "email" ]]; then
-              field_selector_value="name@example.com"
               if [[ "$target_type" != "TextField" ]]; then
                 echo "Simulator $field_label system paste target type is invalid." >&2
                 return 1
               fi
-            elif [[ "$field_role" == "password" ]]; then
-              field_selector_value="비밀번호"
-            else
+            elif [[ "$field_role" != "password" ]]; then
               echo "Simulator $field_label system paste role is invalid." >&2
-              return 1
-            fi
-
-            local focus_status
-            set +e
-            sim_use tap \
-              --value "$field_selector_value" \
-              --element-type "$target_type" \
-              --wait-timeout 15 \
-              --post-delay 1 \
-              --device "$SIMULATOR_UDID" \
-              --json \
-              >/dev/null 2>&1
-            focus_status=$?
-            if (( focus_status != 0 )); then
-              sim_use tap \
-                --label "$field_selector_value" \
-                --element-type "$target_type" \
-                --wait-timeout 15 \
-                --post-delay 1 \
-                --device "$SIMULATOR_UDID" \
-                --json \
-                >/dev/null 2>&1
-              focus_status=$?
-            fi
-            set -e
-            if (( focus_status != 0 )); then
-              echo "Simulator $field_label calibrated focus failed." >&2
               return 1
             fi
 
@@ -1173,7 +1152,7 @@ jobs:
             "true"
           rm -rf -- "$email_paste_output"
           echo "Simulator system paste transport validated with a public probe."
-          clear_pasteboards
+          strict_clear_pasteboards
           sleep 1
           secure_paste "$qa_email" "email" "email"
 
@@ -1200,7 +1179,7 @@ jobs:
           run_sensitive_maestro_flow \
             "verify-password-paste" \
             "apps/mobile/.maestro/ios/verify-password-paste.yaml"
-          clear_pasteboards
+          strict_clear_pasteboards
           sleep 1
           secure_paste "$qa_password" "password" "password"
 
