@@ -799,6 +799,22 @@ jobs:
 
           run_bounded_menu_paste() {
             local target_id="$1"
+            local replace_mode="${2:-false}"
+            local -a paste_args=(
+              "$SIM_USE_BIN" paste --stdin
+              --via-menu
+              --target-id "$target_id"
+              --long-press-duration 0.8
+              --menu-timeout 5
+              --device "$SIMULATOR_UDID"
+              --json
+            )
+            if [[ "$replace_mode" == "true" ]]; then
+              paste_args+=(--replace)
+            elif [[ "$replace_mode" != "false" ]]; then
+              echo "Simulator menu paste replacement mode is invalid." >&2
+              return 1
+            fi
             /usr/bin/perl -e '
               use strict;
               use warnings;
@@ -849,14 +865,7 @@ jobs:
               exit WEXITSTATUS($status) if WIFEXITED($status);
               exit 128 + WTERMSIG($status) if WIFSIGNALED($status);
               exit 125;
-            ' 15 \
-              "$SIM_USE_BIN" paste --stdin \
-              --via-menu \
-              --target-id "$target_id" \
-              --long-press-duration 0.8 \
-              --menu-timeout 5 \
-              --device "$SIMULATOR_UDID" \
-              --json
+            ' 15 "${paste_args[@]}"
           }
 
           paste_value() {
@@ -864,6 +873,7 @@ jobs:
             export -n value
             local field_label="$2"
             local field_role="$3"
+            local replace_mode="${4:-false}"
             local target
             local target_x
             local target_y
@@ -922,7 +932,7 @@ jobs:
 
             set +e
             printf '%s' "$value" |
-              run_bounded_menu_paste "$target_id" \
+              run_bounded_menu_paste "$target_id" "$replace_mode" \
                 >/dev/null 2>&1
             local -a pipeline_status=("${PIPESTATUS[@]}")
             set -e
@@ -947,7 +957,7 @@ jobs:
             local pasteboard_clear_status
             local settle_status=1
             local verification_status=1
-            if paste_value "$1" "$2" "$3"; then
+            if paste_value "$1" "$2" "$3" "true"; then
               input_status=0
             else
               input_status=$?
@@ -1186,7 +1196,7 @@ jobs:
           }
 
           email_focus_output="$capture_debug_dir/focus-email"
-          email_paste_output="$capture_debug_dir/verify-email-paste"
+          email_paste_output="$capture_debug_dir/approve-email-paste"
 
           run_maestro_flow \
             "focus-email" \
@@ -1197,11 +1207,21 @@ jobs:
           sleep 2
           paste_value "petflow@@paste-check" "public email sentinel" "email"
           run_maestro_flow \
-            "verify-email-paste" \
-            "apps/mobile/.maestro/ios/verify-email-paste.yaml" \
+            "approve-email-paste" \
+            "apps/mobile/.maestro/ios/approve-password-paste.yaml" \
             "$email_paste_output" \
             "true"
           rm -rf -- "$email_paste_output"
+          verify_target_changed \
+            "public email sentinel" \
+            "$LAST_PASTE_TARGET_FRAME_X" \
+            "$LAST_PASTE_TARGET_FRAME_Y" \
+            "$LAST_PASTE_TARGET_FRAME_WIDTH" \
+            "$LAST_PASTE_TARGET_FRAME_HEIGHT" \
+            "$LAST_PASTE_TARGET_TYPE" \
+            "$LAST_PASTE_TARGET_ID" \
+            "$LAST_PASTE_TARGET_LABEL_HASH" \
+            "$LAST_PASTE_TARGET_VALUE_HASH"
           echo "Simulator system paste transport validated with a public probe."
           strict_clear_pasteboards
           sleep 1
@@ -1228,9 +1248,6 @@ jobs:
             "$LAST_PASTE_TARGET_ID" \
             "$LAST_PASTE_TARGET_LABEL_HASH" \
             "$LAST_PASTE_TARGET_VALUE_HASH"
-          run_sensitive_maestro_flow \
-            "verify-password-paste" \
-            "apps/mobile/.maestro/ios/verify-password-paste.yaml"
           strict_clear_pasteboards
           sleep 1
           secure_paste "$qa_password" "password" "password"
@@ -1459,6 +1476,8 @@ jobs:
               runtimePatchSha256: process.env.CAPTURE_RUNTIME_PATCH_SHA256,
               stableInputIdentifiers: true,
               boundedMenuPaste: true,
+              accessibilityValueHashVerification: true,
+              protectedValueReplacement: true,
               visualChanges: false,
             },
             productionTarget: {
