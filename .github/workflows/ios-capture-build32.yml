@@ -674,7 +674,9 @@ jobs:
             local expected_label_hash="$8"
             local expected_value_hash="$9"
             local result
-            if ! result="$(
+            local verify_attempt=1
+            while (( verify_attempt <= 3 )); do
+              if result="$(
               sim_use describe-ui \
                 --device "$SIMULATOR_UDID" \
                 --max-probes 0 \
@@ -798,16 +800,26 @@ jobs:
             fs.writeSync(1, "CHANGED");
             ' 2>/dev/null
             )"; then
+                if [[ "$result" == "CHANGED" ]]; then
+                  return 0
+                fi
+                result="ERROR_UNKNOWN"
+              else
               if [[ ! "$result" =~ ^ERROR_[A-Z0-9_]+$ ]]; then
                 result="ERROR_UNKNOWN"
               fi
+              fi
+              if (( verify_attempt < 3 )) &&
+                 [[ "$result" =~ ^ERROR_(ENVELOPE|SCREEN|FIELD_COUNT_0)$ ]]; then
+                sleep 2
+                (( verify_attempt += 1 ))
+                continue
+              fi
               echo "Simulator $field_label value verification failed ($result)." >&2
               return 1
-            fi
-            if [[ "$result" != "CHANGED" ]]; then
-              echo "Simulator $field_label value verification failed (ERROR_UNKNOWN)." >&2
-              return 1
-            fi
+            done
+            echo "Simulator $field_label value verification failed (ERROR_RETRY_EXHAUSTED)." >&2
+            return 1
           }
 
           run_bounded_menu_paste() {
@@ -1529,6 +1541,7 @@ jobs:
               boundedMenuPaste: true,
               sanitizedPasteDiagnostics: true,
               accessibilityValueHashVerification: true,
+              boundedAccessibilityRetries: 3,
               layoutTolerantValueVerification: true,
               packageBoundScreenVerification: true,
               passwordUsesAppAutoFocus: true,
