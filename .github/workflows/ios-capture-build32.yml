@@ -943,7 +943,12 @@ jobs:
             set -e
             if (( ${#pipeline_status[@]} != 2 )) ||
                (( pipeline_status[0] != 0 || pipeline_status[1] != 0 )); then
-              echo "Simulator $field_label bounded menu paste failed." >&2
+              local paste_error="ERROR_TRANSPORT"
+              if (( ${#pipeline_status[@]} == 2 )) &&
+                 (( pipeline_status[1] == 124 )); then
+                paste_error="ERROR_TIMEOUT"
+              fi
+              echo "Simulator $field_label bounded menu paste failed ($paste_error)." >&2
               return 1
             fi
 
@@ -1244,10 +1249,6 @@ jobs:
           sleep 1
           secure_paste "$qa_email" "email" "email"
 
-          run_sensitive_maestro_flow \
-            "focus-password" \
-            "apps/mobile/.maestro/ios/focus-password.yaml"
-          sleep 2
           paste_value \
             "petflow-password-check" \
             "public password sentinel" \
@@ -1495,6 +1496,7 @@ jobs:
               boundedMenuPaste: true,
               accessibilityValueHashVerification: true,
               layoutTolerantValueVerification: true,
+              passwordUsesAppAutoFocus: true,
               protectedPasteApproval: true,
               protectedValueReplacement: true,
               visualChanges: false,
