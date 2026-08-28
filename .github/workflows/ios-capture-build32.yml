@@ -954,6 +954,7 @@ jobs:
 
           secure_paste() {
             local input_status
+            local approval_status=1
             local pasteboard_clear_status
             local settle_status=1
             local verification_status=1
@@ -962,12 +963,22 @@ jobs:
             else
               input_status=$?
             fi
+            if (( input_status == 0 )); then
+              if run_sensitive_maestro_flow \
+                   "approve-$3-protected-paste" \
+                   "apps/mobile/.maestro/ios/approve-password-paste.yaml"; then
+                approval_status=0
+              else
+                approval_status=$?
+              fi
+            fi
             if strict_clear_pasteboards; then
               pasteboard_clear_status=0
             else
               pasteboard_clear_status=$?
             fi
             if (( input_status == 0 )) &&
+               (( approval_status == 0 )) &&
                (( pasteboard_clear_status == 0 )); then
               if sleep 2; then
                 settle_status=0
@@ -992,6 +1003,7 @@ jobs:
               fi
             fi
             if (( input_status != 0 )) ||
+               (( approval_status != 0 )) ||
                (( pasteboard_clear_status != 0 )) ||
                (( settle_status != 0 )) ||
                (( verification_status != 0 )); then
@@ -1477,6 +1489,7 @@ jobs:
               stableInputIdentifiers: true,
               boundedMenuPaste: true,
               accessibilityValueHashVerification: true,
+              protectedPasteApproval: true,
               protectedValueReplacement: true,
               visualChanges: false,
             },
