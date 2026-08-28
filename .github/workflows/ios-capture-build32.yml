@@ -543,6 +543,7 @@ jobs:
           LAST_PASTE_TARGET_FRAME_WIDTH=""
           LAST_PASTE_TARGET_FRAME_HEIGHT=""
           LAST_PASTE_TARGET_TYPE=""
+          LAST_PASTE_TARGET_ID=""
           LAST_PASTE_TARGET_LABEL_HASH=""
           LAST_PASTE_TARGET_VALUE_HASH=""
 
@@ -606,13 +607,19 @@ jobs:
               const values = [value.AXLabel, value.AXValue].filter(
                 (item) => typeof item === "string",
               );
+              const expectedId =
+                fieldRole === "email"
+                  ? "auth-email-input"
+                  : "auth-password-input";
               const isEmail =
                 fieldRole === "email" &&
                 value.type === "TextField" &&
+                value.AXUniqueId === expectedId &&
                 values.includes("name@example.com");
               const isPassword =
                 fieldRole === "password" &&
                 ["SecureTextField", "TextField"].includes(value.type) &&
+                value.AXUniqueId === expectedId &&
                 values.includes("비밀번호");
               if ((isEmail || isPassword) && value.frame) {
                 const { x, y, width, height } = value.frame;
@@ -632,6 +639,7 @@ jobs:
                     frame: value.frame,
                     labelHash: hashValue(value.AXLabel),
                     type: value.type,
+                    uniqueId: value.AXUniqueId,
                     valueHash: hashValue(value.AXValue),
                   });
                 }
@@ -659,10 +667,10 @@ jobs:
           }
           const { matches } = screenScopes[0];
           if (matches.size !== 1) fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
-          const [{ frame, labelHash, type, valueHash }] = matches.values();
+          const [{ frame, labelHash, type, uniqueId, valueHash }] = matches.values();
           const { x, y, width, height } = frame;
           process.stdout.write(
-            `${x + width / 2} ${y + height / 2} ${x} ${y} ${width} ${height} ${type} ${labelHash} ${valueHash}`,
+            `${x + width / 2} ${y + height / 2} ${x} ${y} ${width} ${height} ${type} ${uniqueId} ${labelHash} ${valueHash}`,
           );
           ' 2>/dev/null
           }
@@ -674,8 +682,9 @@ jobs:
             local expected_frame_width="$4"
             local expected_frame_height="$5"
             local expected_type="$6"
-            local expected_label_hash="$7"
-            local expected_value_hash="$8"
+            local expected_id="$7"
+            local expected_label_hash="$8"
+            local expected_value_hash="$9"
             local result
             if ! result="$(
               sim_use describe-ui \
@@ -692,6 +701,7 @@ jobs:
                   EXPECTED_FRAME_WIDTH="$expected_frame_width" \
                   EXPECTED_FRAME_HEIGHT="$expected_frame_height" \
                   EXPECTED_TARGET_TYPE="$expected_type" \
+                  EXPECTED_TARGET_ID="$expected_id" \
                   EXPECTED_LABEL_HASH="$expected_label_hash" \
                   EXPECTED_VALUE_HASH="$expected_value_hash" \
                   node -e '
@@ -716,11 +726,13 @@ jobs:
               process.env.EXPECTED_FRAME_HEIGHT,
             ].map(Number);
             const expectedType = process.env.EXPECTED_TARGET_TYPE ?? "";
+            const expectedId = process.env.EXPECTED_TARGET_ID ?? "";
             const expectedLabelHash = process.env.EXPECTED_LABEL_HASH ?? "";
             const expectedValueHash = process.env.EXPECTED_VALUE_HASH ?? "";
             if (
               !expectedFrame.every(Number.isFinite) ||
               !["SecureTextField", "TextField"].includes(expectedType) ||
+              !["auth-email-input", "auth-password-input"].includes(expectedId) ||
               !/^[a-f0-9]{64}$/.test(expectedLabelHash) ||
               !/^[a-f0-9]{64}$/.test(expectedValueHash)
             ) fail("EXPECTED_TARGET");
@@ -758,6 +770,7 @@ jobs:
                       (component, index) =>
                         Math.abs(component - expectedFrame[index]) <= 0.25,
                     ) &&
+                    value.AXUniqueId === expectedId &&
                     hashValue(value.AXLabel) === expectedLabelHash
                   ) {
                     matches.set(frame.join(":"), value);
@@ -811,6 +824,68 @@ jobs:
             fi
           }
 
+          run_bounded_menu_paste() {
+            local target_id="$1"
+            /usr/bin/perl -e '
+              use strict;
+              use warnings;
+              use POSIX qw(:sys_wait_h);
+
+              my $timeout = shift @ARGV;
+              my $child = fork();
+              die "fork failed\n" unless defined $child;
+              if ($child == 0) {
+                setpgrp(0, 0) or die "setpgrp failed\n";
+                exec @ARGV;
+                exit 126;
+              }
+
+              sub terminate_child_group {
+                kill "TERM", -$child;
+                select undef, undef, undef, 0.5;
+                kill "KILL", -$child;
+              }
+
+              my $timed_out = 0;
+              local $SIG{ALRM} = sub {
+                $timed_out = 1;
+                terminate_child_group();
+              };
+              local $SIG{HUP} = sub {
+                terminate_child_group();
+                waitpid($child, 0);
+                exit 129;
+              };
+              local $SIG{INT} = sub {
+                terminate_child_group();
+                waitpid($child, 0);
+                exit 130;
+              };
+              local $SIG{TERM} = sub {
+                terminate_child_group();
+                waitpid($child, 0);
+                exit 143;
+              };
+
+              alarm $timeout;
+              my $waited = waitpid($child, 0);
+              my $status = $?;
+              alarm 0;
+              exit 125 if $waited < 0;
+              exit 124 if $timed_out;
+              exit WEXITSTATUS($status) if WIFEXITED($status);
+              exit 128 + WTERMSIG($status) if WIFSIGNALED($status);
+              exit 125;
+            ' 15 \
+              "$SIM_USE_BIN" paste --stdin \
+              --via-menu \
+              --target-id "$target_id" \
+              --long-press-duration 0.8 \
+              --menu-timeout 5 \
+              --device "$SIMULATOR_UDID" \
+              --json
+          }
+
           paste_value() {
             local value="$1"
             export -n value
@@ -824,6 +899,7 @@ jobs:
             local target_frame_width
             local target_frame_height
             local target_type
+            local target_id
             local target_label_hash
             local target_value_hash
             if ! target="$(resolve_field_target "$field_role")"; then
@@ -841,11 +917,13 @@ jobs:
               target_frame_width \
               target_frame_height \
               target_type \
+              target_id \
               target_label_hash \
               target_value_hash \
               <<<"$target"
             if [[ -z "$target_x" ]] ||
                [[ -z "$target_y" ]] ||
+               [[ ! "$target_id" =~ ^auth-(email|password)-input$ ]] ||
                [[ ! "$target_label_hash" =~ ^[a-f0-9]{64}$ ]] ||
                [[ ! "$target_value_hash" =~ ^[a-f0-9]{64}$ ]] ||
                [[ ! "$target_type" =~ ^(SecureTextField|TextField)$ ]]; then
@@ -854,57 +932,30 @@ jobs:
             fi
 
             if [[ "$field_role" == "email" ]]; then
-              if [[ "$target_type" != "TextField" ]]; then
+              if [[ "$target_type" != "TextField" ]] ||
+                 [[ "$target_id" != "auth-email-input" ]]; then
                 echo "Simulator $field_label system paste target type is invalid." >&2
                 return 1
               fi
-            elif [[ "$field_role" != "password" ]]; then
+            elif [[ "$field_role" == "password" ]]; then
+              if [[ "$target_id" != "auth-password-input" ]]; then
+                echo "Simulator $field_label system paste target is invalid." >&2
+                return 1
+              fi
+            else
               echo "Simulator $field_label system paste role is invalid." >&2
-              return 1
-            fi
-
-            local keyboard_state
-            if ! keyboard_state="$(
-              sim_use keyboard-state \
-                --device "$SIMULATOR_UDID" \
-                --json \
-                2>/dev/null |
-                env \
-                  -u QA_EMAIL \
-                  -u QA_PASSWORD \
-                  -u SIM_USE_DEBUG \
-                  node -e '
-            const fs = require("node:fs");
-            const document = JSON.parse(fs.readFileSync(0, "utf8"));
-            if (
-              document?.ok !== true ||
-              document?.data?.platform !== "ios" ||
-              typeof document.data.visible !== "boolean"
-            ) {
-              process.exit(1);
-            }
-            process.stdout.write(document.data.visible ? "SOFT" : "HIDDEN");
-            ' 2>/dev/null
-            )"; then
-              echo "Simulator $field_label keyboard state probe failed." >&2
-              return 1
-            fi
-            if [[ "$keyboard_state" != "HIDDEN" ]]; then
-              echo "Simulator $field_label paste requires the connected hardware keyboard." >&2
               return 1
             fi
 
             set +e
             printf '%s' "$value" |
-              sim_use paste --stdin \
-                --device "$SIMULATOR_UDID" \
-                --json \
+              run_bounded_menu_paste "$target_id" \
                 >/dev/null 2>&1
             local -a pipeline_status=("${PIPESTATUS[@]}")
             set -e
             if (( ${#pipeline_status[@]} != 2 )) ||
                (( pipeline_status[0] != 0 || pipeline_status[1] != 0 )); then
-              echo "Simulator $field_label HID paste failed." >&2
+              echo "Simulator $field_label bounded menu paste failed." >&2
               return 1
             fi
 
@@ -913,6 +964,7 @@ jobs:
             LAST_PASTE_TARGET_FRAME_WIDTH="$target_frame_width"
             LAST_PASTE_TARGET_FRAME_HEIGHT="$target_frame_height"
             LAST_PASTE_TARGET_TYPE="$target_type"
+            LAST_PASTE_TARGET_ID="$target_id"
             LAST_PASTE_TARGET_LABEL_HASH="$target_label_hash"
             LAST_PASTE_TARGET_VALUE_HASH="$target_value_hash"
           }
@@ -948,6 +1000,7 @@ jobs:
                    "$LAST_PASTE_TARGET_FRAME_WIDTH" \
                    "$LAST_PASTE_TARGET_FRAME_HEIGHT" \
                    "$LAST_PASTE_TARGET_TYPE" \
+                   "$LAST_PASTE_TARGET_ID" \
                    "$LAST_PASTE_TARGET_LABEL_HASH" \
                    "$LAST_PASTE_TARGET_VALUE_HASH"; then
                 verification_status=0
@@ -1199,6 +1252,7 @@ jobs:
             "$LAST_PASTE_TARGET_FRAME_WIDTH" \
             "$LAST_PASTE_TARGET_FRAME_HEIGHT" \
             "$LAST_PASTE_TARGET_TYPE" \
+            "$LAST_PASTE_TARGET_ID" \
             "$LAST_PASTE_TARGET_LABEL_HASH" \
             "$LAST_PASTE_TARGET_VALUE_HASH"
           run_sensitive_maestro_flow \
@@ -1430,7 +1484,8 @@ jobs:
             captureCommit: process.env.GITHUB_SHA,
             captureHarness: {
               runtimePatchSha256: process.env.CAPTURE_RUNTIME_PATCH_SHA256,
-              deterministicInputFocus: true,
+              stableInputIdentifiers: true,
+              boundedMenuPaste: true,
               visualChanges: false,
             },
             productionTarget: {

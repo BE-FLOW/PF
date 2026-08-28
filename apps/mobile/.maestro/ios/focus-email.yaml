@@ -21,8 +21,3 @@ name: PetFlow iOS capture email focus
     timeout: 30000
     visibilityPercentage: 100
     centerElement: true
-- extendedWaitUntil:
-    visible:
-      id: "^auth-email-input$"
-      focused: true
-    timeout: 10000
