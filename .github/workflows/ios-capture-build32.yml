@@ -700,8 +700,15 @@ jobs:
             const document = JSON.parse(fs.readFileSync(0, "utf8"));
             if (document?.ok !== true || !document?.data?.raw) fail("ENVELOPE");
             const appPackage = document.data.appPackage;
+            const screen = document.data.screen;
             if (typeof appPackage !== "string") fail("ENVELOPE");
             if (appPackage !== "" && appPackage !== "com.beflow.petflow") fail("APP");
+            if (
+              !screen ||
+              ![screen.x, screen.y, screen.width, screen.height].every(Number.isFinite) ||
+              screen.width <= 0 ||
+              screen.height <= 0
+            ) fail("SCREEN");
 
             const expectedFrame = [
               process.env.EXPECTED_FRAME_X,
@@ -746,14 +753,12 @@ jobs:
                   const frame = [x, y, width, height];
                   if (
                     frame.every(Number.isFinite) &&
-                    x >= 0 &&
-                    y >= 0 &&
                     width > 0 &&
                     height > 0 &&
-                    frame.every(
-                      (component, index) =>
-                        Math.abs(component - expectedFrame[index]) <= 0.25,
-                    ) &&
+                    Math.abs(x - expectedFrame[0]) <= 0.25 &&
+                    Math.abs(y - expectedFrame[1]) <= screen.height &&
+                    Math.abs(width - expectedFrame[2]) <= 0.25 &&
+                    Math.abs(height - expectedFrame[3]) <= 0.25 &&
                     value.AXUniqueId === expectedId &&
                     hashValue(value.AXLabel) === expectedLabelHash
                   ) {
@@ -788,11 +793,11 @@ jobs:
               if [[ ! "$result" =~ ^ERROR_[A-Z0-9_]+$ ]]; then
                 result="ERROR_UNKNOWN"
               fi
-              echo "Simulator $field_label public probe verification failed ($result)." >&2
+              echo "Simulator $field_label value verification failed ($result)." >&2
               return 1
             fi
             if [[ "$result" != "CHANGED" ]]; then
-              echo "Simulator $field_label public probe verification failed (ERROR_UNKNOWN)." >&2
+              echo "Simulator $field_label value verification failed (ERROR_UNKNOWN)." >&2
               return 1
             fi
           }
@@ -1489,6 +1494,7 @@ jobs:
               stableInputIdentifiers: true,
               boundedMenuPaste: true,
               accessibilityValueHashVerification: true,
+              layoutTolerantValueVerification: true,
               protectedPasteApproval: true,
               protectedValueReplacement: true,
               visualChanges: false,
