@@ -820,6 +820,11 @@ jobs:
               echo "Simulator menu paste replacement mode is invalid." >&2
               return 1
             fi
+            local diagnostic_file="$sensitive_paste_root/menu-paste-$target_id.log"
+            : >"$diagnostic_file"
+            chmod 600 "$diagnostic_file"
+            local paste_status
+            set +e
             /usr/bin/perl -e '
               use strict;
               use warnings;
@@ -870,7 +875,28 @@ jobs:
               exit WEXITSTATUS($status) if WIFEXITED($status);
               exit 128 + WTERMSIG($status) if WIFSIGNALED($status);
               exit 125;
-            ' 15 "${paste_args[@]}"
+            ' 15 "${paste_args[@]}" >"$diagnostic_file" 2>&1
+            paste_status=$?
+            set -e
+
+            local mapped_status="$paste_status"
+            if (( paste_status != 0 && paste_status != 124 )); then
+              if grep -Fq "Edit menu 'Paste' item did not appear" "$diagnostic_file"; then
+                mapped_status=71
+              elif grep -Fq "Edit menu 'Select All' item did not appear" "$diagnostic_file"; then
+                mapped_status=72
+              elif grep -Fq "No accessibility element matched --id" "$diagnostic_file"; then
+                mapped_status=73
+              elif grep -Fq "simctl pbcopy failed" "$diagnostic_file"; then
+                mapped_status=74
+              elif grep -Fq "accessibility elements matched --id" "$diagnostic_file"; then
+                mapped_status=75
+              fi
+            fi
+            if ! rm -f -- "$diagnostic_file"; then
+              return 125
+            fi
+            return "$mapped_status"
           }
 
           paste_value() {
@@ -944,9 +970,15 @@ jobs:
             if (( ${#pipeline_status[@]} != 2 )) ||
                (( pipeline_status[0] != 0 || pipeline_status[1] != 0 )); then
               local paste_error="ERROR_TRANSPORT"
-              if (( ${#pipeline_status[@]} == 2 )) &&
-                 (( pipeline_status[1] == 124 )); then
-                paste_error="ERROR_TIMEOUT"
+              if (( ${#pipeline_status[@]} == 2 )); then
+                case "${pipeline_status[1]}" in
+                  71) paste_error="ERROR_PASTE_MENU" ;;
+                  72) paste_error="ERROR_SELECT_ALL_MENU" ;;
+                  73) paste_error="ERROR_TARGET" ;;
+                  74) paste_error="ERROR_PASTEBOARD" ;;
+                  75) paste_error="ERROR_AMBIGUOUS_TARGET" ;;
+                  124) paste_error="ERROR_TIMEOUT" ;;
+                esac
               fi
               echo "Simulator $field_label bounded menu paste failed ($paste_error)." >&2
               return 1
@@ -1249,6 +1281,15 @@ jobs:
           sleep 1
           secure_paste "$qa_email" "email" "email"
 
+          if ! sim_use tap \
+               "#auth-password-input" \
+               --post-delay 0.8 \
+               --device "$SIMULATOR_UDID" \
+               --json \
+               >/dev/null 2>&1; then
+            echo "Simulator password focus tap failed." >&2
+            exit 1
+          fi
           paste_value \
             "petflow-password-check" \
             "public password sentinel" \
@@ -1494,6 +1535,7 @@ jobs:
               runtimePatchSha256: process.env.CAPTURE_RUNTIME_PATCH_SHA256,
               stableInputIdentifiers: true,
               boundedMenuPaste: true,
+              sanitizedPasteDiagnostics: true,
               accessibilityValueHashVerification: true,
               layoutTolerantValueVerification: true,
               passwordUsesAppAutoFocus: true,
