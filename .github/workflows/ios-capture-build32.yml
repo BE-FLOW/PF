@@ -647,9 +647,13 @@ jobs:
           }
 
           const { matches, publicText } = inspectRoot(raw);
-          if (
-            !publicText.some((value) => value.includes("이메일과 비밀번호"))
-          ) fail("SCREEN_SIGNATURE");
+          const hasFallbackScreenSignature =
+            fieldRole === "email"
+              ? publicText.some((value) => value.includes("이메일과 비밀번호"))
+              : publicText.some((value) => value.includes("비밀번호"));
+          if (appPackage === "" && !hasFallbackScreenSignature) {
+            fail("SCREEN_SIGNATURE");
+          }
           if (matches.size !== 1) fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
           const [{ frame, labelHash, type, uniqueId, valueHash }] = matches.values();
           const { x, y, width, height } = frame;
@@ -774,9 +778,13 @@ jobs:
 
             const raw = document.data.raw;
             const { matches, publicText } = inspectRoot(raw);
-            if (
-              !publicText.some((value) => value.includes("이메일과 비밀번호"))
-            ) fail("SCREEN_SIGNATURE");
+            const hasFallbackScreenSignature =
+              expectedId === "auth-email-input"
+                ? publicText.some((value) => value.includes("이메일과 비밀번호"))
+                : publicText.some((value) => value.includes("비밀번호"));
+            if (appPackage === "" && !hasFallbackScreenSignature) {
+              fail("SCREEN_SIGNATURE");
+            }
             if (matches.size !== 1) {
               fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
             }
@@ -1538,6 +1546,7 @@ jobs:
               sanitizedPasteDiagnostics: true,
               accessibilityValueHashVerification: true,
               layoutTolerantValueVerification: true,
+              packageBoundScreenVerification: true,
               passwordUsesAppAutoFocus: true,
               protectedPasteApproval: true,
               protectedValueReplacement: true,
