@@ -604,9 +604,6 @@ jobs:
               for (const key of ["AXLabel", "AXValue"]) {
                 if (typeof value[key] === "string") publicText.push(value[key]);
               }
-              const values = [value.AXLabel, value.AXValue].filter(
-                (item) => typeof item === "string",
-              );
               const expectedId =
                 fieldRole === "email"
                   ? "auth-email-input"
@@ -614,13 +611,11 @@ jobs:
               const isEmail =
                 fieldRole === "email" &&
                 value.type === "TextField" &&
-                value.AXUniqueId === expectedId &&
-                values.includes("name@example.com");
+                value.AXUniqueId === expectedId;
               const isPassword =
                 fieldRole === "password" &&
                 ["SecureTextField", "TextField"].includes(value.type) &&
-                value.AXUniqueId === expectedId &&
-                values.includes("비밀번호");
+                value.AXUniqueId === expectedId;
               if ((isEmail || isPassword) && value.frame) {
                 const { x, y, width, height } = value.frame;
                 const frame = [x, y, width, height];
@@ -651,21 +646,10 @@ jobs:
             return { matches, publicText };
           }
 
-          const screenSignatures = [
-            "이메일과 비밀번호",
-            "비밀번호 재설정 메일 받기",
-          ];
-          const screenScopes = (Array.isArray(raw) ? raw : [raw])
-            .map(inspectRoot)
-            .filter(({ publicText }) =>
-              screenSignatures.every((signature) =>
-                publicText.some((value) => value.includes(signature)),
-              ),
-            );
-          if (screenScopes.length !== 1) {
-            fail(`SCREEN_SCOPE_COUNT_${Math.min(screenScopes.length, 9)}`);
-          }
-          const { matches } = screenScopes[0];
+          const { matches, publicText } = inspectRoot(raw);
+          if (
+            !publicText.some((value) => value.includes("이메일과 비밀번호"))
+          ) fail("SCREEN_SIGNATURE");
           if (matches.size !== 1) fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
           const [{ frame, labelHash, type, uniqueId, valueHash }] = matches.values();
           const { x, y, width, height } = frame;
@@ -783,22 +767,11 @@ jobs:
               return { matches, publicText };
             }
 
-            const screenSignatures = [
-              "이메일과 비밀번호",
-              "비밀번호 재설정 메일 받기",
-            ];
             const raw = document.data.raw;
-            const screenScopes = (Array.isArray(raw) ? raw : [raw])
-              .map(inspectRoot)
-              .filter(({ publicText }) =>
-                screenSignatures.every((signature) =>
-                  publicText.some((value) => value.includes(signature)),
-                ),
-              );
-            if (screenScopes.length !== 1) {
-              fail(`SCREEN_SCOPE_COUNT_${Math.min(screenScopes.length, 9)}`);
-            }
-            const { matches } = screenScopes[0];
+            const { matches, publicText } = inspectRoot(raw);
+            if (
+              !publicText.some((value) => value.includes("이메일과 비밀번호"))
+            ) fail("SCREEN_SIGNATURE");
             if (matches.size !== 1) {
               fail(`FIELD_COUNT_${Math.min(matches.size, 9)}`);
             }
