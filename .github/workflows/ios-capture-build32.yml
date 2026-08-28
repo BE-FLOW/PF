@@ -1003,12 +1003,13 @@ jobs:
           }
 
           secure_paste() {
+            local replace_mode="${4:-true}"
             local input_status
             local approval_status=1
             local pasteboard_clear_status
             local settle_status=1
             local verification_status=1
-            if paste_value "$1" "$2" "$3" "true"; then
+            if paste_value "$1" "$2" "$3" "$replace_mode"; then
               input_status=0
             else
               input_status=$?
@@ -1298,26 +1299,9 @@ jobs:
             echo "Simulator password focus tap failed." >&2
             exit 1
           fi
-          paste_value \
-            "petflow-password-check" \
-            "public password sentinel" \
-            "password"
-          run_sensitive_maestro_flow \
-            "approve-password-paste" \
-            "apps/mobile/.maestro/ios/approve-password-paste.yaml"
-          verify_target_changed \
-            "public password sentinel" \
-            "$LAST_PASTE_TARGET_FRAME_X" \
-            "$LAST_PASTE_TARGET_FRAME_Y" \
-            "$LAST_PASTE_TARGET_FRAME_WIDTH" \
-            "$LAST_PASTE_TARGET_FRAME_HEIGHT" \
-            "$LAST_PASTE_TARGET_TYPE" \
-            "$LAST_PASTE_TARGET_ID" \
-            "$LAST_PASTE_TARGET_LABEL_HASH" \
-            "$LAST_PASTE_TARGET_VALUE_HASH"
           strict_clear_pasteboards
           sleep 1
-          secure_paste "$qa_password" "password" "password"
+          secure_paste "$qa_password" "password" "password" "false"
 
           qa_email=""
           qa_password=""
@@ -1548,6 +1532,7 @@ jobs:
               layoutTolerantValueVerification: true,
               packageBoundScreenVerification: true,
               passwordUsesAppAutoFocus: true,
+              passwordUsesEmptyFieldPaste: true,
               protectedPasteApproval: true,
               protectedValueReplacement: true,
               visualChanges: false,
