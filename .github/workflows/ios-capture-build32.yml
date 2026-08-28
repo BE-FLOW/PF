@@ -15,6 +15,7 @@ concurrency:
 env:
   RUNTIME_BASE_COMMIT: 65fe4d081769f35e876353e597c26f0a63cf6efe
   CAPTURE_BRANCH: codex/ios-capture-build32
+  CAPTURE_RUNTIME_PATCH_SHA256: 7dabbc4642735e33512826f8918db344e3b35a2d51b0cd364a3697689ad52797
   EAS_BUILD_PROFILE: ios-store-screenshot-ci
   PRODUCTION_EAS_BUILD_ID: 174779e0-899c-4f04-b31a-b886c6deba61
   PRODUCTION_BUILD_NUMBER: "32"
@@ -73,6 +74,7 @@ jobs:
           actual_paths="$(git diff --name-only "$RUNTIME_BASE_COMMIT..$GITHUB_SHA" | LC_ALL=C sort)"
           expected_paths="$(printf '%s\n' \
             '.github/workflows/ios-capture-build32.yml' \
+            'apps/mobile/App.tsx' \
             'apps/mobile/.maestro/ios/focus-email.yaml' \
             'apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             'apps/mobile/.maestro/ios/focus-password.yaml' \
@@ -88,6 +90,7 @@ jobs:
 
           git diff --quiet "$RUNTIME_BASE_COMMIT" "$GITHUB_SHA" -- . \
             ':(exclude).github/workflows/ios-capture-build32.yml' \
+            ':(exclude)apps/mobile/App.tsx' \
             ':(exclude)apps/mobile/.maestro/ios/focus-email.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/verify-email-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/focus-password.yaml' \
@@ -95,6 +98,25 @@ jobs:
             ':(exclude)apps/mobile/.maestro/ios/verify-password-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/store-capture.yaml' \
             ':(exclude)apps/mobile/eas.json'
+
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const crypto = require("node:crypto");
+          const { execFileSync } = require("node:child_process");
+
+          const diff = execFileSync(
+            "git",
+            [
+              "diff",
+              "--no-ext-diff",
+              `${process.env.RUNTIME_BASE_COMMIT}..${process.env.GITHUB_SHA}`,
+              "--",
+              "apps/mobile/App.tsx",
+            ],
+          );
+          const digest = crypto.createHash("sha256").update(diff).digest("hex");
+          assert.equal(digest, process.env.CAPTURE_RUNTIME_PATCH_SHA256);
+          NODE
 
       - name: Verify the additive EAS profile and supplied build metadata
         shell: bash
@@ -125,6 +147,9 @@ jobs:
             environment: "production",
             autoIncrement: true,
             withoutCredentials: true,
+            env: {
+              EXPO_PUBLIC_IOS_CAPTURE_AUTOMATION: "true",
+            },
             ios: {
               simulator: true,
               buildConfiguration: "Release",
@@ -1403,6 +1428,11 @@ jobs:
             source: "github-actions-ios-simulator",
             capturedAt: new Date().toISOString(),
             captureCommit: process.env.GITHUB_SHA,
+            captureHarness: {
+              runtimePatchSha256: process.env.CAPTURE_RUNTIME_PATCH_SHA256,
+              deterministicInputFocus: true,
+              visualChanges: false,
+            },
             productionTarget: {
               easBuildId: process.env.PRODUCTION_EAS_BUILD_ID,
               buildNumber: process.env.PRODUCTION_BUILD_NUMBER,
