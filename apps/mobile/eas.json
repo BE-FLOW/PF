@@ -23,6 +23,9 @@
       "environment": "production",
       "autoIncrement": true,
       "withoutCredentials": true,
+      "env": {
+        "EXPO_PUBLIC_IOS_CAPTURE_AUTOMATION": "true"
+      },
       "ios": {
         "simulator": true,
         "buildConfiguration": "Release"

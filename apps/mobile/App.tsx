@@ -7,7 +7,12 @@ import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import * as WebBrowser from "expo-web-browser";
 import type { User } from "@supabase/supabase-js";
-import type { TextInputProps, TextProps, TextStyle } from "react-native";
+import type {
+  TextInput as NativeTextInputInstance,
+  TextInputProps,
+  TextProps,
+  TextStyle,
+} from "react-native";
 import {
   ActivityIndicator,
   Alert,
@@ -145,6 +150,9 @@ function quickGuideStorageKey(userId: string) {
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const iosCaptureAutomationEnabled =
+  Platform.OS === "ios" &&
+  process.env.EXPO_PUBLIC_IOS_CAPTURE_AUTOMATION === "true";
 const iosPasswordRules =
   "minlength: 8; maxlength: 64; required: lower; required: upper; required: digit; required: special;";
 const passwordPolicy = [
@@ -437,11 +445,17 @@ function Text({ style, ...props }: TextProps) {
   return <NativeText {...props} style={[style, fontStyle]} />;
 }
 
-function TextInput({ style, ...props }: TextInputProps) {
+function TextInput({
+  inputRef,
+  style,
+  ...props
+}: TextInputProps & {
+  inputRef?: React.Ref<NativeTextInputInstance>;
+}) {
   const fontStyle = petFlowFontsReady
     ? { fontFamily: fontFamilyForStyle(style) }
     : null;
-  return <NativeTextInput {...props} style={[style, fontStyle]} />;
+  return <NativeTextInput {...props} ref={inputRef} style={[style, fontStyle]} />;
 }
 
 export default function App() {
@@ -3201,6 +3215,22 @@ function AuthForm({
   const authBusy = loading || oauthLoading !== null;
   const [showEmailAuth, setShowEmailAuth] = useState(false);
   const appleEnabled = enabledOAuthProviders.apple;
+  const passwordInputRef = useRef<NativeTextInputInstance>(null);
+
+  useEffect(() => {
+    if (
+      !iosCaptureAutomationEnabled ||
+      mode !== "login" ||
+      !showEmailAuth ||
+      password.length > 0 ||
+      !emailPattern.test(email.trim())
+    ) {
+      return;
+    }
+
+    const focusTimer = setTimeout(() => passwordInputRef.current?.focus(), 0);
+    return () => clearTimeout(focusTimer);
+  }, [email, mode, password, showEmailAuth]);
 
   return (
     <View style={styles.card}>
@@ -3317,6 +3347,7 @@ function AuthForm({
 
           <FieldLabel label="이메일" />
           <TextInput
+            autoFocus={iosCaptureAutomationEnabled}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="email-address"
@@ -3324,6 +3355,7 @@ function AuthForm({
             placeholder="name@example.com"
             placeholderTextColor={colors.placeholder}
             style={styles.input}
+            testID="auth-email-input"
             textContentType="emailAddress"
             value={email}
           />
@@ -3336,6 +3368,7 @@ function AuthForm({
           <FieldLabel label="비밀번호" />
           <TextInput
             autoCapitalize="none"
+            inputRef={passwordInputRef}
             maxLength={64}
             onChangeText={setPassword}
             placeholder={mode === "signup" ? "8자 이상, 대·소문자·숫자·특수문자" : "비밀번호"}
@@ -3343,6 +3376,7 @@ function AuthForm({
             passwordRules={mode === "signup" ? iosPasswordRules : undefined}
             secureTextEntry
             style={styles.input}
+            testID="auth-password-input"
             textContentType={mode === "login" ? "password" : "newPassword"}
             value={password}
           />
