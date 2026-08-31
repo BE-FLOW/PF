@@ -62,6 +62,12 @@ npm --prefix apps/mobile run status:ios
   `57.0.18`, React Native `0.86.3`와 권장 모듈 패치를 적용하고 중복 네이티브
   모듈을 정리한 뒤 온라인 `npm run verify:all` 전체가 통과했다. Expo Doctor도
   `21/21` 통과했다. 앱 기능·화면·데이터 모델은 변경하지 않았다.
+- 패치 반영 커밋 `c20c98b`에서 새 production 후보를 병렬 요청했다.
+  iOS build `35`는 `f9dfedc8-e262-4892-aa27-877af4852190`이고 자동 제출은
+  `24829c7c-5bbc-4ca6-b8fd-17a0d0a97419`, Android build `35`는
+  `98932a10-b24c-4dca-8d14-2be8ca2a5e66`다. 이 항목은 요청 기록이며 빌드 완료·
+  업로드 완료는 원격 상태로 확인해야 한다. 최종 스크린샷과 실기기 QA도 이 새
+  후보에 맞춰야 하며 build `32/34`의 승인을 그대로 이전하지 않는다.
 - 기존 iOS 스크린샷은 build `22`이므로 무료 공개용으로 제출하지 않는다.
   캡처 브랜치 `codex/ios-capture-build32`의 `4678eae`는 인증 설정을 검증된
   앱 번들과 대조하고 QA 로그인 사전검증을 추가했다. 해당 실행은 GitHub Actions
