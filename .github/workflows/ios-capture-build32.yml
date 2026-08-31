@@ -1150,6 +1150,35 @@ jobs:
             maestro_status=$?
             set -e
 
+            if (( maestro_status != 0 )); then
+              set +e
+              sim_use describe-ui \
+                --device "$SIMULATOR_UDID" \
+                --max-probes 0 \
+                --json \
+                2>/dev/null |
+                node -e '
+              const fs = require("node:fs");
+              const allowed = ["홈", "홈 먼저 보기", "3분 준비 시작", "새 변화 이어서 남기기", "이메일로 로그인", "30초 등록 시작"];
+              try {
+                const document = JSON.parse(fs.readFileSync(0, "utf8"));
+                if (document?.ok !== true || !document?.data?.raw) process.exit(0);
+                const labels = new Set();
+                function visit(value) {
+                  if (Array.isArray(value)) { for (const item of value) visit(item); return; }
+                  if (!value || typeof value !== "object") return;
+                  for (const key of ["AXLabel", "AXValue"]) {
+                    if (typeof value[key] === "string" && allowed.includes(value[key])) labels.add(value[key]);
+                  }
+                  for (const item of Object.values(value)) visit(item);
+                }
+                visit(document.data.raw);
+                console.log(JSON.stringify(Object.fromEntries(allowed.map(label => [label, labels.has(label)]))));
+              } catch { /* Never expose raw UI or dynamic parsing errors. */ }
+              ' 2>/dev/null
+              set -e
+            fi
+
             local store_capture_checkpoint=0
             if [[ "$phase_name" == "store-capture" ]] && [[ -d "$output_dir" ]]; then
               local checkpoint_name
