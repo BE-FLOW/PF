@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "buildNumber": "34",
+  "gitCommit": "65fe4d081769f35e876353e597c26f0a63cf6efe",
+  "platform": "android",
+  "displayType": "GOOGLE_PLAY_TABLET_10",
+  "width": 1800,
+  "height": 3200,
+  "capturedAt": "2026-08-25T01:23:56.705Z",
+  "source": "android-emulator-api36",
+  "qaConfirmedAt": "2026-08-25T01:23:56.705Z",
+  "qaConfirmation": "ANDROID_BUILD_34_QA_PASSED",
+  "files": {
+    "01-home-score.png": "ccc5f25ce88753f45cdc5112b55121cdec215d3f14d5e0fa73b8595b00d653d9",
+    "02-health-check.png": "04ce4d386c2ef7e4143f4ff6a42b673e88502dcf894498c95678ff032827ea3c",
+    "03-health-flow.png": "d37dd01616916e47f8cf724c3037502c20d97feec9c95c6486a59fe352338d5d",
+    "04-account-pets.png": "c242523f3fa7b70bb349985c9c12a876e8aed8fccddf7b4f59e9b264f08345bf",
+    "05-report-summary.png": "f262f2b6d74a8b58a67a6f8d066b45f13d97b3d92fdbd78c258e7c1434d5576b"
+  }
+}

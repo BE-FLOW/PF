@@ -54,6 +54,8 @@ const buildNumber = String(storeBuild.attributes.version);
 const easBuild = findExactFinishedEasBuild(readEasBuilds(mobileRoot), {
   version: versionString,
   buildNumber,
+  buildProfile: "production",
+  distribution: "STORE",
 });
 const source = verifyBuildCoversMain(repoRoot, easBuild, git.head);
 

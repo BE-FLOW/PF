@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -10,7 +11,10 @@ import {
   validateRemoteScreenshotAssets,
   validateScreenshotManifest,
 } from "./lib/ios-release-guard.mjs";
-import { findExactFinishedEasBuild } from "./lib/release-source.mjs";
+import {
+  findExactFinishedEasBuild,
+  runCommand,
+} from "./lib/release-source.mjs";
 import {
   hasStatus as hasGooglePlayStatus,
   parseArgs as parseGooglePlayArgs,
@@ -22,12 +26,15 @@ import {
 import {
   assertDistinctScreenshotSets,
   assertScreenshotCapturedAfterBuild,
+  readPngMetadata,
+  validateScreenshotFiles,
 } from "./lib/store-screenshot-guard.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(mobileRoot, "..", "..");
 const require = createRequire(import.meta.url);
+const sharp = require("sharp");
 const packageJson = JSON.parse(
   fs.readFileSync(path.join(mobileRoot, "package.json"), "utf8"),
 );
@@ -95,15 +102,19 @@ describe("mobile release configuration", () => {
     );
   });
 
-  it("pins the patched Metro dependency line", () => {
-    const metroConfig = require(path.join(mobileRoot, "metro.config.js"));
+  it(
+    "pins the patched Metro dependency line",
+    () => {
+      const metroConfig = require(path.join(mobileRoot, "metro.config.js"));
 
-    expect(metroConfig.resolver).toBeDefined();
-    expect(packageJson.overrides.metro).toBe("0.84.5");
-    expect(packageJson.overrides["metro-config"]).toBe("0.84.5");
-    expect(packageJson.overrides["metro-transform-worker"]).toBe("0.84.5");
-    expect(() => require.resolve("image-size")).toThrow();
-  });
+      expect(metroConfig.resolver).toBeDefined();
+      expect(packageJson.overrides.metro).toBe("0.84.5");
+      expect(packageJson.overrides["metro-config"]).toBe("0.84.5");
+      expect(packageJson.overrides["metro-transform-worker"]).toBe("0.84.5");
+      expect(() => require.resolve("image-size")).toThrow();
+    },
+    15_000,
+  );
 
   it("keeps local credentials out of EAS build archives", () => {
     const easIgnore = fs.readFileSync(path.join(repoRoot, ".easignore"), "utf8");
@@ -243,9 +254,39 @@ describe("mobile release configuration", () => {
         { version: "1.0", buildNumber: "27" },
       ),
     ).toThrow("conflicting finished builds");
+
+    expect(
+      findExactFinishedEasBuild(
+        [
+          newer,
+          {
+            ...newer,
+            id: "screenshot-apk",
+            distribution: "INTERNAL",
+            buildProfile: "store-screenshot",
+          },
+        ],
+        {
+          version: "1.0",
+          buildNumber: "27",
+          buildProfile: "production",
+          distribution: "STORE",
+        },
+      ).id,
+    ).toBe("newer");
   });
 
-  it("allows only store screenshot assets to change after the release build", () => {
+  it("preserves the leading status column in command output", () => {
+    expect(
+      runCommand(
+        process.execPath,
+        ["-e", "process.stdout.write(' M apps/mobile/file.png\\n')"],
+        mobileRoot,
+      ),
+    ).toBe(" M apps/mobile/file.png");
+  });
+
+  it("allows only store assets and approved release tooling to change after the release build", () => {
     expect(
       assertRuntimeCoveredByBuild({
         buildCommit: "build",
@@ -262,12 +303,28 @@ describe("mobile release configuration", () => {
         buildCommit: "build",
         currentCommit: "head",
         buildIsAncestor: true,
+        changedPaths: ["apps/mobile/scripts/stamp-android-screenshots.mjs"],
+      }),
+    ).toEqual({ releaseArtifactOnly: true });
+    expect(
+      assertRuntimeCoveredByBuild({
+        buildCommit: "build",
+        currentCommit: "head",
+        buildIsAncestor: true,
         changedPaths: [
           "apps/mobile/store/google-play/screenshots-phone/01-home-score.png",
           "apps/mobile/store/google-play/screenshots-phone/manifest.json",
         ],
       }),
     ).toEqual({ releaseArtifactOnly: true });
+    expect(() =>
+      assertRuntimeCoveredByBuild({
+        buildCommit: "build",
+        currentCommit: "head",
+        buildIsAncestor: true,
+        changedPaths: ["apps/mobile/scripts/unreviewed-release-tool.mjs"],
+      }),
+    ).toThrow("Runtime changed");
     expect(() =>
       assertRuntimeCoveredByBuild({
         buildCommit: "build",
@@ -307,7 +364,7 @@ describe("mobile release configuration", () => {
       capturedAt: "2026-08-01T00:00:00.000Z",
       source: "physical-iphone",
       qaConfirmedAt: "2026-08-01T00:00:00.000Z",
-      qaConfirmation: "IOS_BUILD_25_QA_PASSED",
+      qaConfirmation: "IOS_SCREENSHOTS_BUILD_25_QA_PASSED",
       files,
     };
     expect(() =>
@@ -326,6 +383,39 @@ describe("mobile release configuration", () => {
         displayType: "APP_IPHONE_67",
       }),
     ).toThrow("buildNumber");
+  });
+
+  it("rejects valid store screenshots with an alpha channel", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "petflow-alpha-png-"));
+    const file = path.join(directory, "alpha.png");
+
+    try {
+      await sharp({
+        create: {
+          width: 4,
+          height: 6,
+          channels: 4,
+          background: { r: 31, g: 147, b: 111, alpha: 0.5 },
+        },
+      })
+        .png()
+        .toFile(file);
+      expect(readPngMetadata(file)).toMatchObject({
+        width: 4,
+        height: 6,
+        hasAlpha: true,
+      });
+      expect(() =>
+        validateScreenshotFiles({
+          files: [file],
+          expectedFileNames: ["alpha.png"],
+          width: 4,
+          height: 6,
+        }),
+      ).toThrow("alpha transparency");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("rejects screenshots captured before the exact EAS build", () => {

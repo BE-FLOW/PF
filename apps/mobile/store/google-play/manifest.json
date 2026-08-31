@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "buildNumber": "34",
+  "gitCommit": "65fe4d081769f35e876353e597c26f0a63cf6efe",
+  "platform": "android",
+  "displayType": "GOOGLE_PLAY_FEATURE_GRAPHIC",
+  "width": 1024,
+  "height": 500,
+  "capturedAt": "2026-08-25T01:23:56.705Z",
+  "source": "android-emulator-api36",
+  "qaConfirmedAt": "2026-08-25T01:23:56.705Z",
+  "qaConfirmation": "ANDROID_BUILD_34_QA_PASSED",
+  "files": {
+    "feature-graphic-1024x500.png": "bbfad264cfa86e640068f5f14c45c872ab9cde427d4673507db34032cfb1cc0a"
+  }
+}

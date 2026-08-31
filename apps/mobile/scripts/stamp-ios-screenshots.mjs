@@ -11,6 +11,7 @@ import {
   findExactFinishedEasBuild,
   readEasBuilds,
   runCommand,
+  verifyBuildCoversMain,
 } from "./lib/release-source.mjs";
 import { parseArgs } from "./lib/app-store-connect.mjs";
 
@@ -30,9 +31,11 @@ const screenshotDir = path.resolve(
 const manifestPath = path.join(screenshotDir, "manifest.json");
 
 if (!buildNumber) throw new Error("--build-number is required.");
-const expectedQaConfirmation = `IOS_BUILD_${buildNumber}_QA_PASSED`;
+const expectedQaConfirmation = `IOS_SCREENSHOTS_BUILD_${buildNumber}_QA_PASSED`;
 if (qaConfirmation !== expectedQaConfirmation) {
-  throw new Error(`Use --confirm-qa ${expectedQaConfirmation} after device QA.`);
+  throw new Error(
+    `Use --confirm-qa ${expectedQaConfirmation} after visually reviewing the exact screenshot set.`,
+  );
 }
 if (runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], repoRoot) !== "main") {
   throw new Error("Screenshot stamping must run from main.");
@@ -60,12 +63,10 @@ const easBuild = findExactFinishedEasBuild(readEasBuilds(mobileRoot), {
   version: expo.version,
   buildNumber,
   platform: "ios",
+  buildProfile: "production",
+  distribution: "STORE",
 });
-if (easBuild.gitCommitHash !== head) {
-  throw new Error(
-    `EAS build ${buildNumber} was created from ${easBuild.gitCommitHash}, not current main ${head}.`,
-  );
-}
+verifyBuildCoversMain(repoRoot, easBuild, head);
 if (easBuild.buildProfile !== "production" || easBuild.distribution !== "STORE") {
   throw new Error(`EAS build ${buildNumber} is not a production store build.`);
 }

@@ -296,6 +296,8 @@ function validateIosReleaseScreenshots(currentCommit) {
     version: expo.version,
     buildNumber,
     platform: "ios",
+    buildProfile: "production",
+    distribution: "STORE",
   });
   ensureLatestProductionStoreBuild(builds, easBuild);
   const source = verifyBuildCoversMain(repoRoot, easBuild, currentCommit);
@@ -343,6 +345,8 @@ function validateAndroidReleaseScreenshots(currentCommit) {
     version: expo.version,
     buildNumber,
     platform: "android",
+    buildProfile: "production",
+    distribution: "STORE",
   });
   ensureLatestProductionStoreBuild(builds, easBuild);
   const source = verifyBuildCoversMain(repoRoot, easBuild, currentCommit);

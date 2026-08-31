@@ -31,18 +31,52 @@ function parseTimestamp(value, label) {
   return timestamp;
 }
 
-export function readPngSize(filePath) {
-  const header = fs.readFileSync(filePath).subarray(0, 24);
+export function readPngMetadata(filePath) {
+  const buffer = fs.readFileSync(filePath);
   if (
-    header.length < 24 ||
-    header.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
+    buffer.length < 33 ||
+    buffer.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a" ||
+    buffer.subarray(12, 16).toString("ascii") !== "IHDR" ||
+    buffer.readUInt32BE(8) !== 13
   ) {
     throw new Error(`${path.basename(filePath)} is not a valid PNG file.`);
   }
+
+  const colorType = buffer.readUInt8(25);
+  if (![0, 2, 3, 4, 6].includes(colorType)) {
+    throw new Error(`${path.basename(filePath)} has an invalid PNG color type.`);
+  }
+  let hasTransparencyChunk = false;
+  let hasEndChunk = false;
+  let offset = 8;
+  while (offset + 12 <= buffer.length) {
+    const dataLength = buffer.readUInt32BE(offset);
+    const chunkEnd = offset + 12 + dataLength;
+    if (chunkEnd > buffer.length) {
+      throw new Error(`${path.basename(filePath)} has a truncated PNG chunk.`);
+    }
+    const chunkType = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    if (chunkType === "tRNS") hasTransparencyChunk = true;
+    offset = chunkEnd;
+    if (chunkType === "IEND") {
+      hasEndChunk = true;
+      break;
+    }
+  }
+  if (!hasEndChunk) {
+    throw new Error(`${path.basename(filePath)} has no PNG end chunk.`);
+  }
+
   return {
-    width: header.readUInt32BE(16),
-    height: header.readUInt32BE(20),
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20),
+    hasAlpha: colorType === 4 || colorType === 6 || hasTransparencyChunk,
   };
+}
+
+export function readPngSize(filePath) {
+  const { width, height } = readPngMetadata(filePath);
+  return { width, height };
 }
 
 export function sha256File(filePath) {
@@ -50,10 +84,13 @@ export function sha256File(filePath) {
 }
 
 export function expectedScreenshotQaConfirmation(platform, buildNumber) {
-  const prefix =
-    platform === "ios" ? "IOS" : platform === "android" ? "ANDROID" : null;
-  if (!prefix) throw new Error(`Unsupported screenshot platform ${platform}.`);
-  return `${prefix}_BUILD_${buildNumber}_QA_PASSED`;
+  if (platform === "ios") {
+    return `IOS_SCREENSHOTS_BUILD_${buildNumber}_QA_PASSED`;
+  }
+  if (platform === "android") {
+    return `ANDROID_BUILD_${buildNumber}_QA_PASSED`;
+  }
+  throw new Error(`Unsupported screenshot platform ${platform}.`);
 }
 
 export function validateScreenshotFiles({
@@ -77,10 +114,15 @@ export function validateScreenshotFiles({
   }
 
   for (const file of files) {
-    const size = readPngSize(file);
-    if (size.width !== Number(width) || size.height !== Number(height)) {
+    const metadata = readPngMetadata(file);
+    if (metadata.width !== Number(width) || metadata.height !== Number(height)) {
       throw new Error(
-        `${path.basename(file)} is ${size.width}x${size.height}; expected ${width}x${height}.`,
+        `${path.basename(file)} is ${metadata.width}x${metadata.height}; expected ${width}x${height}.`,
+      );
+    }
+    if (metadata.hasAlpha) {
+      throw new Error(
+        `${path.basename(file)} contains alpha transparency; store screenshots must be opaque.`,
       );
     }
   }

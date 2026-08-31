@@ -35,6 +35,38 @@ Supabase 프로젝트와 서버 API를 쓰는 보조 화면이며, 모바일은 
 npm --prefix apps/mobile run status:ios
 ```
 
+## 2026-08-31 출시 재개 기록
+
+새 기능과 화면 개선은 동결하고 무료 공개의 검증·업로드·심사 차단사항만 처리한다.
+아래 값은 당시 실행 증거이며 다음 작업에서는 콘솔 상태를 다시 조회한다.
+
+- iOS production build `32` (`174779e0-899c-4f04-b31a-b886c6deba61`)을
+  재빌드 없이 App Store Connect에 업로드했다. EAS submission은
+  `d3ce2bf6-3e1a-45c6-8125-775db29b2e7d`이며 ASC build
+  `c55ef09a-60fa-479c-ace6-3a4d98cd5936`의 `VALID` 처리와
+  `PetFlow 내부 테스트` 그룹 연결을 확인했다. 공개 심사 제출이나 실기기 QA
+  완료를 뜻하지 않는다.
+- Android production build `34` (`f68cb93e-aaca-44c4-ae5c-71237a8a0321`)는
+  당시 preflight 13개를 통과했지만 Play에 아직 업로드되지 않았다.
+- Google Play의 과거 `petflow_ai_summary_1 / standard` 구매옵션을
+  `ACTIVE`에서 `INACTIVE`로 변경하고 API 재조회로 확인했다. 상품 삭제, 환불,
+  과거 거래와 법적 정보 변경은 하지 않았다. 직후에도 대한민국 개발자 추가 정보
+  경고가 남아 검토 제출은 차단됐다. 반영 지연인지 별도 계정 조건인지는 미확인이다.
+- Google Play 프로덕션 접근은 승인 전이다. 재신청 마지막 질문인 최근 추가
+  비공개 테스트에서 달라진 점에는 실제 참여·검증·피드백 사실이 필요하다.
+  자동 테스트 결과를 실제 사용자 테스트 진술로 대체하지 않는다.
+- 첫 전체 검사에서 웹 lint·테스트·build, 모바일 typecheck·60개 테스트·21개
+  release 테스트, DB 190개 테스트와 운영 무료 모드 검증은 통과했다.
+  온라인 Expo 검사는 SDK 패치 7개의 차이로 실패해 전체 통과로 기록하지 않았다.
+  설치된 SDK 고정 매핑은 일치했으나 공개 후보는 권장 패치로 맞췄다. Expo
+  `57.0.18`, React Native `0.86.3`와 권장 모듈 패치를 적용하고 중복 네이티브
+  모듈을 정리한 뒤 온라인 `npm run verify:all` 전체가 통과했다. Expo Doctor도
+  `21/21` 통과했다. 앱 기능·화면·데이터 모델은 변경하지 않았다.
+- 기존 iOS 스크린샷은 build `22`이므로 무료 공개용으로 제출하지 않는다.
+  캡처 브랜치 `codex/ios-capture-build32`의 `4678eae`는 인증 설정을 검증된
+  앱 번들과 대조하고 QA 로그인 사전검증을 추가했다. 해당 실행은 GitHub Actions
+  `33343738614`이며 결과 확인 전 캡처 성공으로 간주하지 않는다.
+
 ## 구현된 공개 범위
 
 현재 모바일 앱은 로그인, 반려동물 등록·수정·삭제·선택, 한 줄 건강 기록,
@@ -97,18 +129,23 @@ stamp를 실행한다. 생성된 세 manifest와 이미지만 커밋·push한 �
 
 ## iOS 출시
 
-코드 동결 커밋으로 새 후보를 만들고 TestFlight 실기기 검증을 마친다.
+코드 동결 커밋으로 새 후보를 만들고, 제출 전 정확한 TestFlight 설치본의 실기기 검증을
+별도로 마친다.
 
 ```powershell
 npm --prefix apps/mobile run release:ios:review-candidate
-npm --prefix apps/mobile run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_BUILD_<새빌드>_QA_PASSED --execute true
+npm --prefix apps/mobile run stamp:ios:screenshots -- --build-number <새빌드> --confirm-qa IOS_SCREENSHOTS_BUILD_<새빌드>_QA_PASSED --execute true
 npm --prefix apps/mobile run release:preflight:ios
-npm --prefix apps/mobile run readiness:ios:app-store -- --build-number <새빌드>
+npm --prefix apps/mobile run readiness:ios:app-store -- --build-number <새빌드> --confirm-device-qa IOS_BUILD_<새빌드>_DEVICE_QA_PASSED
 ```
 
-`release:ios:review-candidate`는 후보 바이너리만 만들고 업로드한다. 정확한 TestFlight
-설치본에서 스크린샷을 다시 캡처해 stamp하고, 스크린샷과 manifest만 커밋·push한 뒤
-preflight와 readiness를 통과시킨다.
+`release:ios:review-candidate`는 후보 바이너리를 만들고 App Store Connect에 업로드한다.
+기본 캡처 경로는 정확한 TestFlight 설치본이다. CI 시뮬레이터를 예외적으로 사용할 때는
+production 빌드와 동일한 runtime commit의 Simulator artifact만 허용하며 artifact 해시,
+EAS 빌드 번호·ID, 캡처 커밋을 manifest의 `source`에 기록한다. 스크린샷 시각 검수는
+`IOS_SCREENSHOTS_BUILD_<새빌드>_QA_PASSED`로 stamp하지만 TestFlight 실기기 QA를
+대체하지 않는다. 실기기 확인 후 별도의 `IOS_BUILD_<새빌드>_DEVICE_QA_PASSED`를
+readiness에 전달한다.
 
 App Store Connect에서는 현재 무료 후보 빌드만 버전 `1.0`에 연결한다. 과거 빌드나
 첫 인앱결제 상품을 이번 버전에 포함하지 않는다. 스크린샷과 메타데이터는 정확한
@@ -144,9 +181,15 @@ Apple App Store:
 
 모든 스크린샷은 무료 후보의 실제 화면이어야 한다. 가격, 구매 버튼, 복원, 남은
 이용권과 과거 결제 모달이 보이는 이미지는 사용하지 않는다. 과거 IAP 심사용 이미지는
-앱 버전 스크린샷으로 제출하지 않는다.
+앱 버전 스크린샷으로 제출하지 않는다. PNG는 지정 크기와 SHA-256뿐 아니라 알파 채널이나
+투명도 청크가 없는 불투명 이미지여야 한다.
 
 ### 2026-08-18 저장소 이미지 감사
+
+아래 항목은 2026-08-18 당시 발견한 교체 사유다. 최신 승인 상태는 각 manifest와
+`release:preflight:*` 결과를 기준으로 판단한다. Android 항목은 build `34` 화면 세트와
+그래픽 이미지로 교체되어 현재 preflight를 통과한다. iOS 항목은 새 build `32` 화면과
+manifest가 커밋될 때까지 미해결로 유지한다.
 
 - `store/app-store/iphone-6-7/manifest.json`은 과거 build `22`, commit
   `67f11be545509efbe80b61770f8c19841863f2b1`을 가리킨다.

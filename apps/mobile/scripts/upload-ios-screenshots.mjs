@@ -183,6 +183,8 @@ const git = readCleanMain(repoRoot);
 const easBuild = findExactFinishedEasBuild(readEasBuilds(mobileRoot), {
   version: versionString,
   buildNumber,
+  buildProfile: "production",
+  distribution: "STORE",
 });
 const source = verifyBuildCoversMain(repoRoot, easBuild, git.head);
 const files = IOS_SCREENSHOT_FILES.map((fileName) => path.join(screenshotDir, fileName));

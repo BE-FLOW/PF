@@ -105,10 +105,29 @@ export function validateRemoteScreenshotAssets(
 
 export function isStoreReleaseArtifact(relativePath) {
   const normalized = relativePath.replaceAll("\\", "/");
-  return [
+  const storePrefixes = [
     "apps/mobile/store/app-store/",
     "apps/mobile/store/google-play/",
-  ].some((prefix) => normalized.startsWith(prefix));
+  ];
+  const releaseToolFiles = new Set([
+    "apps/mobile/scripts/ios-release-readiness.mjs",
+    "apps/mobile/scripts/lib/ios-release-guard.mjs",
+    "apps/mobile/scripts/lib/release-source.mjs",
+    "apps/mobile/scripts/lib/store-screenshot-guard.mjs",
+    "apps/mobile/scripts/prepare-ios-app-store.mjs",
+    "apps/mobile/scripts/release-config.test.mjs",
+    "apps/mobile/scripts/release-preflight.mjs",
+    "apps/mobile/scripts/stamp-android-screenshots.mjs",
+    "apps/mobile/scripts/stamp-ios-screenshots.mjs",
+    "apps/mobile/scripts/upload-ios-screenshots.mjs",
+    "apps/mobile/scripts/verify-ios-release-build.mjs",
+    "apps/mobile/README.md",
+    "docs/mobile-store-registration.md",
+  ]);
+  return (
+    storePrefixes.some((prefix) => normalized.startsWith(prefix)) ||
+    releaseToolFiles.has(normalized)
+  );
 }
 
 export function assertRuntimeCoveredByBuild({
