@@ -1,4 +1,4 @@
-name: PetFlow iOS build 32 simulator capture
+name: PetFlow iOS simulator capture
 
 on:
   push:
@@ -13,12 +13,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RUNTIME_BASE_COMMIT: 65fe4d081769f35e876353e597c26f0a63cf6efe
+  RUNTIME_BASE_COMMIT: c20c98bed85004920d821d4725b6f19d60c185a8
   CAPTURE_BRANCH: codex/ios-capture-build32
   CAPTURE_RUNTIME_PATCH_SHA256: 7dabbc4642735e33512826f8918db344e3b35a2d51b0cd364a3697689ad52797
   EAS_BUILD_PROFILE: ios-store-screenshot-ci
-  PRODUCTION_EAS_BUILD_ID: 174779e0-899c-4f04-b31a-b886c6deba61
-  PRODUCTION_BUILD_NUMBER: "32"
+  PRODUCTION_EAS_BUILD_ID: f9dfedc8-e262-4892-aa27-877af4852190
+  PRODUCTION_BUILD_NUMBER: "35"
   IOS_APP_VERSION: "1.0"
   IOS_BUNDLE_ID: com.beflow.petflow
   IOS_DEVICE_NAME: iPhone 16 Plus
@@ -80,6 +80,7 @@ jobs:
             'apps/mobile/.maestro/ios/focus-password.yaml' \
             'apps/mobile/.maestro/ios/approve-password-paste.yaml' \
             'apps/mobile/.maestro/ios/verify-password-paste.yaml' \
+            'apps/mobile/.maestro/ios/verify-login.yaml' \
             'apps/mobile/.maestro/ios/store-capture.yaml' \
             'apps/mobile/eas.json' | LC_ALL=C sort)"
           if [[ "$actual_paths" != "$expected_paths" ]]; then
@@ -96,6 +97,7 @@ jobs:
             ':(exclude)apps/mobile/.maestro/ios/focus-password.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/approve-password-paste.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/verify-password-paste.yaml' \
+            ':(exclude)apps/mobile/.maestro/ios/verify-login.yaml' \
             ':(exclude)apps/mobile/.maestro/ios/store-capture.yaml' \
             ':(exclude)apps/mobile/eas.json'
 
@@ -204,6 +206,7 @@ jobs:
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/focus-password.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/approve-password-paste.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-password-paste.yaml" ]] &&
+                   [[ "$changed_path" != "apps/mobile/.maestro/ios/verify-login.yaml" ]] &&
                    [[ "$changed_path" != "apps/mobile/.maestro/ios/store-capture.yaml" ]]; then
                   printf '%s\n' "$changed_path"
                 fi
@@ -227,7 +230,7 @@ jobs:
           fi
           if [[ ! "$EAS_SIMULATOR_BUILD_NUMBER" =~ ^[0-9]+$ ]] ||
              (( EAS_SIMULATOR_BUILD_NUMBER <= PRODUCTION_BUILD_NUMBER )); then
-            echo "The Simulator build number must be distinct from production build 32." >&2
+            echo "The Simulator build number must be distinct from production build $PRODUCTION_BUILD_NUMBER." >&2
             exit 1
           fi
 
@@ -343,7 +346,7 @@ jobs:
           fi
 
           simulator_udid="$(xcrun simctl create \
-            'PetFlow build 32 capture' "$device_type_id" "$runtime_id")"
+            "PetFlow build $PRODUCTION_BUILD_NUMBER capture" "$device_type_id" "$runtime_id")"
           echo "SIMULATOR_UDID=$simulator_udid" >> "$GITHUB_ENV"
           defaults write com.apple.iphonesimulator PasteboardAutomaticSync -bool false
           defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool true
@@ -1298,7 +1301,7 @@ jobs:
                   "Protected store capture screenshot checkpoint: $store_capture_checkpoint/5." \
                   >&2
               fi
-              echo "The protected Simulator paste phase failed." >&2
+              echo "The protected $phase_name Maestro phase failed." >&2
               return 1
             fi
             if [[ -n "$export_dir" ]]; then
@@ -1472,6 +1475,11 @@ jobs:
           qa_password=""
           unset qa_email qa_password
           echo "Protected QA credentials entered through Simulator paste input."
+          run_sensitive_maestro_flow \
+            "verify-login" \
+            "apps/mobile/.maestro/ios/verify-login.yaml"
+          echo "Protected QA login succeeded; waiting for record history readiness."
+
           run_sensitive_maestro_flow \
             "store-capture" \
             "apps/mobile/.maestro/ios/store-capture.yaml" \
@@ -1701,6 +1709,7 @@ jobs:
               passwordUsesEmptyFieldPaste: true,
               protectedQaAuthPreflight: true,
               storeCaptureCheckpointing: true,
+              separateLoginVerification: true,
               protectedPasteApproval: true,
               protectedValueReplacement: true,
               visualChanges: false,
@@ -1750,7 +1759,7 @@ jobs:
       - name: Upload only screenshots and non-sensitive metadata
         uses: actions/upload-artifact@v4
         with:
-          name: petflow-ios-build32-simulator-${{ env.EAS_SIMULATOR_BUILD_NUMBER }}
+          name: petflow-ios-build${{ env.PRODUCTION_BUILD_NUMBER }}-simulator-${{ env.EAS_SIMULATOR_BUILD_NUMBER }}
           path: |
             ${{ runner.temp }}/petflow-ios-capture/01-home-score.png
             ${{ runner.temp }}/petflow-ios-capture/02-health-check.png

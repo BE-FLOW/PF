@@ -1,19 +1,6 @@
 appId: com.beflow.petflow
-name: PetFlow build 32 App Store capture
+name: PetFlow App Store capture
 ---
-- scrollUntilVisible:
-    element:
-      text: "비밀번호 재설정 메일 받기"
-    direction: DOWN
-    timeout: 30000
-    visibilityPercentage: 100
-    centerElement: true
-- tapOn:
-    text: "^로그인$"
-    enabled: true
-    below: "이메일과 비밀번호"
-    above: "비밀번호 재설정 메일 받기"
-
 - extendedWaitUntil:
     visible: "^(홈 먼저 보기|새 변화 이어서 남기기)$"
     timeout: 90000
