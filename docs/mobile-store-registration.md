@@ -104,6 +104,30 @@ build `35`를 TestFlight 외부 테스트로 배포했다. 새 빌드는 추가�
 구분한다. 정식 공개 전에는 build `35`에 맞는 iPhone 실기기 핵심 흐름 QA와 최신
 스크린샷 검증을 이어간다. 베타 승인·공개 링크 상태는 다음 작업에서 다시 조회한다.
 
+### App Store 정식 출시로 목표 변경
+
+사용자는 TestFlight가 아닌 App Store 정식 출시를 요청했다. 이후 작업의 완료 기준은
+정식 심사와 스토어 공개이며, 베타 배포를 최종 결과로 대신하지 않는다.
+
+- 기존 무료 production build `35`를 재사용한다. 새로운 앱 기능·빌드를 추가하지 않는다.
+- 정식 iOS `1.0` (`27151a20-b1be-4f4a-8aca-141d1b90bb86`)은 현재
+  `PREPARE_FOR_SUBMISSION`이다. 선택 빌드는 아직 `28`이며, 기존 설명과 심사 메모도
+  월간 제공량·과거 경과 입력 등 오래된 동작을 설명한다. 최신 화면을 검수한 다음
+  `prepare:ios:app-store -- --build-number 35 --execute true`로 함께 교체한다.
+- `releaseType`을 `MANUAL`에서 `AFTER_APPROVAL`로 변경하고 API로 재조회했다.
+  이는 Apple 정식 심사 승인 후 자동 공개 설정이며 심사 제출·승인 완료는 아니다.
+- 가격표의 수동 1개·자동 174개 지역 모두 가격이 0이며 한국 가격도 `0`이다.
+  기존 심사 계정과 심사 연락처 필수 값은 등록돼 있다. 값 자체는 기록하지 않는다.
+- 캡처 브랜치의 `caff4a1`과 이미 완성된 Simulator `36`을 재사용해 GitHub Actions
+  `33362228899`를 시작했다. `petflow-ios-capture` 환경의 Simulator 메타데이터와
+  artifact URL만 갱신했으며 QA 계정·서버 자격증명은 바꾸지 않았다.
+- `readiness:ios:app-store -- --build-number 35`에서 main·빌드·운영 서버·무료 모드는
+  통과했다. 현재 차단 항목은 최신 스크린샷, 선택 빌드 불일치, 실기기 QA 확인 부재다.
+  실제 확인 없이 `IOS_BUILD_35_DEVICE_QA_PASSED`를 입력하지 않는다.
+- App Store Connect의 개인정보 응답과 배포 지역은 웹 화면에서 최종 확인해야 한다.
+  앱 내 브라우저와 Chrome 모두 Apple 로그인 만료 상태여서 사용자 재로그인을 요청했다.
+  정식 심사 제출은 아직 하지 않았다.
+
 ## 구현된 공개 범위
 
 현재 모바일 앱은 로그인, 반려동물 등록·수정·삭제·선택, 한 줄 건강 기록,
