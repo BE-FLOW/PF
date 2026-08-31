@@ -419,15 +419,25 @@ jobs:
         env:
           QA_EMAIL: ${{ secrets.PETFLOW_QA_EMAIL }}
           QA_PASSWORD: ${{ secrets.PETFLOW_QA_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.PETFLOW_SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.PETFLOW_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           set +x
           qa_email="${QA_EMAIL:-}"
           qa_password="${QA_PASSWORD:-}"
-          unset QA_EMAIL QA_PASSWORD
-          export -n qa_email qa_password
+          supabase_url="${SUPABASE_URL:-}"
+          supabase_publishable_key="${SUPABASE_PUBLISHABLE_KEY:-}"
+          unset QA_EMAIL QA_PASSWORD SUPABASE_URL SUPABASE_PUBLISHABLE_KEY
+          export -n qa_email qa_password supabase_url supabase_publishable_key
           if [[ -z "$qa_email" ]] || [[ -z "$qa_password" ]]; then
             echo "Protected QA credentials are required." >&2
+            exit 1
+          fi
+          if [[ ! "$supabase_url" =~ ^https://[a-z0-9]{20}\.supabase\.co/?$ ]] ||
+             [[ ! "$supabase_publishable_key" =~ ^sb_publishable_[A-Za-z0-9_-]+$ ]] ||
+             (( ${#supabase_publishable_key} > 2048 )); then
+            echo "Protected QA authentication configuration is invalid." >&2
             exit 1
           fi
 
@@ -524,7 +534,9 @@ jobs:
             clear_pasteboards
             qa_email=""
             qa_password=""
-            unset qa_email qa_password
+            supabase_url=""
+            supabase_publishable_key=""
+            unset qa_email qa_password supabase_url supabase_publishable_key
             if [[ -n "${sensitive_paste_root:-}" ]]; then
               rm -rf -- "$sensitive_paste_root" >/dev/null 2>&1 || true
             fi
@@ -1135,6 +1147,26 @@ jobs:
             maestro_status=$?
             set -e
 
+            local store_capture_checkpoint=0
+            if [[ "$phase_name" == "store-capture" ]] && [[ -d "$output_dir" ]]; then
+              local checkpoint_name
+              local checkpoint_match
+              for checkpoint_name in \
+                "01-home-score.png" \
+                "02-health-check.png" \
+                "03-health-flow.png" \
+                "04-account-pets.png" \
+                "05-report-summary.png"; do
+                checkpoint_match="$(
+                  find "$output_dir" -type f -name "$checkpoint_name" -print -quit \
+                    2>/dev/null || true
+                )"
+                if [[ -n "$checkpoint_match" ]]; then
+                  (( store_capture_checkpoint += 1 ))
+                fi
+              done
+            fi
+
             local export_status=0
             if [[ -n "$export_dir" ]]; then
               set +e
@@ -1261,6 +1293,11 @@ jobs:
               if [[ -n "$export_dir" ]]; then
                 rm -rf -- "$export_dir" >/dev/null 2>&1 || true
               fi
+              if [[ "$phase_name" == "store-capture" ]]; then
+                echo \
+                  "Protected store capture screenshot checkpoint: $store_capture_checkpoint/5." \
+                  >&2
+              fi
               echo "The protected Simulator paste phase failed." >&2
               return 1
             fi
@@ -1269,6 +1306,122 @@ jobs:
             fi
             return 0
           }
+
+          verify_protected_qa_auth() {
+            local auth_bundle_path="$APP_PATH/main.jsbundle"
+            local auth_bundle_validation_status=1
+            set +e
+            printf '%s\0%s' "$supabase_url" "$supabase_publishable_key" |
+              env \
+                -u QA_EMAIL \
+                -u QA_PASSWORD \
+                -u SIM_USE_DEBUG \
+                AUTH_BUNDLE_PATH="$auth_bundle_path" \
+                node -e '
+            const fs = require("node:fs");
+            const input = fs.readFileSync(0);
+            const separator = input.indexOf(0);
+            if (separator <= 0 || separator >= input.length - 1) process.exit(1);
+            const url = input.subarray(0, separator);
+            const publishableKey = input.subarray(separator + 1);
+            const bundlePath = process.env.AUTH_BUNDLE_PATH;
+            const bundleStat = fs.lstatSync(bundlePath);
+            if (bundleStat.isSymbolicLink() || !bundleStat.isFile()) process.exit(1);
+            const bundle = fs.readFileSync(bundlePath);
+            if (bundle.indexOf(url) < 0 || bundle.indexOf(publishableKey) < 0) {
+              process.exit(1);
+            }
+            ' >/dev/null 2>&1
+            local -a auth_bundle_pipeline_status=("${PIPESTATUS[@]}")
+            set -e
+            if (( ${#auth_bundle_pipeline_status[@]} == 2 )) &&
+               (( auth_bundle_pipeline_status[0] == 0 )) &&
+               (( auth_bundle_pipeline_status[1] == 0 )); then
+              auth_bundle_validation_status=0
+            fi
+            if (( auth_bundle_validation_status != 0 )); then
+              echo "Protected QA authentication does not match the verified app bundle." >&2
+              return 1
+            fi
+
+            local response_file="$sensitive_paste_root/qa-auth-response.json"
+            local status_file="$sensitive_paste_root/qa-auth-status.txt"
+            : >"$response_file"
+            : >"$status_file"
+            chmod 600 "$response_file" "$status_file"
+
+            set +e
+            printf '%s\0%s' "$qa_email" "$qa_password" |
+              env -u QA_EMAIL -u QA_PASSWORD -u SIM_USE_DEBUG \
+                node -e '
+            const fs = require("node:fs");
+            const input = fs.readFileSync(0);
+            const separator = input.indexOf(0);
+            if (separator <= 0 || separator >= input.length - 1) process.exit(1);
+            const email = input.subarray(0, separator).toString("utf8");
+            const password = input.subarray(separator + 1).toString("utf8");
+            process.stdout.write(JSON.stringify({ email, password }));
+            ' |
+              curl \
+                --silent \
+                --proto '=https' \
+                --tlsv1.2 \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --request POST \
+                --header "apikey: $supabase_publishable_key" \
+                --header 'Content-Type: application/json' \
+                --data-binary @- \
+                --output "$response_file" \
+                --write-out '%{http_code}' \
+                "${supabase_url%/}/auth/v1/token?grant_type=password" \
+                >"$status_file" 2>/dev/null
+            local -a auth_pipeline_status=("${PIPESTATUS[@]}")
+            set -e
+
+            local auth_http_status=""
+            IFS= read -r auth_http_status <"$status_file" || true
+            local auth_validation_status=1
+            if (( ${#auth_pipeline_status[@]} == 3 )) &&
+               (( auth_pipeline_status[0] == 0 )) &&
+               (( auth_pipeline_status[1] == 0 )) &&
+               (( auth_pipeline_status[2] == 0 )) &&
+               [[ "$auth_http_status" == "200" ]]; then
+              set +e
+              env \
+                -u QA_EMAIL \
+                -u QA_PASSWORD \
+                -u SIM_USE_DEBUG \
+                AUTH_RESPONSE_FILE="$response_file" \
+                node -e '
+              const fs = require("node:fs");
+              const response = JSON.parse(
+                fs.readFileSync(process.env.AUTH_RESPONSE_FILE, "utf8"),
+              );
+              if (
+                typeof response.access_token !== "string" ||
+                response.access_token.length < 32 ||
+                response.token_type !== "bearer" ||
+                typeof response.user?.id !== "string" ||
+                !/^[a-f0-9-]{36}$/i.test(response.user.id)
+              ) process.exit(1);
+              ' >/dev/null 2>&1
+              auth_validation_status=$?
+              set -e
+            fi
+
+            if ! rm -f -- "$response_file" "$status_file"; then
+              echo "Protected QA authentication cleanup failed." >&2
+              return 1
+            fi
+            if (( auth_validation_status != 0 )); then
+              echo "Protected QA authentication preflight failed." >&2
+              return 1
+            fi
+            echo "Protected QA authentication preflight passed."
+          }
+
+          verify_protected_qa_auth
 
           email_focus_output="$capture_debug_dir/focus-email"
           email_paste_output="$capture_debug_dir/approve-email-paste"
@@ -1546,6 +1699,8 @@ jobs:
               packageBoundScreenVerification: true,
               passwordUsesAppAutoFocus: true,
               passwordUsesEmptyFieldPaste: true,
+              protectedQaAuthPreflight: true,
+              storeCaptureCheckpointing: true,
               protectedPasteApproval: true,
               protectedValueReplacement: true,
               visualChanges: false,
