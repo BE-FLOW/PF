@@ -2,30 +2,21 @@ appId: com.beflow.petflow
 name: PetFlow App Store capture
 ---
 - extendedWaitUntil:
-    visible: "^(홈 먼저 보기|새 변화 이어서 남기기)$"
-    timeout: 90000
-- assertNotVisible: "이메일로 로그인"
-- waitForAnimationToEnd
-- runFlow:
-    when:
-      visible: "홈 먼저 보기"
-    commands:
-      - tapOn: "홈 먼저 보기"
-- extendedWaitUntil:
-    visible: "새 변화 이어서 남기기"
-    timeout: 60000
-- extendedWaitUntil:
     visible: "^홈$"
     timeout: 30000
-- extendedWaitUntil:
-    visible: "병원 전달본 준비 시작"
-    timeout: 30000
+- assertNotVisible: "이메일로 로그인"
 - repeat:
     times: 3
     commands:
       - swipe:
           direction: DOWN
           duration: 400
+- extendedWaitUntil:
+    visible: "^새 변화 이어서 남기기$"
+    timeout: 60000
+- extendedWaitUntil:
+    visible: "병원 전달본 준비 시작"
+    timeout: 30000
 - waitForAnimationToEnd
 - takeScreenshot: 01-home-score
 
