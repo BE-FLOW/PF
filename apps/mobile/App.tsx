@@ -118,12 +118,21 @@ import {
   type VaccinationRecord,
 } from "./src/lib/health";
 import {
+  dogVaccinationOptions,
+  formatVaccinationDate,
   hasVaccinationDraft,
   isMissingVaccinationTableError,
   toVaccinationRecord,
+  vaccinationDraftForName,
   vaccinationDraftFromRecords,
+  vaccinationDueAt,
+  vaccinationIntervalFromDates,
+  vaccinationIntervalOptions,
+  vaccinationOptionForName,
+  vaccinationReminder,
   vaccinationSelectColumns,
   type VaccinationDraft,
+  type VaccinationIntervalId,
   type VaccinationRow,
 } from "./src/lib/vaccinations";
 WebBrowser.maybeCompleteAuthSession();
@@ -387,15 +396,40 @@ function petPhotoFileNameFromAsset(asset: ImagePicker.ImagePickerAsset, mimeType
   return cleanFileName(`petflow-photo-${Date.now()}.${extension}`);
 }
 
-async function createPetPhotoSignedUrl(photoPath?: string | null) {
+async function createPetPhotoSignedUrl(photoPath?: string | null, petId?: string) {
   if (!photoPath) return "";
   const supabase = getSupabaseClient();
-  if (!supabase) return "";
-  const { data, error } = await supabase.storage
-    .from(petPhotoBucket)
-    .createSignedUrl(photoPath, 60 * 60);
-  if (error) return "";
-  return data.signedUrl ?? "";
+  if (!supabase) throw new Error("missing supabase client");
+  try {
+    const { data, error } = await supabase.storage
+      .from(petPhotoBucket)
+      .createSignedUrl(photoPath, 60 * 60);
+    if (!error && data?.signedUrl) return data.signedUrl;
+  } catch {
+    // The owner-checking API below is the recovery path for storage/RLS failures.
+  }
+
+  if (petId) {
+    const { data: authData } = await supabase.auth.getSession();
+    if (authData.session) {
+      const response = await fetch(`${apiBaseUrl}/api/pets/${petId}/photo-url`, {
+        headers: { Authorization: `Bearer ${authData.session.access_token}` },
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        signedUrl?: string;
+      };
+      if (response.ok && payload.signedUrl) return payload.signedUrl;
+    }
+  }
+  throw new Error("pet photo signing failed");
+}
+
+async function safePetPhotoSignedUrl(photoPath?: string | null, petId?: string) {
+  try {
+    return await createPetPhotoSignedUrl(photoPath, petId);
+  } catch {
+    return "";
+  }
 }
 
 function isMissingPetPhotoColumnError(error: unknown) {
@@ -505,6 +539,8 @@ export default function App() {
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
   const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
   const vaccinationTableAvailableRef = useRef(true);
+  const photoRefreshInFlightRef = useRef(new Set<string>());
+  const photoRefreshAttemptedPathsRef = useRef(new Set<string>());
   const accountLoadSequenceRef = useRef(0);
   const historyLoadSequenceRef = useRef(0);
   const submissionAttemptRef = useRef<{
@@ -581,6 +617,10 @@ export default function App() {
   const selectedPet = useMemo(
     () => pets.find((pet) => pet.id === selectedPetId),
     [pets, selectedPetId],
+  );
+  const selectedPetVaccinations = useMemo(
+    () => vaccinations.filter((record) => record.petId === selectedPetId),
+    [selectedPetId, vaccinations],
   );
   const selectedPetHistory = useMemo(
     () =>
@@ -871,7 +911,7 @@ export default function App() {
           sex: pet.sex,
           weight: pet.weight ?? "",
           photoPath,
-          photoUrl: await createPetPhotoSignedUrl(photoPath),
+          photoUrl: await safePetPhotoSignedUrl(photoPath, pet.id),
         };
       }),
     );
@@ -1028,7 +1068,6 @@ export default function App() {
     }
 
     const payload = {
-      ...(draft.id ? { id: draft.id } : {}),
       user_id: user.id,
       pet_id: petId,
       vaccine_name: draft.name.trim(),
@@ -1038,11 +1077,20 @@ export default function App() {
       note: draft.note.trim(),
       updated_at: new Date().toISOString(),
     };
-    const { data, error } = await supabase
-      .from("pet_vaccinations")
-      .upsert(payload)
-      .select(vaccinationSelectColumns)
-      .single();
+    const { data, error } = draft.id
+      ? await supabase
+          .from("pet_vaccinations")
+          .update(payload)
+          .eq("id", draft.id)
+          .eq("pet_id", petId)
+          .eq("user_id", user.id)
+          .select(vaccinationSelectColumns)
+          .single()
+      : await supabase
+          .from("pet_vaccinations")
+          .insert(payload)
+          .select(vaccinationSelectColumns)
+          .single();
     if (isMissingVaccinationTableError(error)) {
       vaccinationTableAvailableRef.current = false;
       return { error: "예방접종 저장 준비가 아직 완료되지 않았어요." };
@@ -1185,7 +1233,7 @@ export default function App() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          fileName: `pet-photo-${petId}`,
+          fileName: petDraft.photoFileName ?? `pet-photo-${petId}`,
           mimeType: petDraft.photoMimeType,
           sizeBytes: body.byteLength,
         }),
@@ -1566,6 +1614,7 @@ export default function App() {
 
   function startEditingPet(pet: PetProfile) {
     setEditingPetId(pet.id ?? null);
+    if (pet.id) setSelectedPetId(pet.id);
     setPetFormExpanded(true);
     const petVaccinations = pet.id
       ? vaccinations.filter((record) => record.petId === pet.id)
@@ -1641,6 +1690,57 @@ export default function App() {
       photoRemoved: Boolean(current.photoPath),
     }));
     setPetMessage("");
+  }
+
+  async function refreshPetPhoto(pet: PetProfile) {
+    if (!pet.id || !pet.photoPath) return;
+    const photoKey = `${pet.id}:${pet.photoPath}`;
+    if (photoRefreshAttemptedPathsRef.current.has(photoKey)) {
+      setPets((current) =>
+        current.map((item) =>
+          item.id === pet.id && item.photoPath === pet.photoPath
+            ? { ...item, photoUrl: "" }
+            : item,
+        ),
+      );
+      setPetMessage("프로필 사진을 표시하지 못했어요. 사진을 다시 선택해 주세요.");
+      return;
+    }
+    if (photoRefreshInFlightRef.current.has(pet.id)) return;
+    photoRefreshAttemptedPathsRef.current.add(photoKey);
+    photoRefreshInFlightRef.current.add(pet.id);
+    try {
+      const photoUrl = await createPetPhotoSignedUrl(pet.photoPath, pet.id);
+      setPets((current) =>
+        current.map((item) =>
+          item.id === pet.id && item.photoPath === pet.photoPath
+            ? { ...item, photoUrl }
+            : item,
+        ),
+      );
+      if (editingPetId === pet.id) {
+        setPetDraft((current) =>
+          current.photoPath === pet.photoPath ? { ...current, photoUrl } : current,
+        );
+      }
+    } catch {
+      setPets((current) =>
+        current.map((item) =>
+          item.id === pet.id && item.photoPath === pet.photoPath
+            ? { ...item, photoUrl: "" }
+            : item,
+        ),
+      );
+      setPetMessage("프로필 사진을 다시 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      photoRefreshInFlightRef.current.delete(pet.id);
+    }
+  }
+
+  function markPetPhotoLoaded(pet: PetProfile) {
+    if (pet.id && pet.photoPath) {
+      photoRefreshAttemptedPathsRef.current.delete(`${pet.id}:${pet.photoPath}`);
+    }
   }
 
   async function pickMedia(source: "camera" | "library" = "library") {
@@ -1961,6 +2061,10 @@ export default function App() {
       setPetMessage("반려동물 정보를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
       return;
     }
+    if (!editingPetId) {
+      setEditingPetId(data.id);
+      setSelectedPetId(data.id);
+    }
     if (!photoColumnReady && (petDraft.photoLocalUri || petDraft.photoRemoved)) {
       setPetLoading(false);
       setPetMessage("사진 저장 준비가 아직 완료되지 않았어요. 잠시 후 다시 시도해 주세요.");
@@ -1975,15 +2079,24 @@ export default function App() {
     const previousPhotoPath = photoPath;
     try {
       if (photoColumnReady && petDraft.photoRemoved && previousPhotoPath) {
-        const { error: removeError } = await supabase.storage
-          .from(petPhotoBucket)
-          .remove([previousPhotoPath]);
-        if (removeError) throw removeError;
         const { error: updateError } = await supabase
           .from("pets")
           .update({ photo_path: null, updated_at: new Date().toISOString() })
           .eq("id", data.id);
         if (updateError) throw updateError;
+        const { error: removeError } = await supabase.storage
+          .from(petPhotoBucket)
+          .remove([previousPhotoPath]);
+        if (removeError) {
+          const { error: rollbackError } = await supabase
+            .from("pets")
+            .update({
+              photo_path: previousPhotoPath,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", data.id);
+          throw rollbackError ?? removeError;
+        }
         photoPath = "";
         photoUrl = "";
       }
@@ -2000,13 +2113,49 @@ export default function App() {
           await supabase.storage.from(petPhotoBucket).remove([nextPhotoPath]);
           throw updateError;
         }
+        let nextPhotoUrl = "";
+        try {
+          nextPhotoUrl = await createPetPhotoSignedUrl(nextPhotoPath, data.id);
+        } catch (signError) {
+          const { error: rollbackError } = await supabase
+            .from("pets")
+            .update({
+              photo_path: previousPhotoPath || null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", data.id);
+          if (!rollbackError) {
+            const { error: cleanupError } = await supabase.storage
+              .from(petPhotoBucket)
+              .remove([nextPhotoPath]);
+            if (cleanupError) throw cleanupError;
+          }
+          if (rollbackError) throw rollbackError;
+          throw signError;
+        }
         if (previousPhotoPath) {
-          await supabase.storage.from(petPhotoBucket).remove([previousPhotoPath]);
+          const { error: removePreviousError } = await supabase.storage
+            .from(petPhotoBucket)
+            .remove([previousPhotoPath]);
+          if (removePreviousError) {
+            const { error: rollbackError } = await supabase
+              .from("pets")
+              .update({ photo_path: previousPhotoPath, updated_at: new Date().toISOString() })
+              .eq("id", data.id);
+            if (!rollbackError) {
+              const { error: cleanupError } = await supabase.storage
+                .from(petPhotoBucket)
+                .remove([nextPhotoPath]);
+              if (cleanupError) throw cleanupError;
+            }
+            if (rollbackError) throw rollbackError;
+            throw removePreviousError;
+          }
         }
         photoPath = nextPhotoPath;
-        photoUrl = await createPetPhotoSignedUrl(nextPhotoPath);
+        photoUrl = nextPhotoUrl;
       } else if (photoColumnReady && photoPath && !petDraft.photoRemoved) {
-        photoUrl = await createPetPhotoSignedUrl(photoPath);
+        photoUrl = await createPetPhotoSignedUrl(photoPath, data.id);
       }
     } catch {
       setPetLoading(false);
@@ -2025,10 +2174,27 @@ export default function App() {
       photoPath,
       photoUrl,
     };
+    setPets((current) => {
+      const exists = current.some((pet) => pet.id === data.id);
+      return exists
+        ? current.map((pet) => (pet.id === data.id ? savedPet : pet))
+        : [...current, savedPet];
+    });
+    setSelectedPetId(data.id);
     const vaccinationSave = await saveVaccinationForPet(data.id, petDraft.vaccination);
     if (vaccinationSave.error) {
       setPetLoading(false);
-      setPetMessage(vaccinationSave.error);
+      setPetDraft((current) => ({
+        ...current,
+        photoPath,
+        photoUrl,
+        photoLocalUri: undefined,
+        photoMimeType: undefined,
+        photoFileName: undefined,
+        photoSizeBytes: undefined,
+        photoRemoved: false,
+      }));
+      setPetMessage(`반려동물 정보는 저장했지만 ${vaccinationSave.error}`);
       return;
     }
     setVaccinations((current) => {
@@ -2046,13 +2212,6 @@ export default function App() {
         : [vaccinationSave.record, ...current];
     });
     setPetLoading(false);
-    setPets((current) => {
-      const exists = current.some((pet) => pet.id === data.id);
-      return exists
-        ? current.map((pet) => (pet.id === data.id ? savedPet : pet))
-        : [...current, savedPet];
-    });
-    setSelectedPetId(data.id);
     setEditingPetId(null);
     setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
     setPetFormExpanded(false);
@@ -2810,6 +2969,9 @@ export default function App() {
                       history={selectedPetHistory}
                       pets={pets}
                       selectedPet={selectedPet}
+                      vaccinations={selectedPetVaccinations}
+                      onPhotoLoadError={refreshPetPhoto}
+                      onPhotoLoaded={markPetPhotoLoaded}
                       onEditPet={() => {
                         if (selectedPet) {
                           startEditingPet(selectedPet);
@@ -2831,10 +2993,13 @@ export default function App() {
                         loading={petLoading}
                         message={petMessage}
                         onPickPhoto={pickPetPhoto}
+                        onPhotoLoadError={refreshPetPhoto}
+                        onPhotoLoaded={markPetPhotoLoaded}
                         onRemovePhoto={removePetPhoto}
                         pets={pets}
                         selectedPetId={selectedPetId}
                         setDraft={setPetDraft}
+                        vaccinations={selectedPetVaccinations}
                         onCancelForm={closePetForm}
                         onEdit={startEditingPet}
                         onDelete={confirmDeletePetProfile}
@@ -3015,6 +3180,9 @@ function HomeDashboard({
   history,
   pets,
   selectedPet,
+  vaccinations,
+  onPhotoLoadError,
+  onPhotoLoaded,
   onEditPet,
   onGoRecord,
   onGoReports,
@@ -3022,6 +3190,9 @@ function HomeDashboard({
   history: HistoryRecord[];
   pets: PetProfile[];
   selectedPet?: PetProfile;
+  vaccinations: VaccinationRecord[];
+  onPhotoLoadError: (pet: PetProfile) => Promise<void>;
+  onPhotoLoaded: (pet: PetProfile) => void;
   onEditPet: () => void;
   onGoRecord: (dateKey?: string) => void;
   onGoReports: () => void;
@@ -3048,8 +3219,9 @@ function HomeDashboard({
   }
 
   return (
-    <View style={styles.homePetCard}>
-      <View style={styles.cardHeaderText}>
+    <>
+      <View style={styles.homePetCard}>
+        <View style={styles.cardHeaderText}>
         <Text style={styles.cardEyebrow}>병원 가기 전 3분</Text>
         <Text style={styles.homePrepTitle}>
           {hasHistory
@@ -3083,33 +3255,70 @@ function HomeDashboard({
             </Text>
           </TouchableOpacity>
         ) : null}
-      </View>
-      <TouchableOpacity
-        accessibilityLabel={`${selectedPet?.name ?? "반려동물"} 정보 수정`}
-        accessibilityRole="button"
-        activeOpacity={0.85}
-        onPress={onEditPet}
-        style={styles.homePetProfile}
-      >
-        <View style={styles.petPhotoSlot}>
-          {selectedPet?.photoUrl ? (
-            <Image source={{ uri: selectedPet.photoUrl }} style={styles.petPhotoSlotImage} />
-          ) : (
-            <Text style={styles.petPhotoSlotText}>
-              {avatarLabel(selectedPet?.name ?? "펫")}
+        </View>
+        <TouchableOpacity
+          accessibilityLabel={`${selectedPet?.name ?? "반려동물"} 정보 수정`}
+          accessibilityRole="button"
+          activeOpacity={0.85}
+          onPress={onEditPet}
+          style={styles.homePetProfile}
+        >
+          <View style={styles.petPhotoSlot}>
+            {selectedPet?.photoUrl ? (
+              <Image
+                onError={() => void onPhotoLoadError(selectedPet)}
+                onLoad={() => onPhotoLoaded(selectedPet)}
+                source={{ uri: selectedPet.photoUrl }}
+                style={styles.petPhotoSlotImage}
+              />
+            ) : (
+              <Text style={styles.petPhotoSlotText}>
+                {avatarLabel(selectedPet?.name ?? "펫")}
+              </Text>
+            )}
+          </View>
+          <View style={styles.homePetProfileNameRow}>
+            <Text style={styles.homePetName} numberOfLines={1}>
+              {selectedPet ? selectedPet.name : "반려동물"}
             </Text>
-          )}
-        </View>
-        <View style={styles.homePetProfileNameRow}>
-          <Text style={styles.homePetName} numberOfLines={1}>
-            {selectedPet ? selectedPet.name : "반려동물"}
+            <Text style={styles.homePetEdit}>{selectedPet ? "수정" : "등록"}</Text>
+          </View>
+          <Text style={styles.homePetMeta} numberOfLines={1}>
+            {petSummary || "정보 없음"}
           </Text>
-          <Text style={styles.homePetEdit}>{selectedPet ? "수정" : "등록"}</Text>
-        </View>
-        <Text style={styles.homePetMeta} numberOfLines={1}>
-          {petSummary || "정보 없음"}
-        </Text>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
+      <VaccinationScheduleCard records={vaccinations} />
+    </>
+  );
+}
+
+function VaccinationScheduleCard({ records }: { records: VaccinationRecord[] }) {
+  const reminder = vaccinationReminder(records);
+  if (!reminder) return null;
+  return (
+    <View
+      accessibilityLabel={`${reminder.label}. ${reminder.title}. ${reminder.description}`}
+      style={[
+        styles.vaccinationScheduleCard,
+        reminder.tone === "upcoming" && styles.vaccinationScheduleCardUpcoming,
+        reminder.tone === "due" && styles.vaccinationScheduleCardDue,
+        reminder.tone === "overdue" && styles.vaccinationScheduleCardOverdue,
+      ]}
+    >
+      <View style={styles.vaccinationScheduleCopy}>
+        <Text style={styles.vaccinationScheduleEyebrow}>예방접종</Text>
+        <Text style={styles.vaccinationScheduleTitle}>{reminder.title}</Text>
+        <Text style={styles.vaccinationScheduleDescription}>{reminder.description}</Text>
+      </View>
+      <Text
+        style={[
+          styles.vaccinationScheduleBadge,
+          reminder.tone === "overdue" && styles.vaccinationScheduleBadgeOverdue,
+        ]}
+      >
+        {reminder.label}
+      </Text>
     </View>
   );
 }
@@ -3825,10 +4034,13 @@ function PetManager({
   loading,
   message,
   onPickPhoto,
+  onPhotoLoadError,
+  onPhotoLoaded,
   onRemovePhoto,
   pets,
   selectedPetId,
   setDraft,
+  vaccinations,
   onCancelForm,
   onDelete,
   onEdit,
@@ -3842,10 +4054,13 @@ function PetManager({
   loading: boolean;
   message: string;
   onPickPhoto: () => Promise<void>;
+  onPhotoLoadError: (pet: PetProfile) => Promise<void>;
+  onPhotoLoaded: (pet: PetProfile) => void;
   onRemovePhoto: () => void;
   pets: PetProfile[];
   selectedPetId?: string;
   setDraft: (draft: PetDraft) => void;
+  vaccinations: VaccinationRecord[];
   onCancelForm: () => void;
   onDelete: () => void;
   onEdit: (pet: PetProfile) => void;
@@ -3862,7 +4077,12 @@ function PetManager({
         <View style={styles.petContextRow}>
           <View style={styles.petAvatar}>
             {selectedPet.photoUrl ? (
-              <Image source={{ uri: selectedPet.photoUrl }} style={styles.petAvatarImage} />
+              <Image
+                onError={() => void onPhotoLoadError(selectedPet)}
+                onLoad={() => onPhotoLoaded(selectedPet)}
+                source={{ uri: selectedPet.photoUrl }}
+                style={styles.petAvatarImage}
+              />
             ) : (
               <Text style={styles.petAvatarText}>{avatarLabel(selectedPet.name)}</Text>
             )}
@@ -3882,6 +4102,7 @@ function PetManager({
             <Text style={styles.smallButtonText}>+ 추가</Text>
           </TouchableOpacity>
         </View>
+        <VaccinationScheduleCard records={vaccinations} />
         {pets.length > 1 ? (
           <ScrollView
             horizontal
@@ -3950,6 +4171,8 @@ function PetManager({
                 <View style={styles.petAvatar}>
                   {pet.photoUrl ? (
                     <Image
+                      onError={() => void onPhotoLoadError(pet)}
+                      onLoad={() => onPhotoLoaded(pet)}
                       source={{ uri: pet.photoUrl }}
                       style={styles.petAvatarImage}
                     />
@@ -3996,12 +4219,14 @@ function PetManager({
 
       {showPetForm ? (
         <PetForm
+          key={editingPetId ?? "new-pet"}
           draft={draft}
           editing={Boolean(editingPetId)}
           loading={loading}
           onPickPhoto={onPickPhoto}
           onRemovePhoto={onRemovePhoto}
           setDraft={setDraft}
+          vaccinations={editingPetId ? vaccinations : []}
           onCancel={pets.length ? onCancelForm : undefined}
           onDelete={editingPetId ? onDelete : undefined}
           onSave={onSave}
@@ -4019,6 +4244,7 @@ function PetForm({
   onPickPhoto,
   onRemovePhoto,
   setDraft,
+  vaccinations,
   onCancel,
   onDelete,
   onSave,
@@ -4029,6 +4255,7 @@ function PetForm({
   onPickPhoto: () => Promise<void>;
   onRemovePhoto: () => void;
   setDraft: (draft: PetDraft) => void;
+  vaccinations: VaccinationRecord[];
   onCancel?: () => void;
   onDelete?: () => void;
   onSave: () => Promise<void>;
@@ -4037,6 +4264,23 @@ function PetForm({
   const birthDateShortcuts = useMemo(() => buildBirthDateShortcuts(), []);
   const selectedBreed = draft.breed.trim();
   const [detailsExpanded, setDetailsExpanded] = useState(editing);
+  const [customVaccinationSelected, setCustomVaccinationSelected] = useState(
+    () => Boolean(draft.vaccination.name && !vaccinationOptionForName(draft.vaccination.name)),
+  );
+  const [selectedVaccinationInterval, setSelectedVaccinationInterval] =
+    useState<VaccinationIntervalId | null>(() =>
+      vaccinationIntervalFromDates(
+        draft.vaccination.administeredAt,
+        draft.vaccination.dueAt,
+      ),
+    );
+  const [manualDueDateEditing, setManualDueDateEditing] = useState(false);
+  const selectedVaccinationOption = customVaccinationSelected
+    ? null
+    : vaccinationOptionForName(draft.vaccination.name);
+  const selectedVaccinationIntervalLabel = vaccinationIntervalOptions.find(
+    (option) => option.id === selectedVaccinationInterval,
+  )?.label;
 
   useEffect(() => {
     setDetailsExpanded(editing);
@@ -4047,6 +4291,58 @@ function PetForm({
       ...draft,
       species,
       breed: species === draft.species ? draft.breed : "",
+    });
+  };
+
+  const chooseVaccination = (name: string) => {
+    const nextVaccination = vaccinationDraftForName(vaccinations, name);
+    setCustomVaccinationSelected(false);
+    setManualDueDateEditing(false);
+    setSelectedVaccinationInterval(
+      vaccinationIntervalFromDates(
+        nextVaccination.administeredAt,
+        nextVaccination.dueAt,
+      ),
+    );
+    setDraft({ ...draft, vaccination: nextVaccination });
+  };
+
+  const chooseCustomVaccination = () => {
+    const currentIsCustom = Boolean(
+      draft.vaccination.name && !vaccinationOptionForName(draft.vaccination.name),
+    );
+    const nextVaccination = currentIsCustom
+      ? draft.vaccination
+      : { ...emptyVaccinationDraft };
+    setCustomVaccinationSelected(true);
+    setManualDueDateEditing(false);
+    setSelectedVaccinationInterval(
+      vaccinationIntervalFromDates(
+        nextVaccination.administeredAt,
+        nextVaccination.dueAt,
+      ),
+    );
+    setDraft({ ...draft, vaccination: nextVaccination });
+  };
+
+  const changeVaccinationDate = (administeredAt: string) => {
+    const dueAt = selectedVaccinationInterval
+      ? vaccinationDueAt(administeredAt, selectedVaccinationInterval)
+      : draft.vaccination.dueAt;
+    setDraft({
+      ...draft,
+      vaccination: { ...draft.vaccination, administeredAt, dueAt },
+    });
+  };
+
+  const chooseVaccinationInterval = (interval: VaccinationIntervalId) => {
+    const dueAt = vaccinationDueAt(draft.vaccination.administeredAt, interval);
+    if (!dueAt) return;
+    setSelectedVaccinationInterval(interval);
+    setManualDueDateEditing(false);
+    setDraft({
+      ...draft,
+      vaccination: { ...draft.vaccination, dueAt },
     });
   };
 
@@ -4184,77 +4480,246 @@ function PetForm({
               <View>
                 <Text style={styles.vaccinationInlineTitle}>예방접종</Text>
                 <Text style={styles.vaccinationInlineText}>
-                  접종일이나 다음 예정일이 있을 때만 남겨요.
+                  맞은 접종과 날짜를 남겨요. 병원 안내 일정이 우선이에요.
                 </Text>
               </View>
               <Text style={styles.vaccinationInlineBadge}>
-                {draft.vaccination.dueAt ? "일정 있음" : "선택"}
+                {draft.vaccination.dueAt
+                  ? "일정 계산됨"
+                  : draft.vaccination.administeredAt
+                    ? "주기 확인"
+                    : draft.vaccination.name
+                      ? "날짜 입력"
+                      : "선택"}
               </Text>
             </View>
-            <FieldLabel label="접종명" />
-            <TextInput
-              maxLength={80}
-              onChangeText={(name) =>
-                setDraft({
-                  ...draft,
-                  vaccination: { ...draft.vaccination, name },
-                })
-              }
-              placeholder="예: 종합백신, 광견병"
-              placeholderTextColor={colors.placeholder}
-              style={styles.input}
-              value={draft.vaccination.name}
-            />
-            <View style={styles.inlineDateGrid}>
-              <View style={styles.inlineDateField}>
+            <FieldLabel label={draft.species === "dog" ? "맞은 접종" : "접종 종류"} />
+            {draft.species === "dog" ? (
+              <>
+                <ScrollView
+                  horizontal
+                  contentContainerStyle={styles.vaccinationChoiceRow}
+                  showsHorizontalScrollIndicator={false}
+                >
+                  {dogVaccinationOptions.map((option) => {
+                    const selected = selectedVaccinationOption?.id === option.id;
+                    const saved = vaccinations.some((record) =>
+                      vaccinationOptionForName(record.name)?.id === option.id,
+                    );
+                    return (
+                      <TouchableOpacity
+                        accessibilityLabel={`${option.label}${saved ? ", 저장된 기록 있음" : ""}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        activeOpacity={0.82}
+                        key={option.id}
+                        onPress={() => chooseVaccination(option.value)}
+                        style={[
+                          styles.vaccinationChoice,
+                          selected && styles.vaccinationChoiceSelected,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.vaccinationChoiceText,
+                            selected && styles.vaccinationChoiceTextSelected,
+                          ]}
+                        >
+                          {option.label}{saved ? " ·" : ""}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: customVaccinationSelected }}
+                    activeOpacity={0.82}
+                    onPress={chooseCustomVaccination}
+                    style={[
+                      styles.vaccinationChoice,
+                      customVaccinationSelected && styles.vaccinationChoiceSelected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.vaccinationChoiceText,
+                        customVaccinationSelected && styles.vaccinationChoiceTextSelected,
+                      ]}
+                    >
+                      기타
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
+                <Text style={styles.vaccinationChoiceHelp}>
+                  맞은 접종을 기록하기 위한 목록이며 권장 접종표가 아니에요.
+                </Text>
+                {customVaccinationSelected ? (
+                  <TextInput
+                    accessibilityLabel="기타 예방접종 이름"
+                    maxLength={80}
+                    onChangeText={(name) =>
+                      setDraft({
+                        ...draft,
+                        vaccination: { ...draft.vaccination, name },
+                      })
+                    }
+                    placeholder="접종 이름을 입력해 주세요"
+                    placeholderTextColor={colors.placeholder}
+                    style={[styles.input, styles.vaccinationCustomInput]}
+                    value={draft.vaccination.name}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <TextInput
+                accessibilityLabel="예방접종 이름"
+                maxLength={80}
+                onChangeText={(name) =>
+                  setDraft({
+                    ...draft,
+                    vaccination: { ...draft.vaccination, name },
+                  })
+                }
+                placeholder="접종 이름을 입력해 주세요"
+                placeholderTextColor={colors.placeholder}
+                style={styles.input}
+                value={draft.vaccination.name}
+              />
+            )}
+
+            {draft.vaccination.name ? (
+              <>
                 <FieldLabel label="맞은 날" />
                 <TextInput
+                  accessibilityLabel="예방접종 맞은 날"
                   keyboardType="numbers-and-punctuation"
                   maxLength={10}
-                  onChangeText={(administeredAt) =>
-                    setDraft({
-                      ...draft,
-                      vaccination: { ...draft.vaccination, administeredAt },
-                    })
-                  }
+                  onChangeText={changeVaccinationDate}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={colors.placeholder}
                   style={styles.input}
                   value={draft.vaccination.administeredAt}
                 />
-              </View>
-              <View style={styles.inlineDateField}>
-                <FieldLabel label="다음 예정일" />
+
+                {draft.vaccination.administeredAt ? (
+                  <>
+                    <Text style={styles.vaccinationIntervalTitle}>다음 일정 자동 계산</Text>
+                    <Text style={styles.vaccinationChoiceHelp}>
+                      병원이나 접종카드에서 안내받은 주기를 한 번 골라 주세요.
+                    </Text>
+                    <ScrollView
+                      horizontal
+                      contentContainerStyle={styles.vaccinationChoiceRow}
+                      showsHorizontalScrollIndicator={false}
+                    >
+                      {vaccinationIntervalOptions.map((option) => {
+                        const selected = selectedVaccinationInterval === option.id;
+                        const disabled = !isDateInput(draft.vaccination.administeredAt);
+                        return (
+                          <TouchableOpacity
+                            accessibilityRole="button"
+                            accessibilityState={{ disabled, selected }}
+                            activeOpacity={0.82}
+                            disabled={disabled}
+                            key={option.id}
+                            onPress={() => chooseVaccinationInterval(option.id)}
+                            style={[
+                              styles.vaccinationChoice,
+                              selected && styles.vaccinationChoiceSelected,
+                              disabled && styles.buttonDisabled,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.vaccinationChoiceText,
+                                selected && styles.vaccinationChoiceTextSelected,
+                              ]}
+                            >
+                              {option.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </>
+                ) : null}
+
+                {draft.vaccination.dueAt ? (
+                  <View style={styles.vaccinationDuePreview}>
+                    <View style={styles.vaccinationScheduleCopy}>
+                      <Text style={styles.vaccinationDueLabel}>다음 일정</Text>
+                      <Text style={styles.vaccinationDueDate}>
+                        {formatVaccinationDate(draft.vaccination.dueAt)}
+                      </Text>
+                      <Text style={styles.vaccinationDueBasis}>
+                        {selectedVaccinationIntervalLabel
+                          ? `${selectedVaccinationIntervalLabel} 간격으로 자동 계산했어요.`
+                          : "병원에서 안내받은 날짜예요."}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setManualDueDateEditing((current) => !current)}
+                    >
+                      <Text style={styles.vaccinationDueEdit}>날짜 수정</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : draft.vaccination.administeredAt &&
+                  isDateInput(draft.vaccination.administeredAt) ? (
+                  <View style={styles.vaccinationDuePreview}>
+                    <View style={styles.vaccinationScheduleCopy}>
+                      <Text style={styles.vaccinationDueLabel}>다음 일정 확인 필요</Text>
+                      <Text style={styles.vaccinationDueBasis}>
+                        종류만으로 주기를 정하지 않고 병원 안내를 기다려요.
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setManualDueDateEditing(true)}
+                    >
+                      <Text style={styles.vaccinationDueEdit}>날짜 직접 입력</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
+                {manualDueDateEditing ? (
+                  <>
+                    <FieldLabel label="병원 안내 날짜" />
+                    <TextInput
+                      accessibilityLabel="병원에서 안내받은 다음 예방접종 날짜"
+                      keyboardType="numbers-and-punctuation"
+                      maxLength={10}
+                      onChangeText={(dueAt) => {
+                        setSelectedVaccinationInterval(null);
+                        setDraft({
+                          ...draft,
+                          vaccination: { ...draft.vaccination, dueAt },
+                        });
+                      }}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor={colors.placeholder}
+                      style={styles.input}
+                      value={draft.vaccination.dueAt}
+                    />
+                  </>
+                ) : null}
+
+                <FieldLabel label="메모" />
                 <TextInput
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={10}
-                  onChangeText={(dueAt) =>
+                  maxLength={120}
+                  onChangeText={(note) =>
                     setDraft({
                       ...draft,
-                      vaccination: { ...draft.vaccination, dueAt },
+                      vaccination: { ...draft.vaccination, note },
                     })
                   }
-                  placeholder="YYYY-MM-DD"
+                  placeholder="병원명이나 특이사항"
                   placeholderTextColor={colors.placeholder}
                   style={styles.input}
-                  value={draft.vaccination.dueAt}
+                  value={draft.vaccination.note}
                 />
-              </View>
-            </View>
-            <FieldLabel label="메모" />
-            <TextInput
-              maxLength={120}
-              onChangeText={(note) =>
-                setDraft({
-                  ...draft,
-                  vaccination: { ...draft.vaccination, note },
-                })
-              }
-              placeholder="병원명이나 특이사항"
-              placeholderTextColor={colors.placeholder}
-              style={styles.input}
-              value={draft.vaccination.note}
-            />
+              </>
+            ) : null}
           </View>
         </>
       ) : null}
@@ -6286,6 +6751,67 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "900",
   },
+  vaccinationScheduleCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  vaccinationScheduleCardUpcoming: {
+    borderColor: "#b8dfce",
+    backgroundColor: "#f3fbf7",
+  },
+  vaccinationScheduleCardDue: {
+    borderColor: "#f0d09d",
+    backgroundColor: "#fff9ed",
+  },
+  vaccinationScheduleCardOverdue: {
+    borderColor: "#efc8c0",
+    backgroundColor: "#fff6f3",
+  },
+  vaccinationScheduleCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  vaccinationScheduleEyebrow: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  vaccinationScheduleTitle: {
+    marginTop: 3,
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  vaccinationScheduleDescription: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  vaccinationScheduleBadge: {
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: colors.greenSoft,
+    color: colors.green,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  vaccinationScheduleBadgeOverdue: {
+    backgroundColor: "#fae5df",
+    color: colors.danger,
+  },
   authTabs: {
     flexDirection: "row",
     gap: 8,
@@ -7173,6 +7699,80 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     paddingHorizontal: 9,
     paddingVertical: 6,
+  },
+  vaccinationChoiceRow: {
+    gap: 8,
+    paddingVertical: 4,
+    paddingRight: 12,
+  },
+  vaccinationChoice: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 999,
+    backgroundColor: "#fbfefd",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  vaccinationChoiceSelected: {
+    borderColor: colors.green,
+    backgroundColor: colors.green,
+  },
+  vaccinationChoiceText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  vaccinationChoiceTextSelected: {
+    color: "#ffffff",
+  },
+  vaccinationChoiceHelp: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    lineHeight: 15,
+  },
+  vaccinationCustomInput: {
+    marginTop: 8,
+  },
+  vaccinationIntervalTitle: {
+    marginTop: 13,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  vaccinationDuePreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 10,
+    borderRadius: 16,
+    backgroundColor: colors.greenSoft,
+    padding: 11,
+  },
+  vaccinationDueLabel: {
+    color: colors.green,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  vaccinationDueDate: {
+    marginTop: 2,
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  vaccinationDueBasis: {
+    marginTop: 2,
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    lineHeight: 14,
+  },
+  vaccinationDueEdit: {
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
   },
   inlineDateGrid: {
     flexDirection: "row",

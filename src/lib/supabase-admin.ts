@@ -1731,6 +1731,32 @@ export async function preparePetPhotoUpload(
   }
 }
 
+export async function getPetPhotoSignedUrl(
+  accessToken: string | null,
+  petId: string | null,
+): Promise<string | null> {
+  const owner = await getReportOwner(accessToken, petId);
+  const client = getAdminClient();
+  if (!owner || !client) return null;
+
+  try {
+    const response = await supabaseRequest(
+      `pets?id=eq.${owner.petId}&user_id=eq.${owner.userId}&select=photo_path&limit=1`,
+      { method: "GET" },
+    );
+    if (!response?.ok) return null;
+    const rows = (await response.json()) as Array<{ photo_path: string | null }>;
+    const photoPath = rows[0]?.photo_path;
+    if (!photoPath) return null;
+    const { data, error } = await client.storage
+      .from(petPhotoBucket)
+      .createSignedUrl(photoPath, 60 * 60);
+    return error ? null : (data?.signedUrl ?? null);
+  } catch {
+    return null;
+  }
+}
+
 export async function registerHealthReportMedia(
   accessToken: string | null,
   reportId: string | null,

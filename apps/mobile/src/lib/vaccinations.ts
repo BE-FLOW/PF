@@ -8,6 +8,64 @@ export interface VaccinationDraft {
   note: string;
 }
 
+export type VaccinationIntervalId = "4weeks" | "6months" | "1year" | "3years";
+
+export const dogVaccinationOptions = [
+  {
+    id: "core",
+    label: "종합백신",
+    value: "종합백신",
+    aliases: ["dhpp", "dhppl", "종합 예방접종"],
+  },
+  {
+    id: "rabies",
+    label: "광견병",
+    value: "광견병",
+    aliases: ["광견병백신", "광견병 백신"],
+  },
+  {
+    id: "coronavirus",
+    label: "코로나 장염",
+    value: "코로나 장염",
+    aliases: [
+      "코로나장염",
+      "코로나장염백신",
+      "코로나 장염 백신",
+      "개 코로나바이러스",
+      "개 코로나바이러스 백신",
+      "코로나바이러스백신(개)",
+    ],
+  },
+  {
+    id: "kennel-cough",
+    label: "켄넬코프",
+    value: "켄넬코프",
+    aliases: ["켄넬코프백신", "켄넬코프 백신", "전염성기관지염"],
+  },
+  {
+    id: "influenza",
+    label: "개 인플루엔자",
+    value: "개 인플루엔자",
+    aliases: [
+      "신종인플루엔자",
+      "신종 인플루엔자",
+      "신종플루",
+      "인플루엔자백신",
+      "개 인플루엔자 백신",
+    ],
+  },
+] as const;
+
+export const vaccinationIntervalOptions: Array<{
+  id: VaccinationIntervalId;
+  label: string;
+}> = [
+  { id: "4weeks", label: "4주 후" },
+  { id: "6months", label: "6개월 후" },
+  { id: "1year", label: "1년 후" },
+  { id: "3years", label: "3년 후" },
+];
+
 export interface VaccinationRow {
   id: string;
   pet_id: string;
@@ -31,6 +89,106 @@ export const vaccinationSelectColumns =
   "id,pet_id,vaccine_name,administered_at,due_at,status,note,created_at,updated_at";
 
 const dayMs = 24 * 60 * 60 * 1000;
+
+function normalizedVaccinationName(value: string) {
+  return value.toLocaleLowerCase("ko-KR").replace(/[\s()_-]/g, "");
+}
+
+function parsedDateInput(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+    ? { year, month, day }
+    : null;
+}
+
+function dateInput(year: number, month: number, day: number) {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function addCalendarMonths(value: string, months: number) {
+  const parsed = parsedDateInput(value);
+  if (!parsed) return "";
+  const targetMonthIndex = parsed.month - 1 + months;
+  const targetYear = parsed.year + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  return dateInput(targetYear, targetMonth + 1, Math.min(parsed.day, lastDay));
+}
+
+export function vaccinationOptionForName(value: string) {
+  const normalized = normalizedVaccinationName(value);
+  if (!normalized) return null;
+  return (
+    dogVaccinationOptions.find((option) =>
+      [option.value, ...option.aliases].some(
+        (candidate) => normalizedVaccinationName(candidate) === normalized,
+      ),
+    ) ?? null
+  );
+}
+
+export function sameVaccinationName(left: string, right: string) {
+  const leftOption = vaccinationOptionForName(left);
+  const rightOption = vaccinationOptionForName(right);
+  if (leftOption || rightOption) return leftOption?.id === rightOption?.id;
+  return normalizedVaccinationName(left) === normalizedVaccinationName(right);
+}
+
+export function vaccinationDueAt(
+  administeredAt: string,
+  interval: VaccinationIntervalId,
+) {
+  if (interval === "4weeks") {
+    const parsed = parsedDateInput(administeredAt);
+    if (!parsed) return "";
+    const date = new Date(parsed.year, parsed.month - 1, parsed.day + 28);
+    return dateInput(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  }
+  if (interval === "6months") return addCalendarMonths(administeredAt, 6);
+  if (interval === "1year") return addCalendarMonths(administeredAt, 12);
+  return addCalendarMonths(administeredAt, 36);
+}
+
+export function vaccinationIntervalFromDates(
+  administeredAt: string,
+  dueAt: string,
+): VaccinationIntervalId | null {
+  return (
+    vaccinationIntervalOptions.find(
+      (option) => vaccinationDueAt(administeredAt, option.id) === dueAt,
+    )?.id ?? null
+  );
+}
+
+export function vaccinationDraftForName(
+  records: VaccinationRecord[],
+  name: string,
+): VaccinationDraft {
+  const record = records
+    .filter((item) => sameVaccinationName(item.name, name))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  return {
+    id: record?.id,
+    name: record?.name ?? name,
+    administeredAt: record?.administeredAt ?? "",
+    dueAt: record?.dueAt ?? "",
+    note: record?.note ?? "",
+  };
+}
+
+export function formatVaccinationDate(value: string) {
+  const parsed = parsedDateInput(value);
+  return parsed
+    ? `${parsed.year}.${String(parsed.month).padStart(2, "0")}.${String(parsed.day).padStart(2, "0")}`
+    : value;
+}
 
 function startOfLocalDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -102,9 +260,9 @@ export function vaccinationReminder(
     return latestDone
       ? {
           tone: "none",
-          label: "접종 기록 있음",
-          title: `${latestDone.name} 접종 기록이 있어요`,
-          description: "다음 예정일을 알게 되면 같은 곳에 추가해 주세요.",
+          label: "일정 확인",
+          title: `${latestDone.name} 다음 일정을 확인해 주세요`,
+          description: "병원에서 확인한 주기를 선택하면 자동으로 계산해요.",
         }
       : null;
   }
@@ -112,7 +270,7 @@ export function vaccinationReminder(
     return {
       tone: "overdue",
       label: "예정일 지남",
-      title: `${next.record.name} 접종을 확인해 주세요`,
+      title: `${next.record.name} 병원 일정을 확인해 주세요`,
       description: `${Math.abs(next.daysUntil)}일 지났어요.`,
     };
   }
@@ -132,11 +290,19 @@ export function vaccinationReminder(
       description: "이번 주 일정을 확인해 주세요.",
     };
   }
+  if (next.daysUntil <= 30) {
+    return {
+      tone: "upcoming",
+      label: `${next.daysUntil}일 뒤`,
+      title: `${next.record.name} 일정이 다가와요`,
+      description: `${formatVaccinationDate(next.record.dueAt as string)} 예정이에요.`,
+    };
+  }
   return {
-    tone: next.daysUntil <= 14 ? "upcoming" : "none",
-    label: `D-${next.daysUntil}`,
-    title: `${next.record.name} 예정`,
-    description: "가까워지면 다시 알려드릴게요.",
+    tone: "none",
+    label: "다음 일정",
+    title: `${next.record.name} · ${formatVaccinationDate(next.record.dueAt as string)}`,
+    description: "저장한 병원 안내 주기로 계산한 일정이에요.",
   };
 }
 
