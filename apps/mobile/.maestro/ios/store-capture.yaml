@@ -12,9 +12,6 @@ name: PetFlow App Store capture
           direction: DOWN
           duration: 400
 - extendedWaitUntil:
-    visible: "^새 변화 이어서 남기기$"
-    timeout: 60000
-- extendedWaitUntil:
     visible: "병원 전달본 준비 시작"
     timeout: 30000
 - waitForAnimationToEnd
