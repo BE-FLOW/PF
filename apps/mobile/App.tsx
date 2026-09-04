@@ -59,6 +59,11 @@ import {
   vetDraftSelectionMatches,
 } from "./src/lib/vet-draft-client";
 import {
+  isDateInputOnOrBefore,
+  isValidDateInput,
+  normalizeDateInput,
+} from "./src/lib/date-input";
+import {
   buildRecordCalendar,
   formatRecordObservationDate,
   isRecordDateInRange,
@@ -75,6 +80,7 @@ import {
   dailyObservationOptions,
   durationOptions,
   formatFileSize,
+  formatSymptomSummary,
   formatReportMediaSummary,
   levelOptions,
   hasAssessableObservation,
@@ -89,9 +95,9 @@ import {
   reportMediaBucket,
   reportMediaExtensionFromMimeType,
   reportMediaKindFromMimeType,
+  redFlagOptions,
   riskLabels,
   symptomDetailQuestions,
-  symptomOptions,
   toggleDailyObservation,
   toggleSymptomDetail,
   type AiAccessStatus,
@@ -105,6 +111,9 @@ import {
   type PetEpisode,
   type PetProfile,
   type PetSex,
+  type PetTestRecord,
+  type PreventiveCareCategory,
+  type PreventiveCareRecord,
   type ReportMediaAttachment,
   type ReportMediaKind,
   type RiskLevel,
@@ -118,8 +127,7 @@ import {
   hasVaccinationDraft,
   isMissingVaccinationTableError,
   toVaccinationRecord,
-  vaccinationDraftForName,
-  vaccinationDraftFromRecords,
+  vaccinationDraftForNewEntry,
   vaccinationDueAt,
   vaccinationIntervalFromDates,
   vaccinationIntervalOptions,
@@ -130,6 +138,29 @@ import {
   type VaccinationIntervalId,
   type VaccinationRow,
 } from "./src/lib/vaccinations";
+import {
+  isMissingPreventiveCareTableError,
+  mergePreventiveCareRecord,
+  preventiveCareCompletionForToday,
+  preventiveCareMonthlyStatuses,
+  preventiveCareSelectColumns,
+  preventiveCareUpsertConflict,
+  preventiveCareUpsertPayload,
+  toPreventiveCareRecord,
+  type PreventiveCareRow,
+} from "./src/lib/preventive-care";
+import {
+  emptyPetTestRecordDraft,
+  isMissingPetTestRecordsTableError,
+  petTestRecordDraftError,
+  petTestRecordDraftFromRecord,
+  petTestRecordMutation,
+  petTestRecordSelectColumns,
+  sortPetTestRecordsNewestFirst,
+  toPetTestRecord,
+  type PetTestRecordDraft,
+  type PetTestRecordRow,
+} from "./src/lib/test-records";
 WebBrowser.maybeCompleteAuthSession();
 
 const oauthRedirectTo = AuthSession.makeRedirectUri({
@@ -525,6 +556,17 @@ export default function App() {
   const [progress, setProgress] = useState<EpisodeProgress[]>([]);
   const [vaccinations, setVaccinations] = useState<VaccinationRecord[]>([]);
   const vaccinationTableAvailableRef = useRef(true);
+  const [preventiveCareRecords, setPreventiveCareRecords] = useState<
+    PreventiveCareRecord[]
+  >([]);
+  const preventiveCareTableAvailableRef = useRef(true);
+  const [preventiveCareSavingCategory, setPreventiveCareSavingCategory] =
+    useState<PreventiveCareCategory | null>(null);
+  const [preventiveCareMessage, setPreventiveCareMessage] = useState("");
+  const [testRecords, setTestRecords] = useState<PetTestRecord[]>([]);
+  const testRecordsTableAvailableRef = useRef(true);
+  const [testRecordSaving, setTestRecordSaving] = useState(false);
+  const [testRecordMessage, setTestRecordMessage] = useState("");
   const photoRefreshInFlightRef = useRef(new Set<string>());
   const photoRefreshAttemptedPathsRef = useRef(new Set<string>());
   const accountLoadSequenceRef = useRef(0);
@@ -607,6 +649,17 @@ export default function App() {
   const selectedPetVaccinations = useMemo(
     () => vaccinations.filter((record) => record.petId === selectedPetId),
     [selectedPetId, vaccinations],
+  );
+  const selectedPetPreventiveCare = useMemo(
+    () => preventiveCareRecords.filter((record) => record.petId === selectedPetId),
+    [preventiveCareRecords, selectedPetId],
+  );
+  const selectedPetTestRecords = useMemo(
+    () =>
+      sortPetTestRecordsNewestFirst(
+        testRecords.filter((record) => record.petId === selectedPetId),
+      ),
+    [selectedPetId, testRecords],
   );
   const selectedPetHistory = useMemo(
     () =>
@@ -783,6 +836,12 @@ export default function App() {
     setPlans([]);
     setProgress([]);
     setVaccinations([]);
+    setPreventiveCareRecords([]);
+    setPreventiveCareMessage("");
+    setPreventiveCareSavingCategory(null);
+    setTestRecords([]);
+    setTestRecordMessage("");
+    setTestRecordSaving(false);
     setLatestResult(null);
     setLatestEpisodeId(null);
     setEditingHealthRecord(null);
@@ -806,6 +865,14 @@ export default function App() {
       setProgress([]);
       setVaccinations([]);
       vaccinationTableAvailableRef.current = true;
+      setPreventiveCareRecords([]);
+      preventiveCareTableAvailableRef.current = true;
+      setPreventiveCareMessage("");
+      setPreventiveCareSavingCategory(null);
+      setTestRecords([]);
+      testRecordsTableAvailableRef.current = true;
+      setTestRecordMessage("");
+      setTestRecordSaving(false);
       setHistoryMessage("");
       setShareMessage("");
       setEditingPlanEpisodeId(null);
@@ -903,10 +970,14 @@ export default function App() {
     );
     if (loadSequence !== accountLoadSequenceRef.current) return;
     setPets(loadedPets);
-    await loadVaccinationsForPets(
-      loadedPets.map((pet) => pet.id).filter((id): id is string => Boolean(id)),
-      loadSequence,
-    );
+    const loadedPetIds = loadedPets
+      .map((pet) => pet.id)
+      .filter((id): id is string => Boolean(id));
+    await Promise.all([
+      loadVaccinationsForPets(loadedPetIds, loadSequence),
+      loadPreventiveCareForPets(loadedPetIds, loadSequence),
+      loadTestRecordsForPets(loadedPetIds, loadSequence),
+    ]);
     if (loadSequence !== accountLoadSequenceRef.current) return;
     setSelectedPetId((current) =>
       current && loadedPets.some((pet) => pet.id === current)
@@ -927,6 +998,12 @@ export default function App() {
       setPlans([]);
       setProgress([]);
       setVaccinations([]);
+      setPreventiveCareRecords([]);
+      setPreventiveCareMessage("");
+      setPreventiveCareSavingCategory(null);
+      setTestRecords([]);
+      setTestRecordMessage("");
+      setTestRecordSaving(false);
       setHistoryMessage("");
       setShareMessage("");
       setEditingPlanEpisodeId(null);
@@ -1028,6 +1105,67 @@ export default function App() {
     setVaccinations(((data ?? []) as VaccinationRow[]).map(toVaccinationRecord));
   }
 
+  async function loadPreventiveCareForPets(
+    petIds: string[],
+    loadSequence = accountLoadSequenceRef.current,
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !petIds.length || !preventiveCareTableAvailableRef.current) {
+      setPreventiveCareRecords([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("pet_preventive_care")
+      .select(preventiveCareSelectColumns)
+      .in("pet_id", petIds)
+      .order("completed_on", { ascending: false });
+    if (loadSequence !== accountLoadSequenceRef.current) return;
+    if (isMissingPreventiveCareTableError(error)) {
+      preventiveCareTableAvailableRef.current = false;
+      setPreventiveCareRecords([]);
+      return;
+    }
+    if (error) {
+      setPreventiveCareMessage("월별 예방관리 기록을 불러오지 못했어요.");
+      return;
+    }
+    setPreventiveCareRecords(
+      ((data ?? []) as PreventiveCareRow[]).map(toPreventiveCareRecord),
+    );
+  }
+
+  async function loadTestRecordsForPets(
+    petIds: string[],
+    loadSequence = accountLoadSequenceRef.current,
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !petIds.length || !testRecordsTableAvailableRef.current) {
+      setTestRecords([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("pet_test_records")
+      .select(petTestRecordSelectColumns)
+      .in("pet_id", petIds)
+      .order("tested_at", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (loadSequence !== accountLoadSequenceRef.current) return;
+    if (isMissingPetTestRecordsTableError(error)) {
+      testRecordsTableAvailableRef.current = false;
+      setTestRecords([]);
+      return;
+    }
+    if (error) {
+      setTestRecordMessage("검사 기록을 불러오지 못했어요.");
+      return;
+    }
+    setTestRecords(
+      sortPetTestRecordsNewestFirst(
+        ((data ?? []) as PetTestRecordRow[]).map(toPetTestRecord),
+      ),
+    );
+  }
+
   async function saveVaccinationForPet(
     petId: string,
     draft: VaccinationDraft,
@@ -1083,6 +1221,257 @@ export default function App() {
     }
     if (error || !data) return { error: "예방접종 일정을 저장하지 못했어요." };
     return { record: toVaccinationRecord(data as VaccinationRow) };
+  }
+
+  function applyVaccinationSave(
+    result: { deletedId?: string; record?: VaccinationRecord },
+  ) {
+    setVaccinations((current) => {
+      if (result.deletedId) {
+        return current.filter((item) => item.id !== result.deletedId);
+      }
+      if (!result.record) return current;
+      const exists = current.some((item) => item.id === result.record?.id);
+      return exists
+        ? current.map((item) =>
+            item.id === result.record?.id
+              ? (result.record as VaccinationRecord)
+              : item,
+          )
+        : [result.record, ...current];
+    });
+  }
+
+  async function saveActiveVaccination() {
+    if (!editingPetId) {
+      setPetMessage("반려동물을 먼저 등록한 뒤 접종 내역을 추가해 주세요.");
+      return;
+    }
+    const validationError = vaccinationDraftError(petDraft.vaccination);
+    if (validationError) {
+      setPetMessage(validationError);
+      return;
+    }
+
+    const vaccineName = petDraft.vaccination.name.trim();
+    const updating = Boolean(petDraft.vaccination.id);
+    setPetLoading(true);
+    setPetMessage("");
+    const result = await saveVaccinationForPet(editingPetId, petDraft.vaccination);
+    setPetLoading(false);
+    if (result.error) {
+      setPetMessage(result.error);
+      return;
+    }
+    applyVaccinationSave(result);
+    setPetDraft((current) => ({
+      ...current,
+      vaccination: { ...emptyVaccinationDraft },
+    }));
+    setPetMessage(
+      updating
+        ? `${vaccineName} 접종 내역을 수정했어요.`
+        : `${vaccineName} 접종 내역을 추가했어요. 다른 접종도 이어서 추가할 수 있어요.`,
+    );
+  }
+
+  function confirmDeleteActiveVaccination() {
+    if (!petDraft.vaccination.id) return;
+    const name = petDraft.vaccination.name.trim() || "이 접종";
+    Alert.alert(`${name} 기록을 삭제할까요?`, "선택한 접종 내역 한 건만 삭제해요.", [
+      { text: "아니요", style: "cancel" },
+      {
+        text: "삭제",
+        style: "destructive",
+        onPress: () => void deleteActiveVaccination(),
+      },
+    ]);
+  }
+
+  async function deleteActiveVaccination() {
+    const vaccinationId = petDraft.vaccination.id;
+    if (!editingPetId || !vaccinationId) return;
+    setPetLoading(true);
+    setPetMessage("");
+    const result = await saveVaccinationForPet(editingPetId, {
+      ...emptyVaccinationDraft,
+      id: vaccinationId,
+    });
+    setPetLoading(false);
+    if (result.error) {
+      setPetMessage(result.error);
+      return;
+    }
+    applyVaccinationSave(result);
+    setPetDraft((current) => ({
+      ...current,
+      vaccination: { ...emptyVaccinationDraft },
+    }));
+    setPetMessage("선택한 접종 내역을 삭제했어요.");
+  }
+
+  async function completePreventiveCare(category: PreventiveCareCategory) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !user || !selectedPetId) {
+      setPreventiveCareMessage("기록할 반려동물을 먼저 선택해 주세요.");
+      return;
+    }
+    if (!preventiveCareTableAvailableRef.current) {
+      setPreventiveCareMessage("월별 예방관리 기록 준비가 아직 완료되지 않았어요.");
+      return;
+    }
+
+    setPreventiveCareSavingCategory(category);
+    setPreventiveCareMessage("");
+    const draft = preventiveCareCompletionForToday(category);
+    const { data, error } = await supabase
+      .from("pet_preventive_care")
+      .upsert(preventiveCareUpsertPayload(user.id, selectedPetId, draft), {
+        onConflict: preventiveCareUpsertConflict,
+      })
+      .select(preventiveCareSelectColumns)
+      .single();
+    setPreventiveCareSavingCategory(null);
+    if (isMissingPreventiveCareTableError(error)) {
+      preventiveCareTableAvailableRef.current = false;
+      setPreventiveCareMessage("월별 예방관리 기록 준비가 아직 완료되지 않았어요.");
+      return;
+    }
+    if (error || !data) {
+      setPreventiveCareMessage("완료 기록을 저장하지 못했어요. 다시 눌러 주세요.");
+      return;
+    }
+    const saved = toPreventiveCareRecord(data as PreventiveCareRow);
+    setPreventiveCareRecords((current) => mergePreventiveCareRecord(current, saved));
+    const label = preventiveCareMonthlyStatuses([saved]).find(
+      (status) => status.category === category,
+    )?.categoryLabel;
+    setPreventiveCareMessage(`${label ?? "예방관리"}를 오늘 완료한 것으로 기록했어요.`);
+  }
+
+  function confirmDeletePreventiveCare(record: PreventiveCareRecord) {
+    const label = preventiveCareMonthlyStatuses([record]).find(
+      (status) => status.category === record.category,
+    )?.categoryLabel;
+    Alert.alert(
+      "완료 기록을 삭제할까요?",
+      `${formatVaccinationDate(record.completedOn)} ${label ?? "예방관리"} 기록 한 건만 삭제해요.`,
+      [
+        { text: "아니요", style: "cancel" },
+        {
+          text: "기록 취소",
+          style: "destructive",
+          onPress: () => void deletePreventiveCare(record),
+        },
+      ],
+    );
+  }
+
+  async function deletePreventiveCare(record: PreventiveCareRecord) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !user) return;
+    setPreventiveCareSavingCategory(record.category);
+    setPreventiveCareMessage("");
+    const { error } = await supabase
+      .from("pet_preventive_care")
+      .delete()
+      .eq("id", record.id)
+      .eq("pet_id", record.petId)
+      .eq("user_id", user.id);
+    setPreventiveCareSavingCategory(null);
+    if (error) {
+      setPreventiveCareMessage("완료 기록을 취소하지 못했어요.");
+      return;
+    }
+    setPreventiveCareRecords((current) =>
+      current.filter((item) => item.id !== record.id),
+    );
+    setPreventiveCareMessage("선택한 완료 기록을 삭제했어요.");
+  }
+
+  async function savePetTestRecord(draft: PetTestRecordDraft) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !user || !selectedPetId) {
+      setTestRecordMessage("기록할 반려동물을 먼저 선택해 주세요.");
+      return false;
+    }
+    const validationError = petTestRecordDraftError(draft);
+    if (validationError) {
+      setTestRecordMessage(validationError);
+      return false;
+    }
+    if (!testRecordsTableAvailableRef.current) {
+      setTestRecordMessage("검사 기록 저장 준비가 아직 완료되지 않았어요.");
+      return false;
+    }
+
+    setTestRecordSaving(true);
+    setTestRecordMessage("");
+    const payload = petTestRecordMutation(draft, user.id, selectedPetId);
+    const { data, error } = draft.id
+      ? await supabase
+          .from("pet_test_records")
+          .update(payload)
+          .eq("id", draft.id)
+          .eq("pet_id", selectedPetId)
+          .eq("user_id", user.id)
+          .select(petTestRecordSelectColumns)
+          .single()
+      : await supabase
+          .from("pet_test_records")
+          .insert(payload)
+          .select(petTestRecordSelectColumns)
+          .single();
+    setTestRecordSaving(false);
+    if (isMissingPetTestRecordsTableError(error)) {
+      testRecordsTableAvailableRef.current = false;
+      setTestRecordMessage("검사 기록 저장 준비가 아직 완료되지 않았어요.");
+      return false;
+    }
+    if (error || !data) {
+      setTestRecordMessage("검사 기록을 저장하지 못했어요. 다시 시도해 주세요.");
+      return false;
+    }
+    const saved = toPetTestRecord(data as PetTestRecordRow);
+    setTestRecords((current) =>
+      sortPetTestRecordsNewestFirst([
+        saved,
+        ...current.filter((item) => item.id !== saved.id),
+      ]),
+    );
+    setTestRecordMessage(draft.id ? "검사 기록을 수정했어요." : "검사 기록을 추가했어요.");
+    return true;
+  }
+
+  function confirmDeletePetTestRecord(record: PetTestRecord) {
+    Alert.alert("검사 기록을 삭제할까요?", `${record.testName} 기록만 삭제해요.`, [
+      { text: "아니요", style: "cancel" },
+      {
+        text: "삭제",
+        style: "destructive",
+        onPress: () => void deletePetTestRecord(record),
+      },
+    ]);
+  }
+
+  async function deletePetTestRecord(record: PetTestRecord) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !user) return;
+    setTestRecordSaving(true);
+    setTestRecordMessage("");
+    const { error } = await supabase
+      .from("pet_test_records")
+      .delete()
+      .eq("id", record.id)
+      .eq("pet_id", record.petId)
+      .eq("user_id", user.id);
+    setTestRecordSaving(false);
+    if (error) {
+      setTestRecordMessage("검사 기록을 삭제하지 못했어요.");
+      return;
+    }
+    setTestRecords((current) => current.filter((item) => item.id !== record.id));
+    setTestRecordMessage("검사 기록을 삭제했어요.");
   }
 
   async function uploadPendingMediaFiles({
@@ -1602,9 +1991,6 @@ export default function App() {
     setEditingPetId(pet.id ?? null);
     if (pet.id) setSelectedPetId(pet.id);
     setPetFormExpanded(true);
-    const petVaccinations = pet.id
-      ? vaccinations.filter((record) => record.petId === pet.id)
-      : [];
     setPetDraft({
       name: pet.name,
       species: pet.species,
@@ -1615,7 +2001,7 @@ export default function App() {
       photoPath: pet.photoPath ?? "",
       photoUrl: pet.photoUrl ?? "",
       photoRemoved: false,
-      vaccination: vaccinationDraftFromRecords(petVaccinations),
+      vaccination: { ...emptyVaccinationDraft },
     });
     setPetMessage("");
   }
@@ -1976,29 +2362,19 @@ export default function App() {
       return;
     }
     const selectedSpecies = petDraft.species;
-    if (petDraft.birthDate && !isDateInput(petDraft.birthDate)) {
-      setPetMessage("생일은 YYYY-MM-DD 형식으로 입력해 주세요.");
+    if (petDraft.birthDate && !isValidDateInput(petDraft.birthDate)) {
+      setPetMessage("생일은 숫자 8자리로 입력해 주세요. 예: 20200411");
+      return;
+    }
+    if (petDraft.birthDate && !isDateInputOnOrBefore(petDraft.birthDate)) {
+      setPetMessage("생일은 오늘 또는 이전 날짜로 입력해 주세요.");
       return;
     }
 
     if (hasVaccinationDraft(petDraft.vaccination)) {
-      if (!petDraft.vaccination.name.trim()) {
-        setPetMessage("예방접종 이름을 입력해 주세요.");
-        return;
-      }
-      if (!petDraft.vaccination.administeredAt && !petDraft.vaccination.dueAt) {
-        setPetMessage("접종일 또는 다음 예정일 중 하나는 입력해 주세요.");
-        return;
-      }
-      if (
-        petDraft.vaccination.administeredAt &&
-        !isDateInput(petDraft.vaccination.administeredAt)
-      ) {
-        setPetMessage("접종일은 YYYY-MM-DD 형식으로 입력해 주세요.");
-        return;
-      }
-      if (petDraft.vaccination.dueAt && !isDateInput(petDraft.vaccination.dueAt)) {
-        setPetMessage("다음 예정일은 YYYY-MM-DD 형식으로 입력해 주세요.");
+      const vaccinationError = vaccinationDraftError(petDraft.vaccination);
+      if (vaccinationError) {
+        setPetMessage(vaccinationError);
         return;
       }
     }
@@ -2183,20 +2559,7 @@ export default function App() {
       setPetMessage(`반려동물 정보는 저장했지만 ${vaccinationSave.error}`);
       return;
     }
-    setVaccinations((current) => {
-      if (vaccinationSave.deletedId) {
-        return current.filter((item) => item.id !== vaccinationSave.deletedId);
-      }
-      if (!vaccinationSave.record) return current;
-      const exists = current.some((item) => item.id === vaccinationSave.record?.id);
-      return exists
-        ? current.map((item) =>
-            item.id === vaccinationSave.record?.id
-              ? (vaccinationSave.record as VaccinationRecord)
-              : item,
-          )
-        : [vaccinationSave.record, ...current];
-    });
+    applyVaccinationSave(vaccinationSave);
     setPetLoading(false);
     setEditingPetId(null);
     setPetDraft({ ...emptyPetDraft, vaccination: emptyVaccinationDraft });
@@ -2456,12 +2819,32 @@ export default function App() {
     }
   }
 
-  async function shareEpisodeReport(report: EpisodeReport) {
+  async function shareEpisodeReport(
+    report: EpisodeReport,
+    includedTestRecords: PetTestRecord[] = [],
+  ) {
     setShareMessage("");
     try {
+      const testRecordSection = includedTestRecords.length
+        ? [
+            "",
+            "[보호자가 입력한 검사 기록]",
+            ...includedTestRecords.map((record) =>
+              [
+                `${record.testedAt} · ${record.testName}`,
+                `결과 기록: ${record.resultText}`,
+                record.clinicName ? `병원: ${record.clinicName}` : "",
+                record.memo ? `메모: ${record.memo}` : "",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            ),
+            "※ 보호자가 옮겨 적은 사실 기록이며 PetFlow가 해석하거나 진단한 내용이 아닙니다.",
+          ].join("\n")
+        : "";
       const result = await Share.share({
         title: report.title,
-        message: report.shareText,
+        message: `${report.shareText}${testRecordSection}`,
       });
       if (result.action !== Share.sharedAction) return;
       void recordSummarySharedEvent("factual_summary_shared");
@@ -2469,6 +2852,38 @@ export default function App() {
         "사실 요약 텍스트를 공유했어요. 사진·영상 파일은 각각 따로 공유해 주세요.",
       );
     } catch {
+      setShareMessage("공유 창을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
+    }
+  }
+
+  async function sharePetTestRecords(records: PetTestRecord[]) {
+    if (!records.length) return;
+    setTestRecordMessage("");
+    setShareMessage("");
+    const petName = selectedPet?.name ?? "반려동물";
+    const lines = records.flatMap((record) => [
+      `${record.testedAt} · ${record.testName}`,
+      `결과 기록: ${record.resultText}`,
+      ...(record.clinicName ? [`병원: ${record.clinicName}`] : []),
+      ...(record.memo ? [`메모: ${record.memo}`] : []),
+      "",
+    ]);
+    try {
+      const result = await Share.share({
+        title: `${petName} 검사 기록`,
+        message: [
+          `[${petName} 검사 기록]`,
+          "",
+          ...lines,
+          "※ 보호자가 옮겨 적은 사실 기록이며 PetFlow가 해석하거나 진단한 내용이 아닙니다.",
+        ].join("\n"),
+      });
+      if (result.action === Share.sharedAction) {
+        setTestRecordMessage("검사 기록을 공유했어요.");
+        setShareMessage("검사 기록을 공유했어요.");
+      }
+    } catch {
+      setTestRecordMessage("공유 창을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
       setShareMessage("공유 창을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
   }
@@ -2954,8 +3369,13 @@ export default function App() {
                     <HomeDashboard
                       history={selectedPetHistory}
                       pets={pets}
+                      preventiveCare={selectedPetPreventiveCare}
+                      preventiveCareMessage={preventiveCareMessage}
+                      preventiveCareSavingCategory={preventiveCareSavingCategory}
                       selectedPet={selectedPet}
                       vaccinations={selectedPetVaccinations}
+                      onCompletePreventiveCare={completePreventiveCare}
+                      onDeletePreventiveCare={confirmDeletePreventiveCare}
                       onPhotoLoadError={refreshPetPhoto}
                       onPhotoLoaded={markPetPhotoLoaded}
                       onEditPet={() => {
@@ -2989,8 +3409,10 @@ export default function App() {
                         onCancelForm={closePetForm}
                         onEdit={startEditingPet}
                         onDelete={confirmDeletePetProfile}
+                        onDeleteVaccination={confirmDeleteActiveVaccination}
                         onNew={startNewPet}
                         onSave={savePetProfile}
+                        onSaveVaccination={saveActiveVaccination}
                         onSelect={setSelectedPetId}
                       />
                       {selectedPet && healthInput ? (
@@ -3043,39 +3465,53 @@ export default function App() {
                   ) : null}
                   {mainSection === "reports" ? (
                     selectedPet ? (
-                      <HealthHistoryCard
-                        key={selectedPet.id}
-                        aiAccess={aiAccess}
-                        aiFeedbackNotice={aiFeedbackNotice}
-                        aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
-                        episodeGroups={episodeReportGroups}
-                        history={selectedPetHistory}
-                        loading={historyLoading}
-                        message={historyMessage}
-                        petName={selectedPet.name}
-                        editingPlanEpisodeId={editingPlanEpisodeId}
-                        planDraft={planDraft}
-                        planSavingEpisodeId={planSavingEpisodeId}
-                        planNotice={planNotice}
-                        vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
-                        vetDraftNotice={vetDraftNotice}
-                        vetDrafts={vetDrafts}
-                        savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
-                        onRefresh={() => loadPetHistory(selectedPet)}
-                        onGoRecord={startHealthRecord}
-                        onShareReport={shareEpisodeReport}
-                        onEditRecord={startEditingHealthRecord}
-                        onDeleteRecord={confirmDeleteHealthRecord}
-                        onCreateVetDraft={createVetDraft}
-                        onLoadVetDraft={loadVetDraft}
-                        onSaveAiFeedback={saveAiFeedback}
-                        onShareVetDraft={shareVetDraft}
-                        onStartPlanEdit={startPlanEdit}
-                        onCancelPlanEdit={cancelPlanEdit}
-                        onChangePlanDraft={setPlanDraft}
-                        onSavePlan={saveEpisodePlan}
-                        shareMessage={shareMessage}
-                      />
+                      <>
+                        <HealthHistoryCard
+                          key={selectedPet.id}
+                          aiAccess={aiAccess}
+                          aiFeedbackNotice={aiFeedbackNotice}
+                          aiFeedbackSavingUsageId={aiFeedbackSavingUsageId}
+                          episodeGroups={episodeReportGroups}
+                          history={selectedPetHistory}
+                          testRecords={selectedPetTestRecords}
+                          loading={historyLoading}
+                          message={historyMessage}
+                          petName={selectedPet.name}
+                          editingPlanEpisodeId={editingPlanEpisodeId}
+                          planDraft={planDraft}
+                          planSavingEpisodeId={planSavingEpisodeId}
+                          planNotice={planNotice}
+                          vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
+                          vetDraftNotice={vetDraftNotice}
+                          vetDrafts={vetDrafts}
+                          savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
+                          onRefresh={() => loadPetHistory(selectedPet)}
+                          onGoRecord={startHealthRecord}
+                          onShareReport={shareEpisodeReport}
+                          onShareTestRecords={sharePetTestRecords}
+                          onEditRecord={startEditingHealthRecord}
+                          onDeleteRecord={confirmDeleteHealthRecord}
+                          onCreateVetDraft={createVetDraft}
+                          onLoadVetDraft={loadVetDraft}
+                          onSaveAiFeedback={saveAiFeedback}
+                          onShareVetDraft={shareVetDraft}
+                          onStartPlanEdit={startPlanEdit}
+                          onCancelPlanEdit={cancelPlanEdit}
+                          onChangePlanDraft={setPlanDraft}
+                          onSavePlan={saveEpisodePlan}
+                          shareMessage={shareMessage}
+                        />
+                        <TestRecordsCard
+                          key={`${selectedPet.id}:tests`}
+                          loading={testRecordSaving}
+                          message={testRecordMessage}
+                          onDelete={confirmDeletePetTestRecord}
+                          onSave={savePetTestRecord}
+                          onShare={sharePetTestRecords}
+                          petName={selectedPet.name}
+                          records={selectedPetTestRecords}
+                        />
+                      </>
                     ) : (
                       <ReportsEmptyState onGoRecord={startHealthRecord} />
                     )
@@ -3117,20 +3553,6 @@ export default function App() {
   );
 }
 
-function isDateInput(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
-  return (
-    date.getFullYear() === year &&
-    date.getMonth() === month - 1 &&
-    date.getDate() === day
-  );
-}
-
 function ConfigurationCard() {
   return (
     <View style={styles.card}>
@@ -3165,8 +3587,13 @@ function AppBrandMark() {
 function HomeDashboard({
   history,
   pets,
+  preventiveCare,
+  preventiveCareMessage,
+  preventiveCareSavingCategory,
   selectedPet,
   vaccinations,
+  onCompletePreventiveCare,
+  onDeletePreventiveCare,
   onPhotoLoadError,
   onPhotoLoaded,
   onEditPet,
@@ -3175,8 +3602,13 @@ function HomeDashboard({
 }: {
   history: HistoryRecord[];
   pets: PetProfile[];
+  preventiveCare: PreventiveCareRecord[];
+  preventiveCareMessage: string;
+  preventiveCareSavingCategory: PreventiveCareCategory | null;
   selectedPet?: PetProfile;
   vaccinations: VaccinationRecord[];
+  onCompletePreventiveCare: (category: PreventiveCareCategory) => Promise<void>;
+  onDeletePreventiveCare: (record: PreventiveCareRecord) => void;
   onPhotoLoadError: (pet: PetProfile) => Promise<void>;
   onPhotoLoaded: (pet: PetProfile) => void;
   onEditPet: () => void;
@@ -3275,8 +3707,159 @@ function HomeDashboard({
         </TouchableOpacity>
       </View>
       <VaccinationScheduleCard records={vaccinations} />
+      <PreventiveCareCard
+        message={preventiveCareMessage}
+        onComplete={onCompletePreventiveCare}
+        onDelete={onDeletePreventiveCare}
+        records={preventiveCare}
+        savingCategory={preventiveCareSavingCategory}
+      />
     </>
   );
+}
+
+function PreventiveCareCard({
+  message,
+  onComplete,
+  onDelete,
+  records,
+  savingCategory,
+}: {
+  message: string;
+  onComplete: (category: PreventiveCareCategory) => Promise<void>;
+  onDelete: (record: PreventiveCareRecord) => void;
+  records: PreventiveCareRecord[];
+  savingCategory: PreventiveCareCategory | null;
+}) {
+  const statuses = preventiveCareMonthlyStatuses(records);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const currentMonth = statuses[0]?.currentMonth ?? "";
+  const pastRecords = [...records]
+    .filter((record) => !record.completedMonth.startsWith(currentMonth))
+    .sort((left, right) => right.completedOn.localeCompare(left.completedOn));
+  const visiblePastRecords = showAllHistory ? pastRecords : pastRecords.slice(0, 6);
+
+  return (
+    <View style={styles.preventiveCareCard}>
+      <Text style={styles.cardEyebrow}>선택 기록</Text>
+      <Text style={styles.cardTitle}>이번 달 예방관리</Text>
+      <Text style={styles.preventiveCareIntro}>
+        실제로 투약했거나 병원에서 완료한 뒤 기록하세요. 일정은 병원이나 제품 안내가
+        우선이에요.
+      </Text>
+      <View style={styles.preventiveCareList}>
+        {statuses.map((status) => {
+          const currentRecord = records.find(
+            (record) =>
+              record.category === status.category &&
+              record.completedMonth.startsWith(status.currentMonth),
+          );
+          const saving = savingCategory === status.category;
+          return (
+            <View key={status.category} style={styles.preventiveCareItem}>
+              <View style={styles.preventiveCareCopy}>
+                <Text style={styles.preventiveCareTitle}>{status.categoryLabel}</Text>
+                <Text style={styles.preventiveCareMeta}>
+                  {status.completedOn
+                    ? `${formatVaccinationDate(status.completedOn)} · 보호자 기록`
+                    : status.latestCompletedOn
+                      ? `이번 달 기록 없음 · 최근 ${formatVaccinationDate(status.latestCompletedOn)}`
+                      : "이번 달 완료 기록 없음"}
+                </Text>
+              </View>
+              {currentRecord ? (
+                <TouchableOpacity
+                  accessibilityLabel={`${status.categoryLabel} 이번 달 기록 취소`}
+                  accessibilityRole="button"
+                  activeOpacity={0.82}
+                  disabled={saving}
+                  onPress={() => onDelete(currentRecord)}
+                  style={styles.preventiveCareUndo}
+                >
+                  <Text style={styles.preventiveCareUndoText}>
+                    {saving ? "처리 중" : "기록 취소"}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  accessibilityLabel={`${status.categoryLabel} 오늘 완료로 기록`}
+                  accessibilityRole="button"
+                  activeOpacity={0.85}
+                  disabled={saving}
+                  onPress={() => void onComplete(status.category)}
+                  style={[
+                    styles.preventiveCareAction,
+                    saving && styles.buttonDisabled,
+                  ]}
+                >
+                  <Text style={styles.preventiveCareActionText}>
+                    {saving ? "저장 중" : "오늘 완료"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })}
+      </View>
+      {pastRecords.length ? (
+        <View style={styles.preventiveCareHistory}>
+          <Text style={styles.preventiveCareHistoryTitle}>최근 완료 기록</Text>
+          {visiblePastRecords.map((record) => {
+            const label = statuses.find(
+              (status) => status.category === record.category,
+            )?.categoryLabel;
+            const saving = savingCategory === record.category;
+            return (
+              <View key={record.id} style={styles.preventiveCareHistoryRow}>
+                <Text style={styles.preventiveCareHistoryText}>
+                  {formatVaccinationDate(record.completedOn)} · {label}
+                </Text>
+                <TouchableOpacity
+                  accessibilityLabel={`${formatVaccinationDate(record.completedOn)} ${label} 기록 삭제`}
+                  accessibilityRole="button"
+                  activeOpacity={0.82}
+                  disabled={saving}
+                  onPress={() => onDelete(record)}
+                >
+                  <Text style={styles.preventiveCareHistoryDelete}>삭제</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+          {pastRecords.length > 6 ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              activeOpacity={0.82}
+              onPress={() => setShowAllHistory((current) => !current)}
+              style={styles.preventiveCareHistoryToggle}
+            >
+              <Text style={styles.preventiveCareHistoryToggleText}>
+                {showAllHistory ? "지난 기록 접기" : `지난 기록 ${pastRecords.length}건 모두 보기`}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
+      <Message text={message} />
+    </View>
+  );
+}
+
+function vaccinationDraftError(draft: VaccinationDraft) {
+  if (!draft.name.trim()) return "맞은 접종을 선택해 주세요.";
+  if (!draft.administeredAt && !draft.dueAt) {
+    return "맞은 날 또는 병원 안내 날짜 중 하나를 입력해 주세요.";
+  }
+  if (draft.administeredAt && !isValidDateInput(draft.administeredAt)) {
+    return "맞은 날은 날짜 8자리로 입력해 주세요. 예: 20260411";
+  }
+  if (draft.administeredAt && !isDateInputOnOrBefore(draft.administeredAt)) {
+    return "맞은 날은 오늘 또는 이전 날짜로 입력해 주세요.";
+  }
+  if (draft.dueAt && !isValidDateInput(draft.dueAt)) {
+    return "다음 일정은 날짜 8자리로 입력해 주세요. 예: 20270411";
+  }
+  return null;
 }
 
 function VaccinationScheduleCard({ records }: { records: VaccinationRecord[] }) {
@@ -4009,9 +4592,11 @@ function PetManager({
   vaccinations,
   onCancelForm,
   onDelete,
+  onDeleteVaccination,
   onEdit,
   onNew,
   onSave,
+  onSaveVaccination,
   onSelect,
 }: {
   draft: PetDraft;
@@ -4029,9 +4614,11 @@ function PetManager({
   vaccinations: VaccinationRecord[];
   onCancelForm: () => void;
   onDelete: () => void;
+  onDeleteVaccination: () => void;
   onEdit: (pet: PetProfile) => void;
   onNew: () => void;
   onSave: () => Promise<void>;
+  onSaveVaccination: () => Promise<void>;
   onSelect: (petId: string) => void;
 }) {
   const selectedPet = pets.find((pet) => pet.id === selectedPetId);
@@ -4195,7 +4782,9 @@ function PetManager({
           vaccinations={editingPetId ? vaccinations : []}
           onCancel={pets.length ? onCancelForm : undefined}
           onDelete={editingPetId ? onDelete : undefined}
+          onDeleteVaccination={editingPetId ? onDeleteVaccination : undefined}
           onSave={onSave}
+          onSaveVaccination={editingPetId ? onSaveVaccination : undefined}
         />
       ) : null}
       <Message text={message} />
@@ -4213,7 +4802,9 @@ function PetForm({
   vaccinations,
   onCancel,
   onDelete,
+  onDeleteVaccination,
   onSave,
+  onSaveVaccination,
 }: {
   draft: PetDraft;
   editing: boolean;
@@ -4224,7 +4815,9 @@ function PetForm({
   vaccinations: VaccinationRecord[];
   onCancel?: () => void;
   onDelete?: () => void;
+  onDeleteVaccination?: () => void;
   onSave: () => Promise<void>;
+  onSaveVaccination?: () => Promise<void>;
 }) {
   const breedSuggestions = draft.species ? breedOptions[draft.species] : [];
   const birthDateShortcuts = useMemo(() => buildBirthDateShortcuts(), []);
@@ -4247,10 +4840,26 @@ function PetForm({
   const selectedVaccinationIntervalLabel = vaccinationIntervalOptions.find(
     (option) => option.id === selectedVaccinationInterval,
   )?.label;
+  const orderedVaccinations = useMemo(
+    () =>
+      [...vaccinations].sort((left, right) =>
+        (right.administeredAt ?? right.dueAt ?? right.updatedAt).localeCompare(
+          left.administeredAt ?? left.dueAt ?? left.updatedAt,
+        ),
+      ),
+    [vaccinations],
+  );
 
   useEffect(() => {
     setDetailsExpanded(editing);
   }, [editing]);
+
+  useEffect(() => {
+    if (draft.vaccination.name) return;
+    setCustomVaccinationSelected(false);
+    setManualDueDateEditing(false);
+    setSelectedVaccinationInterval(null);
+  }, [draft.vaccination.name]);
 
   const chooseSpecies = (species: Species) => {
     setDraft({
@@ -4261,7 +4870,7 @@ function PetForm({
   };
 
   const chooseVaccination = (name: string) => {
-    const nextVaccination = vaccinationDraftForName(vaccinations, name);
+    const nextVaccination = vaccinationDraftForNewEntry(name);
     setCustomVaccinationSelected(false);
     setManualDueDateEditing(false);
     setSelectedVaccinationInterval(
@@ -4291,7 +4900,34 @@ function PetForm({
     setDraft({ ...draft, vaccination: nextVaccination });
   };
 
-  const changeVaccinationDate = (administeredAt: string) => {
+  const chooseSavedVaccination = (record: VaccinationRecord) => {
+    const nextVaccination: VaccinationDraft = {
+      id: record.id,
+      name: record.name,
+      administeredAt: record.administeredAt ?? "",
+      dueAt: record.dueAt ?? "",
+      note: record.note,
+    };
+    setCustomVaccinationSelected(!vaccinationOptionForName(record.name));
+    setManualDueDateEditing(false);
+    setSelectedVaccinationInterval(
+      vaccinationIntervalFromDates(
+        nextVaccination.administeredAt,
+        nextVaccination.dueAt,
+      ),
+    );
+    setDraft({ ...draft, vaccination: nextVaccination });
+  };
+
+  const startNewVaccination = () => {
+    setCustomVaccinationSelected(false);
+    setManualDueDateEditing(false);
+    setSelectedVaccinationInterval(null);
+    setDraft({ ...draft, vaccination: { ...emptyVaccinationDraft } });
+  };
+
+  const changeVaccinationDate = (value: string) => {
+    const administeredAt = normalizeDateInput(value);
     const dueAt = selectedVaccinationInterval
       ? vaccinationDueAt(administeredAt, selectedVaccinationInterval)
       : draft.vaccination.dueAt;
@@ -4415,10 +5051,12 @@ function PetForm({
             />
           </View>
           <TextInput
-            keyboardType="numbers-and-punctuation"
+            keyboardType="number-pad"
             maxLength={10}
-            onChangeText={(birthDate) => setDraft({ ...draft, birthDate })}
-            placeholder="YYYY-MM-DD"
+            onChangeText={(birthDate) =>
+              setDraft({ ...draft, birthDate: normalizeDateInput(birthDate) })
+            }
+            placeholder="YYYYMMDD"
             placeholderTextColor={colors.placeholder}
             style={[styles.input, styles.inputAfterChoice]}
             value={draft.birthDate}
@@ -4459,6 +5097,54 @@ function PetForm({
                       : "선택"}
               </Text>
             </View>
+            {orderedVaccinations.length ? (
+              <View style={styles.vaccinationSavedList}>
+                <View style={styles.vaccinationSavedHeader}>
+                  <Text style={styles.vaccinationIntervalTitle}>
+                    저장된 접종 내역 {orderedVaccinations.length}건
+                  </Text>
+                  <TouchableOpacity
+                    accessibilityLabel="새 예방접종 내역 추가"
+                    accessibilityRole="button"
+                    activeOpacity={0.8}
+                    onPress={startNewVaccination}
+                  >
+                    <Text style={styles.vaccinationDueEdit}>+ 새 접종</Text>
+                  </TouchableOpacity>
+                </View>
+                {orderedVaccinations.map((record) => (
+                  <TouchableOpacity
+                    accessibilityLabel={`${record.name} 저장된 접종 내역 수정`}
+                    accessibilityRole="button"
+                    activeOpacity={0.82}
+                    key={record.id}
+                    onPress={() => chooseSavedVaccination(record)}
+                    style={[
+                      styles.vaccinationSavedRow,
+                      draft.vaccination.id === record.id &&
+                        styles.vaccinationSavedRowSelected,
+                    ]}
+                  >
+                    <View style={styles.vaccinationScheduleCopy}>
+                      <Text style={styles.vaccinationDueLabel}>{record.name}</Text>
+                      <Text style={styles.vaccinationSavedMeta}>
+                        {[
+                          record.administeredAt
+                            ? `맞은 날 ${formatVaccinationDate(record.administeredAt)}`
+                            : "",
+                          record.dueAt
+                            ? `다음 ${formatVaccinationDate(record.dueAt)}`
+                            : "다음 일정 확인 필요",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </Text>
+                    </View>
+                    <Text style={styles.vaccinationDueEdit}>수정</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
             <FieldLabel label={draft.species === "dog" ? "맞은 접종" : "접종 종류"} />
             {draft.species === "dog" ? (
               <>
@@ -4558,10 +5244,10 @@ function PetForm({
                 <FieldLabel label="맞은 날" />
                 <TextInput
                   accessibilityLabel="예방접종 맞은 날"
-                  keyboardType="numbers-and-punctuation"
+                  keyboardType="number-pad"
                   maxLength={10}
                   onChangeText={changeVaccinationDate}
-                  placeholder="YYYY-MM-DD"
+                  placeholder="YYYYMMDD"
                   placeholderTextColor={colors.placeholder}
                   style={styles.input}
                   value={draft.vaccination.administeredAt}
@@ -4580,7 +5266,9 @@ function PetForm({
                     >
                       {vaccinationIntervalOptions.map((option) => {
                         const selected = selectedVaccinationInterval === option.id;
-                        const disabled = !isDateInput(draft.vaccination.administeredAt);
+                        const disabled = !isValidDateInput(
+                          draft.vaccination.administeredAt,
+                        );
                         return (
                           <TouchableOpacity
                             accessibilityRole="button"
@@ -4631,7 +5319,7 @@ function PetForm({
                     </TouchableOpacity>
                   </View>
                 ) : draft.vaccination.administeredAt &&
-                  isDateInput(draft.vaccination.administeredAt) ? (
+                  isValidDateInput(draft.vaccination.administeredAt) ? (
                   <View style={styles.vaccinationDuePreview}>
                     <View style={styles.vaccinationScheduleCopy}>
                       <Text style={styles.vaccinationDueLabel}>다음 일정 확인 필요</Text>
@@ -4653,16 +5341,17 @@ function PetForm({
                     <FieldLabel label="병원 안내 날짜" />
                     <TextInput
                       accessibilityLabel="병원에서 안내받은 다음 예방접종 날짜"
-                      keyboardType="numbers-and-punctuation"
+                      keyboardType="number-pad"
                       maxLength={10}
-                      onChangeText={(dueAt) => {
+                      onChangeText={(value) => {
+                        const dueAt = normalizeDateInput(value);
                         setSelectedVaccinationInterval(null);
                         setDraft({
                           ...draft,
                           vaccination: { ...draft.vaccination, dueAt },
                         });
                       }}
-                      placeholder="YYYY-MM-DD"
+                      placeholder="YYYYMMDD"
                       placeholderTextColor={colors.placeholder}
                       style={styles.input}
                       value={draft.vaccination.dueAt}
@@ -4684,6 +5373,42 @@ function PetForm({
                   style={styles.input}
                   value={draft.vaccination.note}
                 />
+                {onSaveVaccination ? (
+                  <>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      activeOpacity={0.85}
+                      disabled={loading}
+                      onPress={() => void onSaveVaccination()}
+                      style={[
+                        styles.vaccinationSaveButton,
+                        loading && styles.buttonDisabled,
+                      ]}
+                    >
+                      <Text style={styles.vaccinationSaveButtonText}>
+                        {loading
+                          ? "저장 중..."
+                          : draft.vaccination.id
+                            ? "이 접종 내역 수정"
+                            : "접종 내역 추가"}
+                      </Text>
+                    </TouchableOpacity>
+                    {draft.vaccination.id && onDeleteVaccination ? (
+                      <TouchableOpacity
+                        accessibilityLabel={`${draft.vaccination.name} 접종 내역 삭제`}
+                        accessibilityRole="button"
+                        activeOpacity={0.82}
+                        disabled={loading}
+                        onPress={onDeleteVaccination}
+                        style={styles.vaccinationDeleteButton}
+                      >
+                        <Text style={styles.vaccinationDeleteButtonText}>
+                          이 접종 내역 삭제
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </>
+                ) : null}
               </>
             ) : null}
           </View>
@@ -5495,6 +6220,243 @@ function highestCalendarRisk(records: HistoryRecord[]) {
   }, null);
 }
 
+function TestRecordsCard({
+  loading,
+  message,
+  onDelete,
+  onSave,
+  onShare,
+  petName,
+  records,
+}: {
+  loading: boolean;
+  message: string;
+  onDelete: (record: PetTestRecord) => void;
+  onSave: (draft: PetTestRecordDraft) => Promise<boolean>;
+  onShare: (records: PetTestRecord[]) => Promise<void>;
+  petName: string;
+  records: PetTestRecord[];
+}) {
+  const freshDraft = () => emptyPetTestRecordDraft(toRecordDateKey(new Date()));
+  const [formOpen, setFormOpen] = useState(false);
+  const [draft, setDraft] = useState<PetTestRecordDraft>(freshDraft);
+  const [showAllRecords, setShowAllRecords] = useState(false);
+  const visibleRecords = showAllRecords ? records : records.slice(0, 3);
+
+  function startNewRecord() {
+    setDraft(freshDraft());
+    setFormOpen(true);
+  }
+
+  function startEditingRecord(record: PetTestRecord) {
+    setDraft(petTestRecordDraftFromRecord(record));
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setDraft(freshDraft());
+    setFormOpen(false);
+  }
+
+  async function saveDraft() {
+    if (await onSave(draft)) closeForm();
+  }
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.cardEyebrow}>보호자 입력 사실</Text>
+          <Text style={styles.cardTitle}>검사 기록</Text>
+          <Text style={styles.testRecordIntro}>
+            {petName}의 검사표 내용을 그대로 남겨요. PetFlow가 결과나 질병을 추정하지
+            않아요.
+          </Text>
+        </View>
+        {!formOpen ? (
+          <TouchableOpacity
+            accessibilityLabel="새 검사 기록 추가"
+            accessibilityRole="button"
+            activeOpacity={0.85}
+            onPress={startNewRecord}
+            style={styles.smallButton}
+          >
+            <Text style={styles.smallButtonText}>+ 추가</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {formOpen ? (
+        <View style={styles.testRecordForm}>
+          <FieldLabel label="검사일" />
+          <TextInput
+            accessibilityLabel="검사 날짜"
+            keyboardType="number-pad"
+            maxLength={10}
+            onChangeText={(value) =>
+              setDraft({ ...draft, testedAt: normalizeDateInput(value) })
+            }
+            placeholder="YYYYMMDD"
+            placeholderTextColor={colors.placeholder}
+            style={styles.input}
+            value={draft.testedAt}
+          />
+          <FieldLabel label="검사명" />
+          <TextInput
+            accessibilityLabel="검사 이름"
+            maxLength={120}
+            onChangeText={(testName) => setDraft({ ...draft, testName })}
+            placeholder="예: 혈액검사, 소변검사"
+            placeholderTextColor={colors.placeholder}
+            style={styles.input}
+            value={draft.testName}
+          />
+          <FieldLabel label="결과 기록" />
+          <TextInput
+            accessibilityLabel="보호자가 옮겨 적은 검사 결과"
+            maxLength={1000}
+            multiline
+            numberOfLines={3}
+            onChangeText={(resultText) => setDraft({ ...draft, resultText })}
+            placeholder="검사표나 병원에서 들은 내용을 그대로 입력"
+            placeholderTextColor={colors.placeholder}
+            style={[styles.input, styles.textarea, styles.testRecordResultInput]}
+            textAlignVertical="top"
+            value={draft.resultText}
+          />
+          <FieldLabel label="병원명 (선택)" />
+          <TextInput
+            maxLength={120}
+            onChangeText={(clinicName) => setDraft({ ...draft, clinicName })}
+            placeholder="예: 행복동물병원"
+            placeholderTextColor={colors.placeholder}
+            style={styles.input}
+            value={draft.clinicName}
+          />
+          <FieldLabel label="메모 (선택)" />
+          <TextInput
+            maxLength={1000}
+            multiline
+            numberOfLines={2}
+            onChangeText={(memo) => setDraft({ ...draft, memo })}
+            placeholder="다음 방문 때 확인할 내용"
+            placeholderTextColor={colors.placeholder}
+            style={[styles.input, styles.textarea]}
+            textAlignVertical="top"
+            value={draft.memo}
+          />
+          <View style={styles.testRecordFormActions}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={loading}
+              onPress={closeForm}
+              style={styles.testRecordCancelButton}
+            >
+              <Text style={styles.testRecordCancelText}>취소</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityRole="button"
+              activeOpacity={0.85}
+              disabled={loading}
+              onPress={() => void saveDraft()}
+              style={[styles.testRecordSaveButton, loading && styles.buttonDisabled]}
+            >
+              <Text style={styles.testRecordSaveText}>
+                {loading ? "저장 중" : draft.id ? "수정 저장" : "검사 기록 저장"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {records.length ? (
+        <>
+          <View style={styles.testRecordList}>
+            {visibleRecords.map((record) => (
+              <View key={record.id} style={styles.testRecordItem}>
+              <View style={styles.testRecordItemHeader}>
+                <View style={styles.cardHeaderText}>
+                  <Text style={styles.testRecordName}>{record.testName}</Text>
+                  <Text style={styles.testRecordDate}>
+                    {formatVaccinationDate(record.testedAt)} · 보호자 입력
+                  </Text>
+                </View>
+                <View style={styles.testRecordItemActions}>
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    onPress={() => startEditingRecord(record)}
+                  >
+                    <Text style={styles.testRecordEditText}>수정</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    onPress={() => onDelete(record)}
+                  >
+                    <Text style={styles.testRecordDeleteText}>삭제</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.testRecordResult}>{record.resultText}</Text>
+              {record.clinicName || record.memo ? (
+                <Text style={styles.testRecordMeta}>
+                  {[record.clinicName, record.memo].filter(Boolean).join(" · ")}
+                </Text>
+              ) : null}
+              </View>
+            ))}
+          </View>
+          {records.length > 3 ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              activeOpacity={0.82}
+              onPress={() => setShowAllRecords((current) => !current)}
+              style={styles.preventiveCareHistoryToggle}
+            >
+              <Text style={styles.preventiveCareHistoryToggleText}>
+                {showAllRecords ? "검사 기록 접기" : `검사 기록 ${records.length}건 모두 보기`}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            accessibilityLabel={`${petName} 검사 기록 전체 공유`}
+            accessibilityRole="button"
+            activeOpacity={0.85}
+            onPress={() => void onShare(records)}
+            style={styles.testRecordShareButton}
+          >
+            <Text style={styles.testRecordShareText}>검사 기록 공유</Text>
+          </TouchableOpacity>
+        </>
+      ) : !formOpen ? (
+        <Text style={styles.testRecordEmpty}>아직 입력한 검사 기록이 없어요.</Text>
+      ) : null}
+      <Message text={message} />
+    </View>
+  );
+}
+
+function TestRecordFacts({ records }: { records: PetTestRecord[] }) {
+  if (!records.length) return null;
+  return (
+    <View style={styles.selectedTestRecords}>
+      <Text style={styles.selectedTestRecordsTitle}>
+        선택 기간 검사 기록 {records.length}건
+      </Text>
+      {records.map((record) => (
+        <View key={record.id} style={styles.selectedTestRecordItem}>
+          <Text style={styles.selectedTestRecordName}>
+            {record.testedAt} · {record.testName}
+          </Text>
+          <Text style={styles.selectedTestRecordResult}>{record.resultText}</Text>
+        </View>
+      ))}
+      <Text style={styles.selectedTestRecordDisclaimer}>
+        보호자가 옮겨 적은 기록이며 PetFlow가 해석하거나 진단한 내용이 아니에요.
+      </Text>
+    </View>
+  );
+}
+
 function HealthHistoryCard({
   aiAccess,
   aiFeedbackNotice,
@@ -5502,6 +6464,7 @@ function HealthHistoryCard({
   editingPlanEpisodeId,
   episodeGroups,
   history,
+  testRecords,
   loading,
   message,
   petName,
@@ -5523,6 +6486,7 @@ function HealthHistoryCard({
   onEditRecord,
   onDeleteRecord,
   onShareReport,
+  onShareTestRecords,
   onShareVetDraft,
   onStartPlanEdit,
   shareMessage,
@@ -5533,6 +6497,7 @@ function HealthHistoryCard({
   editingPlanEpisodeId: string | null;
   episodeGroups: EpisodeReportGroup[];
   history: HistoryRecord[];
+  testRecords: PetTestRecord[];
   loading: boolean;
   message: string;
   petName: string;
@@ -5557,12 +6522,23 @@ function HealthHistoryCard({
   ) => Promise<void>;
   onEditRecord: (record: HistoryRecord) => void;
   onDeleteRecord: (record: HistoryRecord) => void;
-  onShareReport: (report: EpisodeReport) => Promise<void>;
+  onShareReport: (
+    report: EpisodeReport,
+    includedTestRecords?: PetTestRecord[],
+  ) => Promise<void>;
+  onShareTestRecords: (records: PetTestRecord[]) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
   shareMessage: string;
 }) {
-  const latestDateKey = toRecordDateKey(history[0]?.result.createdAt ?? new Date());
+  const latestHistoryDateKey = history[0]
+    ? toRecordDateKey(history[0].result.createdAt)
+    : "";
+  const latestDateKey =
+    [latestHistoryDateKey, testRecords[0]?.testedAt ?? ""]
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? toRecordDateKey(new Date());
   const [calendarMonth, setCalendarMonth] = useState(() =>
     monthKeyFromDate(history[0]?.result.createdAt ?? new Date()),
   );
@@ -5584,6 +6560,13 @@ function HealthHistoryCard({
     }
     return grouped;
   }, [history]);
+  const testRecordsByDate = useMemo(() => {
+    const grouped = new Map<string, PetTestRecord[]>();
+    for (const record of testRecords) {
+      grouped.set(record.testedAt, [...(grouped.get(record.testedAt) ?? []), record]);
+    }
+    return grouped;
+  }, [testRecords]);
   const selectionReady = !rangeMode || Boolean(selectionEnd);
   const selectedRecords = useMemo(
     () =>
@@ -5597,6 +6580,15 @@ function HealthHistoryCard({
           )
         : [],
     [history, selectionEnd, selectionReady, selectionStart],
+  );
+  const selectedTestRecords = useMemo(
+    () =>
+      selectionReady
+        ? testRecords.filter((record) =>
+            isRecordDateInRange(record.testedAt, selectionStart, selectionEnd),
+          )
+        : [],
+    [selectionEnd, selectionReady, selectionStart, testRecords],
   );
   const relatedEpisodeGroup = useMemo(() => {
     const episodeId = selectedRecords[0]?.episodeId;
@@ -5701,6 +6693,7 @@ function HealthHistoryCard({
         >
           <Text style={styles.calendarReportBackText}>‹ 달력으로</Text>
         </TouchableOpacity>
+        <TestRecordFacts records={selectedTestRecords} />
         <EpisodeReportItem
           aiAccess={aiAccess}
           aiFeedbackNotice={aiFeedbackNotice}
@@ -5714,6 +6707,7 @@ function HealthHistoryCard({
           vetDraftLoadingEpisodeId={vetDraftLoadingEpisodeId}
           vetDraftNotice={vetDraftNotice}
           savedAiFeedbackUsageIds={savedAiFeedbackUsageIds}
+          testRecords={selectedTestRecords}
           onCancelPlanEdit={onCancelPlanEdit}
           onChangePlanDraft={onChangePlanDraft}
           onCreateVetDraft={createSelectedVetDraft}
@@ -5729,13 +6723,38 @@ function HealthHistoryCard({
     );
   }
 
+  if (reportOpen && selectedTestRecords.length) {
+    return (
+      <View style={styles.card}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => setReportOpen(false)}
+          style={styles.calendarReportBack}
+        >
+          <Text style={styles.calendarReportBackText}>‹ 달력으로</Text>
+        </TouchableOpacity>
+        <Text style={styles.cardTitle}>선택한 기간의 검사 기록</Text>
+        <TestRecordFacts records={selectedTestRecords} />
+        <TouchableOpacity
+          accessibilityRole="button"
+          activeOpacity={0.86}
+          onPress={() => void onShareTestRecords(selectedTestRecords)}
+          style={styles.testRecordShareButton}
+        >
+          <Text style={styles.testRecordShareText}>선택한 검사 기록 공유</Text>
+        </TouchableOpacity>
+        <Message text={shareMessage} tone="success" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderText}>
           <Text style={styles.cardTitle}>병원에 가져갈 기록</Text>
           <Text style={styles.calendarFlowSummary}>
-            {history.length
+            {history.length || testRecords.length
               ? "병원에 보여줄 날짜나 기간을 골라주세요."
               : "먼저 병원에서 설명할 상황을 남겨주세요."}
           </Text>
@@ -5776,6 +6795,8 @@ function HealthHistoryCard({
         <View style={styles.recordCalendarGrid}>
           {calendarDays.map((day) => {
             const dayRecords = recordsByDate.get(day.dateKey) ?? [];
+            const dayTestRecords = testRecordsByDate.get(day.dateKey) ?? [];
+            const dayFactCount = dayRecords.length + dayTestRecords.length;
             const dayRisk = highestCalendarRisk(dayRecords);
             const selected = isRecordDateInRange(
               day.dateKey,
@@ -5804,7 +6825,7 @@ function HealthHistoryCard({
                   >
                     {day.day}
                   </Text>
-                  {dayRecords.length ? (
+                  {dayFactCount ? (
                     <View
                       style={[
                         styles.recordCalendarMark,
@@ -5812,8 +6833,8 @@ function HealthHistoryCard({
                         dayRisk === "urgent" && styles.recordCalendarMarkUrgent,
                       ]}
                     >
-                      {dayRecords.length > 1 ? (
-                        <Text style={styles.recordCalendarMarkText}>{dayRecords.length}</Text>
+                      {dayFactCount > 1 ? (
+                        <Text style={styles.recordCalendarMarkText}>{dayFactCount}</Text>
                       ) : null}
                     </View>
                   ) : null}
@@ -5835,7 +6856,7 @@ function HealthHistoryCard({
           <Text style={styles.calendarSelectionMeta}>
             {rangeMode && !selectionEnd
               ? "종료일을 눌러 주세요."
-              : `${selectedRecords.length}개 기록${selectedRisk ? ` · ${riskLabels[selectedRisk]}` : ""}`}
+              : `${selectedRecords.length}개 관찰 · ${selectedTestRecords.length}개 검사${selectedRisk ? ` · ${riskLabels[selectedRisk]}` : ""}`}
           </Text>
         </View>
         <TouchableOpacity
@@ -5867,15 +6888,22 @@ function HealthHistoryCard({
         ) : null}
         <TouchableOpacity
           activeOpacity={0.86}
-          disabled={!selectionReady || !selectedGroup}
+          disabled={
+            !selectionReady || (!selectedGroup && !selectedTestRecords.length)
+          }
           onPress={() => setReportOpen(true)}
           style={[
             styles.calendarSecondaryAction,
-            (!selectionReady || !selectedGroup) && styles.buttonDisabled,
+            (!selectionReady || (!selectedGroup && !selectedTestRecords.length)) &&
+              styles.buttonDisabled,
           ]}
         >
           <Text style={styles.calendarSecondaryActionText}>
-            {selectedGroup?.episode ? "전달본 준비" : "사실 요약 보기"}
+            {selectedGroup?.episode
+              ? "전달본 준비"
+              : selectedGroup
+                ? "사실 요약 보기"
+                : "검사 기록 보기"}
           </Text>
         </TouchableOpacity>
       </View>
@@ -5892,8 +6920,9 @@ function HealthHistoryCard({
           ))}
         </View>
       ) : !rangeMode ? (
-        <Text style={styles.calendarEmptyText}>이 날짜에는 기록이 없어요.</Text>
+        <Text style={styles.calendarEmptyText}>이 날짜에는 관찰 기록이 없어요.</Text>
       ) : null}
+      <TestRecordFacts records={selectedTestRecords} />
       <Message text={message} />
       <Message text={shareMessage} tone="success" />
     </View>
@@ -5913,6 +6942,7 @@ function EpisodeReportItem({
   vetDraftLoadingEpisodeId,
   vetDraftNotice,
   savedAiFeedbackUsageIds,
+  testRecords,
   onCancelPlanEdit,
   onChangePlanDraft,
   onCreateVetDraft,
@@ -5935,6 +6965,7 @@ function EpisodeReportItem({
   vetDraftLoadingEpisodeId: string | null;
   vetDraftNotice: EpisodeNotice;
   savedAiFeedbackUsageIds: string[];
+  testRecords: PetTestRecord[];
   onCancelPlanEdit: () => void;
   onChangePlanDraft: (value: string) => void;
   onCreateVetDraft: (episodeId: string, reportIds?: string[]) => Promise<boolean>;
@@ -5945,7 +6976,10 @@ function EpisodeReportItem({
     usefulnessScore: AiReportFeedbackInput["usefulnessScore"],
   ) => Promise<void>;
   onSavePlan: (episodeId: string) => Promise<void>;
-  onShareReport: (report: EpisodeReport) => Promise<void>;
+  onShareReport: (
+    report: EpisodeReport,
+    includedTestRecords?: PetTestRecord[],
+  ) => Promise<void>;
   onShareVetDraft: (episodeId: string, draft: VetReviewDraft) => Promise<void>;
   onStartPlanEdit: (group: EpisodeReportGroup) => void;
 }) {
@@ -5987,7 +7021,7 @@ function EpisodeReportItem({
 
       <FactualReportPreview
         onOpenRecord={onEditRecord}
-        onShare={() => void onShareReport(group.report)}
+        onShare={() => void onShareReport(group.report, testRecords)}
         planCount={planTasks.length}
         records={group.records}
         report={group.report}
@@ -6205,6 +7239,8 @@ function HistoryRecordItem({
 }) {
   const media = record.media ?? [];
   const mediaSummary = formatReportMediaSummary(media);
+  const symptomText = recordSymptomText(record);
+  const ownerNote = record.input.note.trim();
   const [mediaOpen, setMediaOpen] = useState(false);
 
   async function openAttachedMedia(item: ReportMediaAttachment) {
@@ -6228,14 +7264,20 @@ function HistoryRecordItem({
             : "정보 미평가"}
         </Text>
       </View>
+      <Text style={styles.historyFactLabel}>보호자가 남긴 내용</Text>
       <Text style={styles.historySummary}>
-        {hasAssessableObservation(record.input)
-          ? record.result.summary
-          : "입력된 정보만 정리했으며 상태와 첨부 자료는 평가하지 않았어요."}
+        {ownerNote || symptomText}
       </Text>
-      <Text style={styles.historyMeta}>
-        {recordSymptomText(record)}
-      </Text>
+      {ownerNote && record.input.symptoms.length ? (
+        <Text style={styles.historyMeta}>선택한 변화 · {symptomText}</Text>
+      ) : null}
+      {record.input.redFlags.length ? (
+        <Text style={styles.historyAlertFact}>
+          중요하게 남긴 사실 · {record.input.redFlags
+            .map((flag) => optionLabel(redFlagOptions, flag))
+            .join(" · ")}
+        </Text>
+      ) : null}
       <Text style={styles.historyMeta}>
         {[
           record.input.appetite !== "normal"
@@ -6379,10 +7421,8 @@ function aiDraftActionLabel(
 }
 
 function recordSymptomText(record: HistoryRecord) {
-  if (!record.input.symptoms.length) return "주요 증상은 입력되지 않아 평가하지 않음";
-  return record.input.symptoms
-    .map((symptom) => optionLabel(symptomOptions, symptom))
-    .join(", ");
+  if (!record.input.symptoms.length) return "선택한 증상 없음";
+  return formatSymptomSummary(record.input);
 }
 
 function speciesLabel(species: Species) {
@@ -7637,6 +8677,107 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     padding: 13,
   },
+  preventiveCareCard: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 24,
+    backgroundColor: "#ffffff",
+    padding: 16,
+  },
+  preventiveCareIntro: {
+    marginTop: 6,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  preventiveCareList: {
+    gap: 9,
+    marginTop: 13,
+  },
+  preventiveCareItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderRadius: 16,
+    backgroundColor: "#f7fbf8",
+    padding: 12,
+  },
+  preventiveCareCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  preventiveCareTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  preventiveCareMeta: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  preventiveCareAction: {
+    borderRadius: 999,
+    backgroundColor: colors.green,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  preventiveCareActionText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  preventiveCareUndo: {
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
+  preventiveCareUndoText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  preventiveCareHistory: {
+    gap: 7,
+    marginTop: 13,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingTop: 11,
+  },
+  preventiveCareHistoryTitle: {
+    color: colors.ink,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  preventiveCareHistoryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  preventiveCareHistoryText: {
+    flex: 1,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  preventiveCareHistoryDelete: {
+    color: colors.danger,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  preventiveCareHistoryToggle: {
+    alignItems: "center",
+    paddingVertical: 7,
+  },
+  preventiveCareHistoryToggleText: {
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+  },
   vaccinationInlineHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -7665,6 +8806,42 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     paddingHorizontal: 9,
     paddingVertical: 6,
+  },
+  vaccinationSavedList: {
+    gap: 8,
+    marginBottom: 12,
+    borderRadius: 16,
+    backgroundColor: "#f7fbf8",
+    padding: 10,
+  },
+  vaccinationSavedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  vaccinationSavedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+  },
+  vaccinationSavedRowSelected: {
+    borderColor: colors.green,
+    backgroundColor: colors.greenSoft,
+  },
+  vaccinationSavedMeta: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
   },
   vaccinationChoiceRow: {
     gap: 8,
@@ -7739,6 +8916,186 @@ const styles = StyleSheet.create({
     color: colors.green,
     fontSize: 11,
     fontWeight: "900",
+  },
+  vaccinationSaveButton: {
+    alignItems: "center",
+    marginTop: 12,
+    borderRadius: 14,
+    backgroundColor: colors.green,
+    paddingVertical: 12,
+  },
+  vaccinationSaveButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  vaccinationDeleteButton: {
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  vaccinationDeleteButtonText: {
+    color: colors.danger,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  testRecordIntro: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  testRecordForm: {
+    marginTop: 14,
+    borderRadius: 18,
+    backgroundColor: "#f7fbf8",
+    padding: 12,
+  },
+  testRecordResultInput: {
+    minHeight: 86,
+  },
+  testRecordFormActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
+  },
+  testRecordCancelButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  testRecordCancelText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  testRecordSaveButton: {
+    flex: 1,
+    alignItems: "center",
+    borderRadius: 14,
+    backgroundColor: colors.green,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  testRecordSaveText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  testRecordList: {
+    gap: 9,
+    marginTop: 14,
+  },
+  testRecordItem: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: "#fbfefd",
+    padding: 12,
+  },
+  testRecordItemHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  testRecordName: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  testRecordDate: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  testRecordItemActions: {
+    flexDirection: "row",
+    gap: 10,
+    paddingTop: 2,
+  },
+  testRecordEditText: {
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  testRecordDeleteText: {
+    color: colors.danger,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  testRecordResult: {
+    marginTop: 9,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  testRecordMeta: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  testRecordEmpty: {
+    marginTop: 13,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  testRecordShareButton: {
+    alignItems: "center",
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.green,
+    borderRadius: 14,
+    paddingVertical: 11,
+  },
+  testRecordShareText: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  selectedTestRecords: {
+    gap: 8,
+    marginTop: 14,
+    borderRadius: 18,
+    backgroundColor: "#eef7f2",
+    padding: 12,
+  },
+  selectedTestRecordsTitle: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  selectedTestRecordItem: {
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingTop: 8,
+  },
+  selectedTestRecordName: {
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  selectedTestRecordResult: {
+    marginTop: 3,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  selectedTestRecordDisclaimer: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    lineHeight: 15,
   },
   inlineDateGrid: {
     flexDirection: "row",
@@ -8702,8 +10059,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
   },
+  historyFactLabel: {
+    marginTop: 10,
+    color: colors.green,
+    fontSize: 11,
+    fontWeight: "900",
+  },
   historySummary: {
-    marginTop: 9,
+    marginTop: 4,
     color: colors.ink,
     fontSize: 13,
     fontWeight: "800",
@@ -8714,6 +10077,13 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     fontWeight: "700",
+    lineHeight: 18,
+  },
+  historyAlertFact: {
+    marginTop: 6,
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: "800",
     lineHeight: 18,
   },
   historyStorage: {

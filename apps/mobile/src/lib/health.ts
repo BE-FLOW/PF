@@ -47,6 +47,38 @@ export interface VaccinationRecord {
   updatedAt: string;
 }
 
+export interface PetTestRecord {
+  id: string;
+  petId: string;
+  episodeId: string | null;
+  testedAt: string;
+  testName: string;
+  resultText: string;
+  clinicName: string;
+  memo: string;
+  sourceType: "owner";
+  reviewStatus: "user_reported";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PreventiveCareCategory =
+  | "heartworm"
+  | "internal_external_parasite";
+
+export interface PreventiveCareRecord {
+  id: string;
+  petId: string;
+  category: PreventiveCareCategory;
+  completedOn: string;
+  completedMonth: string;
+  note: string;
+  sourceType: "owner";
+  reviewStatus: "user_reported";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HealthCheckInput {
   petName: string;
   species: Species;

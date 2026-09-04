@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { VaccinationRecord } from "./health";
 import {
-  vaccinationDraftForName,
-  vaccinationDraftFromRecords,
+  vaccinationDraftForNewEntry,
   vaccinationDueAt,
   vaccinationIntervalFromDates,
   vaccinationOptionForName,
@@ -56,13 +55,31 @@ describe("mobile vaccination helpers", () => {
     expect(reminder?.title).toContain("가까워요");
   });
 
-  it("uses the closest scheduled vaccination for edit drafts", () => {
-    const draft = vaccinationDraftFromRecords([
-      vaccination("2026-09-01"),
-      vaccination("2026-07-20"),
-    ]);
+  it("ignores an older overdue schedule after a newer dose of the same vaccine", () => {
+    const older = {
+      ...vaccination("2026-04-11"),
+      id: "rabies-old",
+      name: "광견병",
+      administeredAt: "2025-04-11",
+      createdAt: "2025-04-11T00:00:00.000Z",
+      updatedAt: "2025-04-11T00:00:00.000Z",
+    };
+    const newer = {
+      ...vaccination("2027-04-11"),
+      id: "rabies-new",
+      name: "광견병백신",
+      administeredAt: "2026-04-11",
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    };
 
-    expect(draft.dueAt).toBe("2026-07-20");
+    const reminder = vaccinationReminder(
+      [older, newer],
+      new Date("2026-09-03T12:00:00"),
+    );
+
+    expect(reminder?.title).toContain("2027.04.11");
+    expect(reminder?.label).toBe("다음 일정");
   });
 
   it("matches the Korean dog vaccination aliases without presenting them as requirements", () => {
@@ -79,19 +96,15 @@ describe("mobile vaccination helpers", () => {
     expect(vaccinationDueAt("invalid", "1year")).toBe("");
   });
 
-  it("reuses an existing exact interval and keeps other vaccine rows separate", () => {
+  it("keeps interval detection separate and starts every selected vaccine as a new row", () => {
     expect(vaccinationIntervalFromDates("2026-04-11", "2027-04-11")).toBe("1year");
     expect(vaccinationIntervalFromDates("2026-04-11", "2026-05-01")).toBeNull();
 
-    const rabies = {
-      ...vaccination("2027-04-11"),
-      id: "rabies-1",
-      name: "광견병백신",
-      administeredAt: "2026-04-11",
-    };
-    const core = { ...vaccination("2029-07-01"), id: "core-1", name: "종합백신" };
-
-    expect(vaccinationDraftForName([core, rabies], "광견병").id).toBe("rabies-1");
-    expect(vaccinationDraftForName([core, rabies], "켄넬코프").id).toBeUndefined();
+    expect(vaccinationDraftForNewEntry("코로나 장염")).toEqual({
+      name: "코로나 장염",
+      administeredAt: "",
+      dueAt: "",
+      note: "",
+    });
   });
 });

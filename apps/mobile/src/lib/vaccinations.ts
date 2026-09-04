@@ -167,19 +167,12 @@ export function vaccinationIntervalFromDates(
   );
 }
 
-export function vaccinationDraftForName(
-  records: VaccinationRecord[],
-  name: string,
-): VaccinationDraft {
-  const record = records
-    .filter((item) => sameVaccinationName(item.name, name))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+export function vaccinationDraftForNewEntry(name: string): VaccinationDraft {
   return {
-    id: record?.id,
-    name: record?.name ?? name,
-    administeredAt: record?.administeredAt ?? "",
-    dueAt: record?.dueAt ?? "",
-    note: record?.note ?? "",
+    name,
+    administeredAt: "",
+    dueAt: "",
+    note: "",
   };
 }
 
@@ -202,8 +195,30 @@ function daysUntilDate(dateText: string, today = new Date()) {
   );
 }
 
+function latestVaccinationRecords(records: VaccinationRecord[]) {
+  const latestBySeries = new Map<string, VaccinationRecord>();
+  for (const record of records) {
+    const seriesKey =
+      vaccinationOptionForName(record.name)?.id ?? normalizedVaccinationName(record.name);
+    const current = latestBySeries.get(seriesKey);
+    if (!current) {
+      latestBySeries.set(seriesKey, record);
+      continue;
+    }
+    const recordDate = record.administeredAt ?? record.createdAt.slice(0, 10);
+    const currentDate = current.administeredAt ?? current.createdAt.slice(0, 10);
+    if (
+      recordDate > currentDate ||
+      (recordDate === currentDate && record.updatedAt > current.updatedAt)
+    ) {
+      latestBySeries.set(seriesKey, record);
+    }
+  }
+  return [...latestBySeries.values()];
+}
+
 function nextVaccination(records: VaccinationRecord[], today = new Date()) {
-  return records
+  return latestVaccinationRecords(records)
     .filter((record) => record.status === "scheduled" && record.dueAt)
     .map((record) => ({
       record,
@@ -303,23 +318,5 @@ export function vaccinationReminder(
     label: "다음 일정",
     title: `${next.record.name} · ${formatVaccinationDate(next.record.dueAt as string)}`,
     description: "저장한 병원 안내 주기로 계산한 일정이에요.",
-  };
-}
-
-export function vaccinationDraftFromRecords(
-  records: VaccinationRecord[],
-): VaccinationDraft {
-  const record =
-    nextVaccination(records)?.record ??
-    records
-      .filter((item) => item.status === "done")
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ??
-    records[0];
-  return {
-    id: record?.id,
-    name: record?.name ?? "",
-    administeredAt: record?.administeredAt ?? "",
-    dueAt: record?.dueAt ?? "",
-    note: record?.note ?? "",
   };
 }

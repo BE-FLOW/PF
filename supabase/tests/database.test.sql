@@ -1,6 +1,6 @@
 begin;
 
-select plan(190);
+select plan(222);
 
 select has_table('public', 'health_reports', 'health_reports table exists');
 select has_table(
@@ -47,6 +47,16 @@ select has_table(
   'public',
   'pet_vaccinations',
   'pet vaccination schedule table exists'
+);
+select has_table(
+  'public',
+  'pet_preventive_care',
+  'owner-entered monthly preventive care table exists'
+);
+select has_table(
+  'public',
+  'pet_test_records',
+  'owner-entered pet test records table exists'
 );
 select hasnt_view(
   'public',
@@ -189,6 +199,215 @@ select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'pet_vaccinations'),
   4,
   'pet vaccinations has owner-only CRUD policies'
+);
+select col_not_null(
+  'public',
+  'pet_preventive_care',
+  'category',
+  'preventive care category is required'
+);
+select col_not_null(
+  'public',
+  'pet_preventive_care',
+  'completed_on',
+  'preventive care completion date is required'
+);
+select has_column(
+  'public',
+  'pet_preventive_care',
+  'completed_month',
+  'preventive care completion month is stored'
+);
+select has_column(
+  'public',
+  'pet_preventive_care',
+  'source_type',
+  'preventive care source is stored'
+);
+select has_column(
+  'public',
+  'pet_preventive_care',
+  'review_status',
+  'preventive care review status is stored'
+);
+select is(
+  (
+    select attgenerated::text
+    from pg_attribute
+    where attrelid = 'public.pet_preventive_care'::regclass
+      and attname = 'completed_month'
+  ),
+  's',
+  'preventive care month is generated from the completion date'
+);
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.pet_preventive_care'::regclass
+      and conname = 'pet_preventive_care_category_check'
+      and contype = 'c'
+  ),
+  'preventive care categories are constrained'
+);
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.pet_preventive_care'::regclass
+      and conname = 'pet_preventive_care_month_unique'
+      and contype = 'u'
+  ),
+  'preventive care keeps one completion per pet category and month'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.pet_preventive_care'::regclass),
+  true,
+  'RLS is enabled for preventive care'
+);
+select is(
+  (select relforcerowsecurity from pg_class where oid = 'public.pet_preventive_care'::regclass),
+  true,
+  'RLS is forced for preventive care'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_policies
+    where schemaname = 'public' and tablename = 'pet_preventive_care'
+  ),
+  4,
+  'preventive care has owner-only CRUD policies'
+);
+select is(
+  (
+    select confdeltype::text
+    from pg_constraint
+    where conname = 'pet_preventive_care_user_id_fkey'
+  ),
+  'c',
+  'account deletion removes preventive care records'
+);
+select is(
+  (
+    select confdeltype::text
+    from pg_constraint
+    where conname = 'pet_preventive_care_pet_owner_fkey'
+  ),
+  'c',
+  'pet deletion removes preventive care records'
+);
+select col_not_null(
+  'public',
+  'pet_test_records',
+  'tested_at',
+  'pet test date is required'
+);
+select col_not_null(
+  'public',
+  'pet_test_records',
+  'test_name',
+  'pet test name is required'
+);
+select col_not_null(
+  'public',
+  'pet_test_records',
+  'result_text',
+  'owner-entered pet test result is required'
+);
+select has_column(
+  'public',
+  'pet_test_records',
+  'clinic_name',
+  'optional pet test clinic is stored'
+);
+select col_is_null(
+  'public',
+  'pet_test_records',
+  'clinic_name',
+  'pet test clinic remains optional'
+);
+select has_column(
+  'public',
+  'pet_test_records',
+  'memo',
+  'optional pet test memo is stored'
+);
+select col_is_null(
+  'public',
+  'pet_test_records',
+  'memo',
+  'pet test memo remains optional'
+);
+select has_column(
+  'public',
+  'pet_test_records',
+  'episode_id',
+  'pet test records can be linked to an episode'
+);
+select col_is_null(
+  'public',
+  'pet_test_records',
+  'episode_id',
+  'pet test episode link remains optional'
+);
+select has_column(
+  'public',
+  'pet_test_records',
+  'source_type',
+  'pet test record source is stored'
+);
+select has_column(
+  'public',
+  'pet_test_records',
+  'review_status',
+  'pet test record review status is stored'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.pet_test_records'::regclass),
+  true,
+  'RLS is enabled for pet test records'
+);
+select is(
+  (select relforcerowsecurity from pg_class where oid = 'public.pet_test_records'::regclass),
+  true,
+  'RLS is forced for pet test records'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_policies
+    where schemaname = 'public' and tablename = 'pet_test_records'
+  ),
+  4,
+  'pet test records has owner-only CRUD policies'
+);
+select is(
+  (
+    select confdeltype::text
+    from pg_constraint
+    where conname = 'pet_test_records_user_id_fkey'
+  ),
+  'c',
+  'account deletion removes pet test records'
+);
+select is(
+  (
+    select confdeltype::text
+    from pg_constraint
+    where conname = 'pet_test_records_pet_owner_fkey'
+  ),
+  'c',
+  'pet deletion removes pet test records'
+);
+select is(
+  (
+    select confdeltype::text
+    from pg_constraint
+    where conname = 'pet_test_records_episode_owner_fkey'
+  ),
+  'c',
+  'episode deletion removes linked pet test records'
 );
 select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'episodes'),
