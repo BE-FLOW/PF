@@ -140,6 +140,25 @@ build `35`를 TestFlight 외부 테스트로 배포했다. 새 빌드는 추가�
 - 정식 출시 재개 중 `npm --prefix apps/mobile run test:release`의 21개 검사를
   다시 통과했다. 앱 코드, 실제 사용자 데이터와 기존 심사 계정 자격증명은 바꾸지 않았다.
 
+### 2026-09-04 build 39 공식 출시 준비
+
+- 핵심 예방관리·검사기록 수정이 포함된 production build `39`
+  (`2b6ce1c8-d832-4bf9-bdc2-012a5d9e8d0e`)를 App Store Connect에서 `VALID`로
+  확인했다. 소스 커밋은 `cde558b1d9f8a97241550ad7e49ee6be7d69e8c7`이며,
+  현재 `main`과 앱 런타임은 같고 차이는 출시 문서와 검증 스크립트뿐이다.
+- 정식 iOS `1.0`에 연결된 빌드를 `28`에서 `39`
+  (`1a709046-af9d-4f1a-ae53-b125b9f264c5`)로 교체했다. 한국어 설명·키워드·
+  프로모션 문구·지원 URL·개인정보 처리방침 URL과 심사 메모도 현재 완전 무료 기능에
+  맞게 갱신했다.
+- 버전 상태는 `PREPARE_FOR_SUBMISSION`, 출시 방식은 `AFTER_APPROVAL`이다. 심사 제출은
+  하지 않았다.
+- `readiness:ios:app-store -- --build-number 39`에서 Git·EAS 빌드·소스 불변·공식
+  선택 빌드·운영 서버·무료 모드 검사는 통과했다. 남은 차단 항목은 build `39`를 실제
+  iPhone에서 확인하는 QA와, 그 빌드 화면으로 만든 스크린샷 manifest 검증이다.
+- 과거 build `22` manifest가 새 후보를 암묵적으로 선택하지 않도록 readiness 명령은
+  이제 `--build-number`를 필수로 요구한다. 실제 확인 없이 QA 확인 문자열이나 최신
+  manifest를 만들지 않는다.
+
 ## 구현된 공개 범위
 
 현재 모바일 앱은 로그인, 반려동물 등록·수정·삭제·선택, 한 줄 건강 기록,

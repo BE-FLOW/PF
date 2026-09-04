@@ -48,6 +48,10 @@ const prepareIosSource = fs.readFileSync(
   path.join(mobileRoot, "scripts", "prepare-ios-app-store.mjs"),
   "utf8",
 );
+const iosReadinessSource = fs.readFileSync(
+  path.join(mobileRoot, "scripts", "ios-release-readiness.mjs"),
+  "utf8",
+);
 
 describe("mobile release configuration", () => {
   it("keeps the package version and store identifiers aligned", () => {
@@ -464,6 +468,13 @@ describe("mobile release configuration", () => {
     expect(prepareIosSource).not.toContain(
       "PetFlow는 보호자가 반려동물의 식욕, 활력, 증상과",
     );
+  });
+
+  it("requires an explicit iOS candidate instead of trusting a stale screenshot manifest", () => {
+    expect(iosReadinessSource).toContain(
+      'const targetBuild = args.get("--build-number") || null;',
+    );
+    expect(iosReadinessSource).not.toContain("manifest?.buildNumber === undefined");
   });
 
   it("matches every remote App Store screenshot to the local capture", () => {

@@ -41,9 +41,10 @@ try {
 } catch (error) {
   manifestError = error;
 }
-const targetBuild =
-  args.get("--build-number") ||
-  (manifest?.buildNumber === undefined ? null : String(manifest.buildNumber));
+// The screenshot manifest can intentionally lag behind the current candidate while a
+// fresh capture is pending. Never let that stale artifact silently choose a release
+// build; callers must name the exact candidate they intend to validate.
+const targetBuild = args.get("--build-number") || null;
 const deviceQaConfirmation = args.get("--confirm-device-qa");
 const { request } = createAppStoreConnectClient({
   keyId: args.get("--key-id") || appStoreConnectDefaults.keyId,
@@ -59,7 +60,9 @@ if (manifestError) {
     `스크린샷 manifest: ${manifestError instanceof Error ? manifestError.message : String(manifestError)}`,
   );
 }
-if (!targetBuild) blockers.push("대상 iOS 빌드 번호가 없습니다.");
+if (!targetBuild) {
+  blockers.push("대상 iOS 빌드 번호가 없습니다. --build-number를 명시하세요.");
+}
 if (
   targetBuild &&
   deviceQaConfirmation !== `IOS_BUILD_${targetBuild}_DEVICE_QA_PASSED`

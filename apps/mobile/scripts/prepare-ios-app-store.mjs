@@ -71,10 +71,11 @@ Signed-in users can create AI Hospital Summaries within a server-enforced daily 
 Review steps:
 1. Sign in with the review account in App Review Information.
 2. Add or select a pet and save a health record.
-3. Open the 전달본 tab and select records in the calendar.
-4. Tap 무료 병원 전달본 만들기 to create and share the free draft.
+3. Optionally add vaccination, monthly preventive-care, or factual test records from the pet profile.
+4. Open the 전달본 tab and select records in the calendar.
+5. Tap 무료 병원 전달본 만들기 to create and share the free draft.
 
-The AI output is clearly labeled as an unreviewed draft. AI only prioritizes server-generated factual observation lines and never invents diagnoses, prescriptions, medication names, dosage, or treatment plans. Any hospital guidance entered by the owner is preserved separately and labeled as owner-reported, not veterinarian-confirmed.`;
+The AI output is clearly labeled as an unreviewed draft. AI only prioritizes server-generated factual observation lines and never invents diagnoses, prescriptions, medication names, dosage, or treatment plans. Test records and owner-reported hospital guidance remain factual records and are never presented as veterinarian-confirmed conclusions.`;
 
 const args = parseArgs();
 const appId = args.get("--app-id") || process.env.ASC_APP_ID || appStoreConnectDefaults.appId;
